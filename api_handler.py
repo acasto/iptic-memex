@@ -1,5 +1,6 @@
 import os
 import openai
+import time
 from abc import ABC, abstractmethod
 
 class APIHandler(ABC):
@@ -27,8 +28,9 @@ class OpenAIHandler(APIHandler):
             prompt=prompt,
             temperature=float(self.conf['temperature']),
             max_tokens=int(self.conf['max_tokens']),
+            stream=bool(self.conf['stream']),
         )
-        return response.choices[0].text.strip()
+        return response
 
     def chat(self, messages):
         # for message in messages:
@@ -39,6 +41,7 @@ class OpenAIHandler(APIHandler):
             messages=messages,
             temperature=float(self.conf['temperature']),
             max_tokens=int(self.conf['max_tokens']),
+            stream=bool(self.conf['stream']),
         )
-        return response['choices'][0]['message']['content']
+        return response
 

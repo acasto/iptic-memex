@@ -2,6 +2,7 @@ import os
 import json
 import readline
 import re
+import time
 from datetime import datetime
 from abc import ABC, abstractmethod
 
@@ -12,22 +13,65 @@ class InteractionHandler(ABC):
 
 class FileCompletion(InteractionHandler):
     def __init__(self, session):
+        self.session = session
         self.api_handler = session['api_handler']
 
     def start(self, prompt):
-        result = self.api_handler.complete(prompt)
-        print(result)
+        response = self.api_handler.complete(prompt)
+        if self.session['stream']:
+            ## create variables to collect the stream of events
+            # collected_events = []
+            # completion_text = ''
+            ## iterate through the stream of events, lstrip() the first couple events to aovid the weird newline
+            i = 0
+            for event in response:
+                # collected_events.append(event)  # save the event response
+                event_text = event['choices'][0]['text']  # extract the text
+                # completion_text += event_text  # append the text
+                if i < 2:
+                    print(event_text.lstrip(), end="", flush=True)
+                    i += 1
+                else:
+                    print(event_text, end="", flush=True)
+                if 'stream_delay' in self.session:
+                    time.sleep(self.session['stream_delay'])
+            print() # finish with a newline
+        else:
+            response = self.api_handler.complete(prompt)
+            print(response.choices[0].text.strip())
 
 
 class Completion(InteractionHandler):
     def __init__(self, session):
+        self.session = session
         self.api_handler = session['api_handler']
 
     def start(self, prompt):
         prompt += " User: "
         prompt += input("You: ")
-        result = self.api_handler.complete(prompt)
-        print(f"AI: " + result)
+        response = self.api_handler.complete(prompt)
+        if self.session['stream']:
+            print("AI: ", end="", flush=True)
+            ## create variables to collect the stream of events
+            # collected_events = []
+            # completion_text = ''
+            ## iterate through the stream of events, lstrip() the first couple events to avoid the weird newline
+            i = 0
+            for event in response:
+                # collected_events.append(event)  # save the event response
+                event_text = event['choices'][0]['text']  # extract the text
+                # completion_text += event_text  # append the text
+                if i < 2:
+                    print(event_text.lstrip(), end="", flush=True)
+                    i += 1
+                else:
+                    print(event_text, end="", flush=True)
+                if 'stream_delay' in self.session:
+                    time.sleep(self.session['stream_delay'])
+            print() # finish with a newline
+        else:
+            response = self.api_handler.complete(prompt)
+            print(f"AI: " + response.choices[0].text.strip())
 
 
 
@@ -82,10 +126,37 @@ class Chat(InteractionHandler):
             messages.append({"role": "user", "content": user_input})
 
 
-            response = self.api_handler.chat(messages)
-            messages.append({"role": "assistant", "content": response})
+            # response = self.api_handler.chat(messages)
+            # messages.append({"role": "assistant", "content": response})
+            # print("\nAI:", response['choices'][0]['message']['content'], "\n")
 
-            print("\nAI:", response, "\n")
+            response = self.api_handler.chat(messages)
+            if self.session['stream']:
+                print("\nAI: ", end="", flush=True)
+                ## create variables to collect the stream of events
+                # collected_events = []
+                completion_text = ''
+                ## iterate through the stream of events, lstrip() the first couple events to avoid the weird newline
+                i = 0
+                for event in response:
+                    if 'content' in event['choices'][0]['delta']:
+                        #collected_events.append(event)  # save the event response
+                        event_text = event['choices'][0]['delta']['content']  # extract the text
+                        completion_text += event_text  # append the text
+                        # if i < 2:
+                        #     print(event_text.lstrip(), end="", flush=True)
+                        #     i += 1
+                        # else:
+                        #     print(event_text, end="", flush=True)
+                        print(event_text, end="", flush=True)
+                        if 'stream_delay' in self.session:
+                            time.sleep(self.session['stream_delay'])
+                print("\n")  # finish with a newline
+                messages.append({"role": "assistant", "content": completion_text})
+            else:
+                response = self.api_handler.chat(messages)
+                print(f"\nAI: " + response['choices'][0]['message']['content'], "\n")
+                messages.append({"role": "assistant", "content": response['choices'][0]['message']['content']})
 
 
     def save_chat(self, messages, filename):
@@ -93,7 +164,7 @@ class Chat(InteractionHandler):
         if not os.path.isabs(filename):
             filename = os.path.join(session_info['chats_directory'], filename)
         contents = str()
-        exclude = ['api_key', 'api_handler', 'chats_directory', 'prompt', 'load_chat', 'chats_extension']
+        exclude = ['api_key', 'api_handler', 'chats_directory', 'prompt', 'load_chat', 'chats_extension', 'stream', 'stream_delay']
         for parameter in session_info:
             if parameter not in exclude:
                 contents += f"{parameter}: {session_info[parameter]}\n"

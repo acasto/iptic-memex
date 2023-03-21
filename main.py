@@ -13,8 +13,9 @@ from interaction_handler import FileCompletion, Completion, Chat
 @click.option('-p', '--prompt', help='Filename from the prompt directory to use for completion')
 @click.option('-t', '--temperature', help='Temperature to use for completion')
 @click.option('-l', '--max-tokens', help='Maximum number of tokens to use for completion')
+@click.option('-s', '--stream', is_flag=True, help='Stream the completion events')
 @click.pass_context
-def cli(ctx, conf, model, prompt, temperature, max_tokens):
+def cli(ctx, conf, model, prompt, temperature, max_tokens, stream):
     ctx.ensure_object(dict)
     ctx.obj['CONF'] = get_config(conf)
     ctx.obj['SESSION'] = {} # start building up the session object where we have enough info
@@ -29,12 +30,16 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens):
         ctx.obj['SESSION']['temperature'] = temperature
     if max_tokens is not None:
         ctx.obj['SESSION']['max_tokens'] = max_tokens
+    if stream:
+        ctx.obj['SESSION']['stream'] = stream
 
 @cli.command()
 @click.pass_context
 @click.option('-v', '--verbose', is_flag=True, help="Show session parameters")
 @click.argument("source", type=click.File("rt", encoding="utf-8"), required=False)
 def file(ctx, verbose, source: io.TextIOWrapper):
+    if source is None:
+        raise click.UsageError("Missing source file")
     prompt = source.read()
     session = get_session(ctx, 'completion')
     if verbose:
@@ -240,6 +245,10 @@ def get_session(ctx, mode):
         session['temperature'] = conf.getfloat(provider, 'temperature')
     if 'max_tokens' not in session:
         session['max_tokens'] = conf.getint(provider, 'max_tokens')
+    if 'stream' not in session:
+        session['stream'] = conf.getboolean(provider, 'stream')
+    if 'stream_delay' not in session:
+        session['stream_delay'] = conf.getfloat(provider, 'stream_delay')
     if 'endpoint' not in session:
         session['endpoint'] = get_endpoint_from_model(conf, session['model'])
     if conf.has_option(provider, 'api_key') and conf.get(provider, 'api_key') != '':
@@ -255,7 +264,7 @@ def get_session(ctx, mode):
 def print_session_info(session_object):
     session = session_object
     for key in session:
-        exclude = ['api_handler', 'api_key', 'chats_directory', 'chats_extension']
+        exclude = ['api_handler', 'api_key']
         if key not in exclude:
             print(f'{key}: {session[key]}')
     print('-' * 80)
