@@ -12,6 +12,7 @@ This is still very much a work in progress but somewhat useful. I'm still learni
 
 - [x] Flexible & extensible configuration & CLI
 - [x] Load custom prompts from files
+- [x] Run completions on files or piped stdin
 - [x] Save conversations in human-readable format
 - [x] Load saved conversations back into chat mode
 - [x] Supports streaming in both completion and chat
