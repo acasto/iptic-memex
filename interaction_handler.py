@@ -81,7 +81,7 @@ class Chat(InteractionHandler):
         self.api_handler = session['api_handler']
 
     def start(self, prompt):
-        commands = ["save", "load", "quit", "exit", "help"]
+        commands = ["save", "load", "quit", "exit", "help", "?"]
         if 'load_chat' in self.session:
             messages = self.load_chat(self.session['load_chat'])
             if messages is not None:
@@ -116,7 +116,7 @@ class Chat(InteractionHandler):
                             print(f"{message['role'].capitalize()}: {message['content']}\n")
 
                     continue
-                if user_input.strip() == "help":
+                if user_input.strip() == "help" or user_input.strip() == "?":
                     print("Commands:")
                     print("save - save the chat history to a file")
                     print("load - load a chat history from a file")
