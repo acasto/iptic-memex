@@ -57,7 +57,7 @@ def ask(ctx, verbose):
 @cli.command()
 @click.pass_context
 @click.option('-v', '--verbose', is_flag=True, help="Show session parameters")
-@click.option('-f', '--chat-file', type=click.Path(exists=True), help="Load a chat log from a file")
+@click.option('-f', '--chat-file', type=click.Path(), help="Load a chat log from a file")
 def chat(ctx, verbose, chat_file):
     conf = ctx.obj['CONF']
     session = get_session(ctx, 'chat')
@@ -92,6 +92,14 @@ def list_prompts(ctx):
 
 @cli.command()
 @click.pass_context
+def list_chats(ctx):
+    conf = ctx.obj['CONF']
+    chats = get_chats(conf)
+    for chat_file in chats:
+        print(chat_file)
+
+@cli.command()
+@click.pass_context
 def list_config(ctx):
     conf = ctx.obj['CONF']
     print()
@@ -103,8 +111,10 @@ def list_config(ctx):
         print()
 
 def get_config(config_file):
+    dir_path = os.path.dirname(os.path.abspath(__file__))
+    default_config_file = os.path.join(dir_path, 'config.ini')
     config = ConfigParser()
-    config.read('config.ini') # read the default config file
+    config.read(default_config_file) # read the default config file
     user_config = os.path.expanduser('~/.config/iptic-memex/config.ini')
     if os.path.exists(user_config):
         config.read(user_config) # read the user config file (if it exists)
@@ -141,6 +151,13 @@ def get_chat(conf, chat_file):
     if not os.path.isabs(chat_file):
         chat_file = path + '/' + chat_file
     return chat_file
+
+def get_chats(conf):
+    if not os.path.isabs(conf['DEFAULT']['chats_directory']):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), conf['DEFAULT']['chats_directory'])
+    else:
+        path = conf['DEFAULT']['chats_directory']
+    return [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
 
 def get_providers(conf):
     return conf.sections()

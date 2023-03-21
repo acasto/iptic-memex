@@ -40,8 +40,9 @@ class Chat(InteractionHandler):
         commands = ["save", "load", "quit", "exit", "help"]
         if 'load_chat' in self.session:
             messages = self.load_chat(self.session['load_chat'])
-            for message in messages[1:]:
-                print(f"{message['role'].capitalize()}: {message['content']}\n")
+            if messages is not None:
+                for message in messages[1:]:
+                    print(f"{message['role'].capitalize()}: {message['content']}\n")
         else:
             messages = [{"role": "system", "content": prompt}]
         readline.set_completer(self.directory_completer)
@@ -64,7 +65,7 @@ class Chat(InteractionHandler):
                 if user_input.strip() == "load":
                     filename = input("Enter a filename: ")
                     loading = self.load_chat(filename)
-                    if len(loading) > 0:
+                    if loading is not None:
                         messages = loading
                         # print messages skipping the first 'system' message
                         for message in messages[1:]:
