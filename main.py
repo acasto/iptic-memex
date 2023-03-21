@@ -1,57 +1,100 @@
 import os
 import click
-from chat import Chat
-from completion import Completion
+import io
 from configparser import ConfigParser
 from api_handler import OpenAIHandler
+from interaction_handler import FileCompletion, Completion, Chat
+
+
 
 @click.group()
 @click.option('-c', '--conf', help='Path to a custom configuration file')
-@click.option('-p', '--prompt', help="Filename from the prompt directory to use for completion")
-@click.option('-pv', '--provider', help="Provider to use for completion")
-@click.option('-m', '--model', help="Model to use for completion")
+@click.option('-m', '--model', help='Model to use for completion')
+@click.option('-p', '--prompt', help='Filename from the prompt directory to use for completion')
+@click.option('-t', '--temperature', help='Temperature to use for completion')
+@click.option('-l', '--max-tokens', help='Maximum number of tokens to use for completion')
 @click.pass_context
-def cli(ctx, conf, prompt, provider, model):
+def cli(ctx, conf, model, prompt, temperature, max_tokens):
     ctx.ensure_object(dict)
     ctx.obj['CONF'] = get_config(conf)
-    if prompt is not None:
-        ctx.obj['CONF'].set('DEFAULT', 'prompt', get_prompt(ctx.obj['CONF'], prompt))
-    if provider is not None:
-        ctx.obj['CONF'].set('DEFAULT', 'default_provider', provider)
+    ctx.obj['SESSION'] = {} # start building up the session object where we have enough info
     if model is not None:
-        ctx.obj['CONF'].set('DEFAULT', 'default_model', model)
+        if check_model(ctx.obj['CONF'], model):
+            ctx.obj['SESSION']['model'] = model
+        else:
+            raise click.UsageError(f'Invalid model: {model}')
+    if prompt is not None:
+        ctx.obj['SESSION']['prompt'] = get_prompt(ctx.obj['CONF'], prompt)
+    if temperature is not None:
+        ctx.obj['SESSION']['temperature'] = temperature
+    if max_tokens is not None:
+        ctx.obj['SESSION']['max_tokens'] = max_tokens
 
 @cli.command()
 @click.pass_context
-@click.option('-r', '--raw', help="Don't use a preset prompt, use the raw input from stdin or a file instead")
-@click.argument("source", type=click.File("rt", encoding="utf-8"), required=False) # make contingent on --raw
-def complete(ctx, raw, source):
+@click.option('-v', '--verbose', is_flag=True, help="Show session parameters")
+@click.argument("source", type=click.File("rt", encoding="utf-8"), required=False)
+def file(ctx, verbose, source: io.TextIOWrapper):
+    prompt = source.read()
+    session = get_session(ctx, 'completion')
+    if verbose:
+        print_session_info(session)
+    completion = FileCompletion(session)
+    completion.start(prompt)
+
+@cli.command()
+@click.pass_context
+@click.option('-v', '--verbose', is_flag=True, help="Show session parameters")
+def ask(ctx, verbose):
+    session = get_session(ctx, 'completion')
+    prompt = session['prompt']
+    if verbose:
+        print_session_info(session)
+    completion = Completion(session)
+    completion.start(prompt)
+
+
+@cli.command()
+@click.pass_context
+@click.option('-v', '--verbose', is_flag=True, help="Show session parameters")
+@click.option('-f', '--chat-file', type=click.Path(exists=True), help="Load a chat log from a file")
+def chat(ctx, verbose, chat_file):
     conf = ctx.obj['CONF']
-    session = ctx.obj['SESSION']
-    provider = get_default_provider(conf)
-
-
-    api_handler = OpenAIHandler(session)
-    completion = Completion(api_handler)
-    completion.start()
-
-@cli.command()
-@click.pass_context
-def chat(ctx):
-    api_handler = OpenAIHandler(ctx.obj['CONF'])
-    chat_session = Chat(api_handler)
-    chat_session.start()
+    session = get_session(ctx, 'chat')
+    prompt = session['prompt']
+    session['chats_extension'] = conf['DEFAULT']['chats_extension']
+    if chat_file is not None:
+        session['load_chat'] = get_chat(conf, os.path.basename(chat_file))
+    if verbose:
+        print_session_info(session)
+    chat_session = Chat(session)
+    chat_session.start(prompt)
 
 @cli.command()
 @click.pass_context
-def dump_config(ctx):
+@click.option('-p', '--providers', is_flag=True, help="Show providers along with models")
+def list_models(ctx, providers):
     conf = ctx.obj['CONF']
-    print(f'Providers: ', get_providers(conf))
-    print(f'Default provider: ', get_default_provider(conf))
-    print(f'Models: ', get_models(conf))
-    print('Who provides gpt-3.5-turbo? '+get_provider_from_model(conf, 'gpt-3.5-turbo'))
-    print('Who provides claude? '+get_provider_from_model(conf, 'claude'))
-    print('')
+    models = get_models(conf)
+    for model in models:
+        if providers:
+            print(model +' ('+ get_provider_from_model(conf, model) + ')')
+        else:
+            print(model)
+
+@cli.command()
+@click.pass_context
+def list_prompts(ctx):
+    conf = ctx.obj['CONF']
+    prompts = get_prompts(conf)
+    for prompt in prompts:
+        print(prompt)
+
+@cli.command()
+@click.pass_context
+def list_config(ctx):
+    conf = ctx.obj['CONF']
+    print()
     for section in conf.sections(): # dump the settings in the ini format
         print(f'[ {section} ]')
         for option in conf.options(section):
@@ -69,6 +112,13 @@ def get_config(config_file):
         config.read(config_file) # read the custom config file
     return config
 
+def get_prompts(conf):
+    if not os.path.isabs(conf['DEFAULT']['prompt_directory']):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), conf['DEFAULT']['prompt_directory'])
+    else:
+        path = conf['DEFAULT']['prompt_directory']
+    return [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
+
 def get_prompt(conf, prompt_file):
     if not os.path.isabs(conf['DEFAULT']['prompt_directory']):
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)), conf['DEFAULT']['prompt_directory'])
@@ -80,9 +130,17 @@ def get_prompt(conf, prompt_file):
         with open(prompt_file, 'r') as f:
             prompt = f.read()
     except FileNotFoundError:
-        # print(f"Warning: Prompt file not found: {prompt_file}")
-        prompt = conf['DEFAULT']['prompt'] # a simple fallback prompt
+        raise click.UsageError(f"Warning: Prompt file not found: {prompt_file}")
     return prompt
+
+def get_chat(conf, chat_file):
+    if not os.path.isabs(conf['DEFAULT']['chats_directory']):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), conf['DEFAULT']['chats_directory'])
+    else:
+        path = conf['DEFAULT']['chats_directory']
+    if not os.path.isabs(chat_file):
+        chat_file = path + '/' + chat_file
+    return chat_file
 
 def get_providers(conf):
     return conf.sections()
@@ -90,19 +148,44 @@ def get_providers(conf):
 def get_models(conf):
     models = []
     for provider in conf.sections():
-        if not conf.has_option(provider, 'models_available'):
-            continue
-        models_available_str = conf.get(provider, 'models_available')
-        models_available_list = [model.strip() for model in models_available_str.split(',')]
-        models += models_available_list
+        models += get_models_for_provider(conf, provider)
+    return models
+
+def get_models_for_provider(conf, provider):
+    models = []
+    if conf.has_option(provider, 'completion_models'):
+        models += [model.strip() for model in conf.get(provider, 'completion_models').split(',')]
+    if conf.has_option(provider, 'chat_models'):
+        models += [model.strip() for model in conf.get(provider, 'chat_models').split(',')]
     return models
 
 def get_provider_from_model(conf, model):
     for provider in conf.sections():
-        models_available_str = conf.get(provider, 'models_available')
-        models_available_list = [model.strip() for model in models_available_str.split(',')]
+        models_available_list = []
+        models_available_list += get_models_for_provider(conf, provider)
         if model in models_available_list:
             return provider
+    return None
+
+def get_endpoint_from_model(conf, model):
+    provider = get_provider_from_model(conf, model)
+    if provider is None:
+        return None
+    mode = get_mode_from_model(conf, model)
+    if conf.has_option(provider, mode+'_endpoint'):
+        return conf.get(provider, mode+'_endpoint')
+    return None
+
+def get_mode_from_model(conf, model):
+    provider = get_provider_from_model(conf, model)
+    if provider is None:
+        return None
+    if conf.has_option(provider, 'completion_models'):
+        if model in [model.strip() for model in conf.get(provider, 'completion_models').split(',')]:
+            return 'completion'
+    if conf.has_option(provider, 'chat_models'):
+        if model in [model.strip() for model in conf.get(provider, 'chat_models').split(',')]:
+            return 'chat'
     return None
 
 def get_default_provider(conf):
@@ -113,7 +196,59 @@ def get_default_provider(conf):
             return provider
     return None
 
+def get_default_model(conf, provider, mode):
+    ## returns the first listed for the chosen provider for the chosen mode
+    if mode == 'completion' or mode == 'complete':
+        if conf.has_option(provider, 'completion_models'):
+            return [model.strip() for model in conf.get(provider, 'completion_models').split(',')][0]
+    elif mode == 'chat':
+        if conf.has_option(provider, 'chat_models'):
+            return [model.strip() for model in conf.get(provider, 'chat_models').split(',')][0]
+    return None
 
+def check_model(conf, model):
+    if model in get_models(conf):
+        return True
+
+def get_session(ctx, mode):
+    conf = ctx.obj['CONF']
+    session = ctx.obj['SESSION']
+    ## finish setting up the session object if needed
+    if 'model' in session:
+        provider = get_provider_from_model(conf, session['model'])
+    else:
+        provider = get_default_provider(conf)
+        session['model'] = get_default_model(conf, provider, mode)
+    if 'temperature' not in session:
+        session['temperature'] = conf.getfloat(provider, 'temperature')
+    if 'max_tokens' not in session:
+        session['max_tokens'] = conf.getint(provider, 'max_tokens')
+    if 'endpoint' not in session:
+        session['endpoint'] = get_endpoint_from_model(conf, session['model'])
+    if conf.has_option(provider, 'api_key') and conf.get(provider, 'api_key') != '':
+        session['api_key'] = conf.get(provider, 'api_key')
+    if 'prompt' not in session:
+        session['prompt'] = conf.get(provider, 'prompt')
+    if mode == 'chat' and 'chats_directory' not in session:
+        session['chats_directory'] = get_chats_directory(conf)
+    provider_class = globals()[provider + 'Handler']
+    session['api_handler'] = provider_class(session)
+    return session
+
+def print_session_info(session_object):
+    session = session_object
+    for key in session:
+        exclude = ['api_handler', 'api_key', 'chats_directory', 'chats_extension']
+        if key not in exclude:
+            print(f'{key}: {session[key]}')
+    print('-' * 80)
+
+def get_chats_directory(conf):
+    if not os.path.isabs(conf['DEFAULT']['chats_directory']):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), conf['DEFAULT']['chats_directory'])
+    else:
+        path = conf['DEFAULT']['chats_directory']
+    return path
 
 if __name__ == "__main__":
     cli(obj={})

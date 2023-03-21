@@ -11,40 +11,34 @@ class APIHandler(ABC):
     def complete(self, prompt):
         pass
 
-
-
 class OpenAIHandler(APIHandler):
     def __init__(self, conf):
         self.conf = conf
-        if 'api_key' in conf['OPENAI']:
-            self.api_key = conf['OPENAI']['api_key']
+        if 'api_key' in conf:
+            self.api_key = conf['api_key']
         else:
             self.api_key = os.environ['OPENAI_API_KEY']
         openai.api_key = self.api_key
 
     def complete(self, prompt):
         response = openai.Completion.create(
-            engine=self.conf['OPENAI']['api_completion_model'],
+            request_timeout=120,
+            model=self.conf['model'],
             prompt=prompt,
-            temperature=float(self.conf['OPENAI']['api_temperature']),
-            max_tokens=int(self.conf['OPENAI']['api_max_tokens']),
+            temperature=float(self.conf['temperature']),
+            max_tokens=int(self.conf['max_tokens']),
         )
         return response.choices[0].text.strip()
 
-    def chat(self, message):
-        response = openai.Completion.create(
-            engine=self.conf['OPENAI']['api_chat_model'],
-            prompt=f"{message}\nAI:",
-            temperature=self.conf['OPENAI']['api_temperature'],
-            max_tokens=self.conf['OPENAI']['api_max_tokens'],
+    def chat(self, messages):
+        # for message in messages:
+        #     print(message)
+        response = openai.ChatCompletion.create(
+            request_timeout=120,
+            model=self.conf['model'],
+            messages=messages,
+            temperature=float(self.conf['temperature']),
+            max_tokens=int(self.conf['max_tokens']),
         )
-        return response.choices[0].text.strip()
-
-    def set_option(self, section, option, value):
-        self.conf[section][option] = value
-
-    def get_option(self, section, option):
-        return self.conf[section][option]
-
-
+        return response['choices'][0]['message']['content']
 
