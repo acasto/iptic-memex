@@ -7,15 +7,16 @@ from interaction_handler import FileCompletion, Completion, Chat
 
 
 
-@click.group()
+@click.group(invoke_without_command=True)
 @click.option('-c', '--conf', help='Path to a custom configuration file')
 @click.option('-m', '--model', help='Model to use for completion')
 @click.option('-p', '--prompt', help='Filename from the prompt directory to use for completion')
 @click.option('-t', '--temperature', help='Temperature to use for completion')
 @click.option('-l', '--max-tokens', help='Maximum number of tokens to use for completion')
 @click.option('-s', '--stream', is_flag=True, help='Stream the completion events')
+@click.option('-f', '--file', 'prompt_file', type=click.File("rt", encoding="utf-8"), help='File to use for completion')
 @click.pass_context
-def cli(ctx, conf, model, prompt, temperature, max_tokens, stream):
+def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, prompt_file):
     ctx.ensure_object(dict)
     ctx.obj['CONF'] = get_config(conf)
     ctx.obj['SESSION'] = {} # start building up the session object where we have enough info
@@ -32,6 +33,11 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream):
         ctx.obj['SESSION']['max_tokens'] = max_tokens
     if stream:
         ctx.obj['SESSION']['stream'] = stream
+    if prompt_file:
+        ctx.invoke(file, source=prompt_file)
+        return
+    if ctx.invoked_subcommand is None:
+        raise click.UsageError(cli.get_help(ctx))
 
 @cli.command()
 @click.pass_context
