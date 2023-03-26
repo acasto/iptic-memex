@@ -1,4 +1,4 @@
 .idea
 __pycache__
 sessions/*
-prompts/*
+!sessions/.gitkeep

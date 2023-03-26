@@ -10,48 +10,39 @@ from interaction_handler import FileCompletion, Completion, Chat
 @click.group(invoke_without_command=True)
 @click.option('-c', '--conf', help='Path to a custom configuration file')
 @click.option('-m', '--model', help='Model to use for completion')
-@click.option('-p', '--prompt', help='Filename from the prompt directory to use for completion')
+@click.option('-p', '--prompt', type=click.File("rt", encoding="utf-8"), help='Filename from the prompt directory to use for completion')
 @click.option('-t', '--temperature', help='Temperature to use for completion')
 @click.option('-l', '--max-tokens', help='Maximum number of tokens to use for completion')
 @click.option('-s', '--stream', is_flag=True, help='Stream the completion events')
-@click.option('-f', '--file', 'prompt_file', type=click.File("rt", encoding="utf-8"), help='File to use for completion')
+@click.option('-f', '--file', 'file_input', type=click.File("rt", encoding="utf-8"), help='File to use for completion')
 @click.pass_context
-def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, prompt_file):
+def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, file_input):
     ctx.ensure_object(dict)
     ctx.obj['CONF'] = get_config(conf)
     ctx.obj['SESSION'] = {} # start building up the session object where we have enough info
+    ctx.obj['SESSION']['prompt'] = get_prompt(ctx.obj['CONF'], prompt)
     if model is not None:
         if check_model(ctx.obj['CONF'], model):
             ctx.obj['SESSION']['model'] = model
         else:
             raise click.UsageError(f'Invalid model: {model}')
-    if prompt is not None:
-        ctx.obj['SESSION']['prompt'] = get_prompt(ctx.obj['CONF'], prompt)
     if temperature is not None:
         ctx.obj['SESSION']['temperature'] = temperature
     if max_tokens is not None:
         ctx.obj['SESSION']['max_tokens'] = max_tokens
     if stream:
         ctx.obj['SESSION']['stream'] = stream
-    if prompt_file:
-        ctx.invoke(file, source=prompt_file)
+    if file_input is not None:
+        if prompt in ctx.obj['SESSION']:
+            ctx.obj['SESSION']['prompt'] += file_input.read()
+        else:
+            ctx.obj['SESSION']['prompt'] = file_input.read()
+        session = get_session(ctx, 'completion')
+        completion = FileCompletion(session)
+        completion.start(ctx.obj['SESSION']['prompt'])
         return
     if ctx.invoked_subcommand is None:
         raise click.UsageError(cli.get_help(ctx))
-
-@cli.command()
-@click.pass_context
-@click.option('-v', '--verbose', is_flag=True, help="Show session parameters")
-@click.argument("source", type=click.File("rt", encoding="utf-8"), required=False)
-def file(ctx, verbose, source: io.TextIOWrapper):
-    if source is None:
-        raise click.UsageError("Missing source file")
-    prompt = source.read()
-    session = get_session(ctx, 'completion')
-    if verbose:
-        print_session_info(session)
-    completion = FileCompletion(session)
-    completion.start(prompt)
 
 @cli.command()
 @click.pass_context
@@ -140,18 +131,22 @@ def get_prompts(conf):
         path = conf['DEFAULT']['prompt_directory']
     return [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
 
-def get_prompt(conf, prompt_file):
-    if not os.path.isabs(conf['DEFAULT']['prompt_directory']):
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), conf['DEFAULT']['prompt_directory'])
+def get_prompt(conf, prompt_file=None):
+    if prompt_file is not None:
+        if not os.path.isabs(conf['DEFAULT']['prompt_directory']):
+            path = os.path.join(os.path.dirname(os.path.abspath(__file__)), conf['DEFAULT']['prompt_directory'])
+        else:
+            path = conf['DEFAULT']['prompt_directory']
+        if not os.path.isabs(prompt_file):
+            prompt_file = path + '/' + prompt_file
+        try:
+            with open(prompt_file, 'r') as f:
+                prompt = f.read()
+        except FileNotFoundError:
+            raise click.UsageError(f"Warning: Prompt file not found: {prompt_file}")
     else:
-        path = conf['DEFAULT']['prompt_directory']
-    if not os.path.isabs(prompt_file):
-        prompt_file = path + '/' + prompt_file
-    try:
-        with open(prompt_file, 'r') as f:
-            prompt = f.read()
-    except FileNotFoundError:
-        raise click.UsageError(f"Warning: Prompt file not found: {prompt_file}")
+        prompt = conf.get('DEFAULT', 'fallback_prompt')
+
     return prompt
 
 def get_chat(conf, chat_file):
@@ -260,7 +255,7 @@ def get_session(ctx, mode):
     if conf.has_option(provider, 'api_key') and conf.get(provider, 'api_key') != '':
         session['api_key'] = conf.get(provider, 'api_key')
     if 'prompt' not in session:
-        session['prompt'] = conf.get(provider, 'prompt')
+        session['prompt'] = conf.get(provider, 'fallback_prompt')
     if mode == 'chat' and 'chats_directory' not in session:
         session['chats_directory'] = get_chats_directory(conf)
     provider_class = globals()[provider + 'Handler']
