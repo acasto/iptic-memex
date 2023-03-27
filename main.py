@@ -9,18 +9,37 @@ from interaction_handler import FileCompletion, Completion, Chat
 @click.group(invoke_without_command=True)
 @click.option('-c', '--conf', help='Path to a custom configuration file')
 @click.option('-m', '--model', help='Model to use for completion')
-@click.option('-p', '--prompt', help='Filename from the prompt directory to use for completion')
+@click.option('-p', '--prompt', help='Filename from the prompt directory')
 @click.option('-t', '--temperature', help='Temperature to use for completion')
 @click.option('-l', '--max-tokens', help='Maximum number of tokens to use for completion')
 @click.option('-s', '--stream', is_flag=True, help='Stream the completion events')
 @click.option('-f', '--file', help='File to use for completion')
+@click.option('-v', '--verbose', is_flag=True, help='Show session parameters')
 @click.pass_context
-def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, file):
-    ctx.ensure_object(dict)
+def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, file, verbose):
+    """
+    the main entry point for the CLI click interface
+    :param ctx: the context object that we can use to pass around information
+    :param conf: a path to a custom configuration file
+    :param model: the model to use for completion
+    :param prompt: the prompt file to use for completion
+    :param temperature: temperature to use for completion
+    :param max_tokens: maximum number of tokens to use for completion
+    :param stream: stream the completion events
+    :param file: file to use for completion (file mode)
+    :param verbose: show session parameters
+    :return: none (this is a click entry point)
+    """
+
+    ctx.ensure_object(dict) # set up the context object to be passed around
+
+    # load the configuration file(s)
     ctx.obj['CONF'] = get_config(conf)
-    ctx.obj['SESSION'] = {} # start building up the session object where we have enough info
+
+    # start building up the session object with the information we have
+    ctx.obj['SESSION'] = {}
     if model is not None:
-        if check_model(ctx.obj['CONF'], model):
+        if model in get_models(ctx.obj['CONF']):
             ctx.obj['SESSION']['model'] = model
         else:
             raise click.UsageError(f'Invalid model: {model}')
@@ -32,9 +51,14 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, file):
         ctx.obj['SESSION']['stream'] = stream
     if prompt is not None:
         ctx.obj['SESSION']['prompt'] = get_prompt(ctx.obj['CONF'], prompt)
+    if verbose:
+        ctx.obj['SESSION']['verbose'] = True
+
+    # if we're in file mode take care of that now
     if file is not None:
         file_path = resolve_file_path(file)
         with open(file_path, 'rt') as f:
+            # if there's already a prompt in the session, append the file to it
             if prompt in ctx.obj['SESSION']:
                 ctx.obj['SESSION']['prompt'] += f.read()
             else:
@@ -43,16 +67,17 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, file):
         completion = FileCompletion(session)
         completion.start(ctx.obj['SESSION']['prompt'])
         return
+
+    # if no subcommand was invoked, show the help (since we're using invoke_without_command=True)
     if ctx.invoked_subcommand is None:
         raise click.UsageError(cli.get_help(ctx))
 
 @cli.command()
 @click.pass_context
-@click.option('-v', '--verbose', is_flag=True, help="Show session parameters")
-def ask(ctx, verbose):
+def ask(ctx):
     session = get_session(ctx, 'completion')
     prompt = session['prompt']
-    if verbose:
+    if session['verbose']:
         print_session_info(session)
     completion = Completion(session)
     completion.start(prompt)
@@ -60,16 +85,15 @@ def ask(ctx, verbose):
 
 @cli.command()
 @click.pass_context
-@click.option('-v', '--verbose', is_flag=True, help="Show session parameters")
 @click.option('-f', '--chat-file', type=click.Path(), help="Load a chat log from a file")
-def chat(ctx, verbose, chat_file):
+def chat(ctx, chat_file):
     conf = ctx.obj['CONF']
     session = get_session(ctx, 'chat')
     prompt = session['prompt']
     session['chats_extension'] = conf['DEFAULT']['chats_extension']
     if chat_file is not None:
         session['load_chat'] = resolve_file_path(chat_file, conf['DEFAULT']['chats_directory'])
-    if verbose:
+    if session['verbose']:
         print_session_info(session)
     chat_session = Chat(session)
     chat_session.start(prompt)
@@ -90,17 +114,18 @@ def list_models(ctx, providers):
 @click.pass_context
 def list_prompts(ctx):
     conf = ctx.obj['CONF']
-    prompts = get_prompts(conf)
-    for prompt in prompts:
-        print(prompt)
+    path = resolve_directory_path(conf['DEFAULT']['prompt_directory'])
+    for prompt in os.listdir(path):
+        click.echo(prompt)
+
 
 @cli.command()
 @click.pass_context
 def list_chats(ctx):
     conf = ctx.obj['CONF']
-    chats = get_chats(conf)
-    for chat_file in chats:
-        print(chat_file)
+    path = resolve_directory_path(conf['DEFAULT']['chats_directory'])
+    for chat_session in os.listdir(path):
+        click.echo(chat_session)
 
 @cli.command()
 @click.pass_context
@@ -118,8 +143,12 @@ def list_config(ctx):
 #  Helper functions   #
 #######################
 
-# parse the config files and return a ConfigParser object
-def get_config(config_file):
+def get_config(config_file=None):
+    """
+    read the config files and return a ConfigParser object
+    :param config_file: optional path to a custom config file
+    :return: ConfigParser object
+    """
     # get the default config file path and make sure it exists
     default_config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.ini')
     if not os.path.exists(default_config_file):
@@ -140,14 +169,13 @@ def get_config(config_file):
         config.read(config_file) # read the custom config file
     return config
 
-def get_prompts(conf):
-    if not os.path.isabs(conf['DEFAULT']['prompt_directory']):
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), conf['DEFAULT']['prompt_directory'])
-    else:
-        path = conf['DEFAULT']['prompt_directory']
-    return [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
-
 def get_prompt(conf, prompt_file=None):
+    """
+    get the requested prompt
+    :param conf: ConfigParser object
+    :param prompt_file: optional path to a custom prompt file
+    todo: add support for mode specific default prompts
+    """
     if prompt_file is not None:
         if not os.path.isabs(conf['DEFAULT']['prompt_directory']):
             path = os.path.join(os.path.dirname(os.path.abspath(__file__)), conf['DEFAULT']['prompt_directory'])
@@ -162,20 +190,24 @@ def get_prompt(conf, prompt_file=None):
             raise click.UsageError(f"Warning: Prompt file not found: {prompt_file}")
     return prompt
 
-def get_chats(conf):
-    path = resolve_directory_path(conf['DEFAULT']['chats_directory'])
-    return [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
-
-def get_providers(conf):
-    return conf.sections()
-
 def get_models(conf):
+    """
+    returns a list of available models in the config files
+    :param conf: ConfigParser object
+    :return: list of models
+    """
     models = []
     for provider in conf.sections():
         models += get_models_for_provider(conf, provider)
     return models
 
 def get_models_for_provider(conf, provider):
+    """
+    builds up a list of models for a given provider, combines mode specific and general models
+    :param conf: ConfigParser object
+    :param provider: name of the provider
+    :return: list of models
+    """
     models = []
     if conf.has_option(provider, 'completion_models'):
         models += [model.strip() for model in conf.get(provider, 'completion_models').split(',')]
@@ -184,6 +216,12 @@ def get_models_for_provider(conf, provider):
     return models
 
 def get_provider_from_model(conf, model):
+    """
+    returns the provider for a given model
+    :param conf: ConfigParser object
+    :param model: name of the model
+    :return: name of the provider
+    """
     for provider in conf.sections():
         models_available_list = []
         models_available_list += get_models_for_provider(conf, provider)
@@ -192,6 +230,12 @@ def get_provider_from_model(conf, model):
     return None
 
 def get_endpoint_from_model(conf, model):
+    """
+    returns the endpoint for a given model
+    :param conf: ConfigParser object
+    :param model: name of the model
+    :return: endpoint url
+    """
     provider = get_provider_from_model(conf, model)
     if provider is None:
         return None
@@ -201,6 +245,12 @@ def get_endpoint_from_model(conf, model):
     return None
 
 def get_mode_from_model(conf, model):
+    """
+    returns the mode for a given model
+    :param conf: ConfigParser object
+    :param model: name of the model
+    :return: mode
+    """
     provider = get_provider_from_model(conf, model)
     if provider is None:
         return None
@@ -213,6 +263,12 @@ def get_mode_from_model(conf, model):
     return None
 
 def get_default_provider(conf):
+    """
+    returns the default provider from the config file
+    works with both 'default_provider = <provider>' and 'default = True' methods
+    :param conf: ConfigParser object
+    :return: name of the default provider or None
+    """
     if conf.has_option('DEFAULT', 'default_provider'):
         return conf.get('DEFAULT', 'default_provider')
     for provider in conf.sections():
@@ -221,7 +277,13 @@ def get_default_provider(conf):
     return None
 
 def get_default_model(conf, provider, mode):
-    ## returns the first listed for the chosen provider for the chosen mode
+    """
+    returns the first listed for the chosen provider for the chosen mode
+    :param conf: ConfigParser object
+    :param provider: name of the provider
+    :param mode: mode
+    :return: name of the default model or None
+    """
     if mode == 'completion' or mode == 'complete':
         if conf.has_option(provider, 'completion_models'):
             return [model.strip() for model in conf.get(provider, 'completion_models').split(',')][0]
@@ -230,11 +292,15 @@ def get_default_model(conf, provider, mode):
             return [model.strip() for model in conf.get(provider, 'chat_models').split(',')][0]
     return None
 
-def check_model(conf, model):
-    if model in get_models(conf):
-        return True
-
 def get_session(ctx, mode):
+    """
+    sets up the session and returns it with an 'api_handler' key and a handler instance for the chosen provider
+    todo: maybe fetch a dict of parameters from the provider classes so that we don't have to hardcode them all here
+          and a new provider could be added without having to change this function
+    :param ctx: click context
+    :param mode: mode
+    :return: session dict
+    """
     conf = ctx.obj['CONF']
     session = ctx.obj['SESSION']
     ## finish setting up the session object if needed
@@ -258,27 +324,33 @@ def get_session(ctx, mode):
     if 'prompt' not in session:
         session['prompt'] = conf.get(provider, 'fallback_prompt')
     if mode == 'chat' and 'chats_directory' not in session:
-        session['chats_directory'] = get_chats_directory(conf)
+        session['chats_directory'] = resolve_directory_path(conf['DEFAULT']['chats_directory'])
+
     provider_class = globals()[provider + 'Handler']
     session['api_handler'] = provider_class(session)
     return session
 
 def print_session_info(session_object):
+    """
+    outputs the session parameters to the console for informational purposes (use -v to see this)
+    :param session_object: session dict
+    :return: None
+    """
     session = session_object
     for key in session:
-        exclude = ['api_handler', 'api_key']
+        exclude = ['api_handler', 'api_key', 'verbose']
         if key not in exclude:
             print(f'{key}: {session[key]}')
     print('-' * 80)
 
-def get_chats_directory(conf):
-    if not os.path.isabs(conf['DEFAULT']['chats_directory']):
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), conf['DEFAULT']['chats_directory'])
-    else:
-        path = conf['DEFAULT']['chats_directory']
-    return path
-
 def resolve_file_path(file_name, base_dir=None, extension=None):
+    """
+    works out the path to a file based on the filename and optional base directory and can take an optional extension
+    :param file_name: name of the file to resolve the path to
+    :param base_dir: optional base directory to resolve the path from
+    :param extension: optional extension to append to the file name
+    :return: absolute path to the file
+    """
     # If base_dir is not specified, use the current working directory
     if base_dir is None:
         base_dir = os.getcwd()
@@ -319,6 +391,11 @@ def resolve_file_path(file_name, base_dir=None, extension=None):
     return None
 
 def resolve_directory_path(dir_name):
+    """
+    works out the path to a directory
+    :param dir_name: name of the directory to resolve the path to
+    :return: absolute path to the directory
+    """
     dir_name = os.path.expanduser(dir_name)
     if not os.path.isabs(dir_name):
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)), dir_name)
@@ -329,5 +406,6 @@ def resolve_directory_path(dir_name):
             return dir_name
     return None
 
+# take care of business
 if __name__ == "__main__":
     cli(obj={})
