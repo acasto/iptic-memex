@@ -3,26 +3,40 @@ import json
 import readline
 import re
 import time
+import click
 from datetime import datetime
 from abc import ABC, abstractmethod
+from pygments import highlight
+from pygments.lexers import get_lexer_by_name
+from pygments.formatters import TerminalFormatter
+from pygments.util import ClassNotFound
+from pygments.lexers import guess_lexer
 
 class InteractionHandler(ABC):
+    """
+    Abstract class for interaction handlers
+    """
     @abstractmethod
     def start(self, message):
         pass
 
 class FileCompletion(InteractionHandler):
+    """
+    File completion interaction handler
+    """
     def __init__(self, session):
         self.session = session
         self.api_handler = session['api_handler']
 
     def start(self, prompt):
+        """
+        Starts the file completion interaction
+        :param prompt: the prompt read in from the command line or file
+        :return: None
+        """
         response = self.api_handler.complete(prompt)
         if self.session['stream']:
-            ## create variables to collect the stream of events
-            # collected_events = []
-            # completion_text = ''
-            ## iterate through the stream of events, lstrip() the first couple events to aovid the weird newline
+            # iterate through the stream of events, lstrip() the first couple events to avoid the weird newline
             i = 0
             for event in response:
                 # collected_events.append(event)  # save the event response
@@ -38,10 +52,13 @@ class FileCompletion(InteractionHandler):
             print() # finish with a newline
         else:
             response = self.api_handler.complete(prompt)
-            print(response.choices[0].text.strip())
+            click.echo(response.choices[0].text.strip())
 
 
 class Completion(InteractionHandler):
+    """
+    Completion interaction handler
+    """
     def __init__(self, session):
         self.session = session
         self.api_handler = session['api_handler']
@@ -76,6 +93,9 @@ class Completion(InteractionHandler):
 
 
 class Chat(InteractionHandler):
+    """
+    Chat interaction handler
+    """
     def __init__(self, session):
         self.session = session
         self.api_handler = session['api_handler']

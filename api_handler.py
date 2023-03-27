@@ -4,6 +4,9 @@ import time
 from abc import ABC, abstractmethod
 
 class APIHandler(ABC):
+    """
+    Abstract class for API handlers
+    """
     @abstractmethod
     def chat(self, message):
         pass
@@ -13,6 +16,9 @@ class APIHandler(ABC):
         pass
 
 class OpenAIHandler(APIHandler):
+    """
+    OpenAI API handler
+    """
     def __init__(self, conf):
         self.conf = conf
         if 'api_key' in conf:
@@ -22,6 +28,11 @@ class OpenAIHandler(APIHandler):
         openai.api_key = self.api_key
 
     def complete(self, prompt):
+        """
+        Creates a completion request to the OpenAI API
+        :param prompt: the prompt to complete from an interaction handler
+        :return: response
+        """
         response = openai.Completion.create(
             request_timeout=120,
             model=self.conf['model'],
@@ -33,8 +44,11 @@ class OpenAIHandler(APIHandler):
         return response
 
     def chat(self, messages):
-        # for message in messages:
-        #     print(message)
+        """
+        Creates a chat completion request to the OpenAI API
+        :param messages: the message to complete from an interaction handler
+        :return: response
+        """
         response = openai.ChatCompletion.create(
             request_timeout=120,
             model=self.conf['model'],

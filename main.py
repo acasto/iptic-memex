@@ -13,10 +13,10 @@ from interaction_handler import FileCompletion, Completion, Chat
 @click.option('-t', '--temperature', help='Temperature to use for completion')
 @click.option('-l', '--max-tokens', help='Maximum number of tokens to use for completion')
 @click.option('-s', '--stream', is_flag=True, help='Stream the completion events')
-@click.option('-f', '--file', help='File to use for completion')
 @click.option('-v', '--verbose', is_flag=True, help='Show session parameters')
+@click.option('-f', '--file', help='File to use for completion')
 @click.pass_context
-def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, file, verbose):
+def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file):
     """
     the main entry point for the CLI click interface
     :param ctx: the context object that we can use to pass around information
@@ -30,7 +30,6 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, file, verbose
     :param verbose: show session parameters
     :return: none (this is a click entry point)
     """
-
     ctx.ensure_object(dict) # set up the context object to be passed around
 
     # load the configuration file(s)
@@ -56,13 +55,17 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, file, verbose
 
     # if we're in file mode take care of that now
     if file is not None:
-        file_path = resolve_file_path(file)
-        with open(file_path, 'rt') as f:
-            # if there's already a prompt in the session, append the file to it
-            if prompt in ctx.obj['SESSION']:
-                ctx.obj['SESSION']['prompt'] += f.read()
-            else:
-                ctx.obj['SESSION']['prompt'] = f.read()
+        # if the file is '-', read from stdin
+        if file == '-':
+            ctx.obj['SESSION']['prompt'] = sys.stdin.read()
+        else:
+            file_path = resolve_file_path(file)
+            with open(file_path, 'rt') as f:
+                # if there's already a prompt in the session, append the file to it
+                if prompt in ctx.obj['SESSION']:
+                    ctx.obj['SESSION']['prompt'] += f.read()
+                else:
+                    ctx.obj['SESSION']['prompt'] = f.read()
         session = get_session(ctx, 'completion')
         completion = FileCompletion(session)
         completion.start(ctx.obj['SESSION']['prompt'])
@@ -77,7 +80,7 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, file, verbose
 def ask(ctx):
     session = get_session(ctx, 'completion')
     prompt = session['prompt']
-    if session['verbose']:
+    if 'verbose' in session and session['verbose']:
         print_session_info(session)
     completion = Completion(session)
     completion.start(prompt)
@@ -93,7 +96,7 @@ def chat(ctx, chat_file):
     session['chats_extension'] = conf['DEFAULT']['chats_extension']
     if chat_file is not None:
         session['load_chat'] = resolve_file_path(chat_file, conf['DEFAULT']['chats_directory'])
-    if session['verbose']:
+    if 'verbose' in session and session['verbose']:
         print_session_info(session)
     chat_session = Chat(session)
     chat_session.start(prompt)
