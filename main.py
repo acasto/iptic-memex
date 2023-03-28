@@ -24,10 +24,10 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file
     :param model: the model to use for completion
     :param prompt: the prompt file to use for completion
     :param temperature: temperature to use for completion
-    :param max_tokens: maximum number of tokens to use for completion
+    :param max_tokens: maximum number of tokens to use
     :param stream: stream the completion events
-    :param file: file to use for completion (file mode)
     :param verbose: show session parameters
+    :param file: file to use for completion (file mode)
     :return: none (this is a click entry point)
     """
     ctx.ensure_object(dict) # set up the context object to be passed around

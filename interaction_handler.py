@@ -37,16 +37,12 @@ class FileCompletion(InteractionHandler):
         response = self.api_handler.complete(prompt)
         if self.session['stream']:
             # iterate through the stream of events, lstrip() the first couple events to avoid the weird newline
-            i = 0
-            for event in response:
-                # collected_events.append(event)  # save the event response
+            for i, event in enumerate(response):
                 event_text = event['choices'][0]['text']  # extract the text
-                # completion_text += event_text  # append the text
                 if i < 2:
-                    print(event_text.lstrip(), end="", flush=True)
-                    i += 1
+                    click.echo(event_text.lstrip(), nl=False)
                 else:
-                    print(event_text, end="", flush=True)
+                    click.echo(event_text, nl=False)
                 if 'stream_delay' in self.session:
                     time.sleep(self.session['stream_delay'])
             print() # finish with a newline
@@ -73,14 +69,12 @@ class Completion(InteractionHandler):
             # collected_events = []
             # completion_text = ''
             ## iterate through the stream of events, lstrip() the first couple events to avoid the weird newline
-            i = 0
-            for event in response:
+            for i, event in enumerate(response):
                 # collected_events.append(event)  # save the event response
                 event_text = event['choices'][0]['text']  # extract the text
                 # completion_text += event_text  # append the text
                 if i < 2:
                     print(event_text.lstrip(), end="", flush=True)
-                    i += 1
                 else:
                     print(event_text, end="", flush=True)
                 if 'stream_delay' in self.session:
@@ -157,7 +151,6 @@ class Chat(InteractionHandler):
                 # collected_events = []
                 completion_text = ''
                 ## iterate through the stream of events, lstrip() the first couple events to avoid the weird newline
-                i = 0
                 for event in response:
                     if 'content' in event['choices'][0]['delta']:
                         #collected_events.append(event)  # save the event response
