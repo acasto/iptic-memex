@@ -61,27 +61,21 @@ class Completion(InteractionHandler):
     def start(self, prompt):
         prompt += " User: "
         prompt += input("You: ")
-        response = self.api_handler.complete(prompt)
         if self.session['stream']:
+            response = self.api_handler.stream_complete(prompt)
             print("AI: ", end="", flush=True)
-            ## create variables to collect the stream of events
-            # collected_events = []
-            # completion_text = ''
             ## iterate through the stream of events, lstrip() the first couple events to avoid the weird newline
             for i, event in enumerate(response):
-                # collected_events.append(event)  # save the event response
-                event_text = event['choices'][0]['text']  # extract the text
-                # completion_text += event_text  # append the text
                 if i < 2:
-                    print(event_text.lstrip(), end="", flush=True)
+                    click.echo(event.lstrip(), nl=False)
                 else:
-                    print(event_text, end="", flush=True)
+                    click.echo(event, nl=False)
                 if 'stream_delay' in self.session:
                     time.sleep(self.session['stream_delay'])
-            print() # finish with a newline
+            click.echo() # finish with a newline
         else:
             response = self.api_handler.complete(prompt)
-            print(f"AI: " + response.choices[0].text.strip())
+            print(f"AI: " + response.strip())
 
 
 
@@ -138,37 +132,22 @@ class Chat(InteractionHandler):
 
             messages.append({"role": "user", "content": user_input})
 
-
-            # response = self.api_handler.chat(messages)
-            # messages.append({"role": "assistant", "content": response})
-            # print("\nAI:", response['choices'][0]['message']['content'], "\n")
-
-            response = self.api_handler.chat(messages)
             if self.session['stream']:
+                response = self.api_handler.stream_chat(messages)
                 print("\nAI: ", end="", flush=True)
-                ## create variables to collect the stream of events
-                # collected_events = []
                 completion_text = ''
                 ## iterate through the stream of events, lstrip() the first couple events to avoid the weird newline
                 for event in response:
-                    if 'content' in event['choices'][0]['delta']:
-                        #collected_events.append(event)  # save the event response
-                        event_text = event['choices'][0]['delta']['content']  # extract the text
-                        completion_text += event_text  # append the text
-                        # if i < 2:
-                        #     print(event_text.lstrip(), end="", flush=True)
-                        #     i += 1
-                        # else:
-                        #     print(event_text, end="", flush=True)
-                        print(event_text, end="", flush=True)
-                        if 'stream_delay' in self.session:
-                            time.sleep(self.session['stream_delay'])
+                    completion_text += event  # append the text
+                    click.echo(event, nl=False)
+                    if 'stream_delay' in self.session:
+                        time.sleep(self.session['stream_delay'])
                 print("\n")  # finish with a newline
                 messages.append({"role": "assistant", "content": completion_text})
             else:
                 response = self.api_handler.chat(messages)
-                print(f"\nAI: " + response['choices'][0]['message']['content'], "\n")
-                messages.append({"role": "assistant", "content": response['choices'][0]['message']['content']})
+                print(f"\nAI: " + response, "\n")
+                messages.append({"role": "assistant", "content": response})
 
 
     def save_chat(self, messages, filename):

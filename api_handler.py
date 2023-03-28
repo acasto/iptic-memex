@@ -8,12 +8,21 @@ class APIHandler(ABC):
     Abstract class for API handlers
     """
     @abstractmethod
+    def complete(self, prompt):
+        pass
+
+    @abstractmethod
+    def stream_complete(self, prompt):
+        pass
+
+    @abstractmethod
     def chat(self, message):
         pass
 
     @abstractmethod
-    def complete(self, prompt):
+    def stream_chat(self, message):
         pass
+
 
 class OpenAIHandler(APIHandler):
     """
@@ -49,7 +58,7 @@ class OpenAIHandler(APIHandler):
 
     def stream_complete(self, prompt):
         """
-        use generator chaining to keep the response provider agnostic
+        Use generator chaining to keep the response provider-agnostic
         :param prompt:
         :return:
         """
@@ -61,7 +70,7 @@ class OpenAIHandler(APIHandler):
         """
         Creates a chat completion request to the OpenAI API
         :param messages: the message to complete from an interaction handler
-        :return: response
+        :return: response (str)
         """
         response = openai.ChatCompletion.create(
             request_timeout=120,
@@ -71,5 +80,20 @@ class OpenAIHandler(APIHandler):
             max_tokens=int(self.conf['max_tokens']),
             stream=bool(self.conf['stream']),
         )
-        return response
+        # if in stream mode chain the generator
+        if self.conf['stream']:
+            return response
+        else:
+            return response['choices'][0]['message']['content']
+
+    def stream_chat(self, messages):
+        """
+        Use generator chaining to keep the response provider-agnostic
+        :param messages:
+        :return:
+        """
+        response = self.chat(messages)
+        for event in response:
+            if 'content' in event['choices'][0]['delta']:
+                yield event['choices'][0]['delta']['content']
 
