@@ -4,7 +4,7 @@ import click
 import io
 from configparser import ConfigParser
 from api_handler import OpenAIHandler
-from interaction_handler import FileCompletion, Completion, Chat
+from interaction_handler import Completion, Chat
 
 @click.group(invoke_without_command=True)
 @click.option('-c', '--conf', help='Path to a custom configuration file')
@@ -66,8 +66,9 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file
                     ctx.obj['SESSION']['prompt'] += f.read()
                 else:
                     ctx.obj['SESSION']['prompt'] = f.read()
+        ctx.obj['SESSION']['interactive'] = False # we're not in interactive mode
         session = get_session(ctx, 'completion')
-        completion = FileCompletion(session)
+        completion = Completion(session)
         completion.start(ctx.obj['SESSION']['prompt'])
         return
 
@@ -180,12 +181,7 @@ def get_prompt(conf, prompt_file=None):
     todo: add support for mode specific default prompts
     """
     if prompt_file is not None:
-        if not os.path.isabs(conf['DEFAULT']['prompt_directory']):
-            path = os.path.join(os.path.dirname(os.path.abspath(__file__)), conf['DEFAULT']['prompt_directory'])
-        else:
-            path = conf['DEFAULT']['prompt_directory']
-        if not os.path.isabs(prompt_file):
-            prompt_file = path + '/' + prompt_file
+        prompt_file = resolve_file_path(prompt_file, conf['DEFAULT']['prompt_directory'], '.txt')
         try:
             with open(prompt_file, 'r') as f:
                 prompt = f.read()
@@ -202,7 +198,7 @@ def get_models(conf):
     models = []
     for provider in conf.sections():
         models += get_models_for_provider(conf, provider)
-    return models
+    return set(models) # remove duplicates with set()
 
 def get_models_for_provider(conf, provider):
     """
@@ -328,6 +324,10 @@ def get_session(ctx, mode):
         session['prompt'] = conf.get(provider, 'fallback_prompt')
     if mode == 'chat' and 'chats_directory' not in session:
         session['chats_directory'] = resolve_directory_path(conf['DEFAULT']['chats_directory'])
+    if conf.has_option(provider, 'response_label'):
+        session['response_label'] = conf.get(provider, 'response_label')
+    if 'interactive' not in session:
+        session['interactive'] = True
 
     provider_class = globals()[provider + 'Handler']
     session['api_handler'] = provider_class(session)
