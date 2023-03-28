@@ -320,7 +320,12 @@ def get_session(ctx, mode):
     if conf.has_option(provider, 'api_key') and conf.get(provider, 'api_key') != '':
         session['api_key'] = conf.get(provider, 'api_key')
     if 'prompt' not in session: # todo: fetch mode specific default prompt file
-        session['prompt'] = conf.get(provider, 'fallback_prompt')
+        mode = get_mode_from_model(conf, session['model'])
+        prompt = resolve_file_path( mode + "_default.txt", conf['DEFAULT']['prompt_directory'])
+        if prompt is not None:
+            session['prompt'] = get_prompt(conf, mode + "_default.txt")
+        else:
+            session['prompt'] = conf.get(provider, 'fallback_prompt')
     if mode == 'chat' and 'chats_directory' not in session:
         session['chats_directory'] = resolve_directory_path(conf['DEFAULT']['chats_directory'])
     if conf.has_option(provider, 'response_label'):
