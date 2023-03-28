@@ -31,7 +31,7 @@ class OpenAIHandler(APIHandler):
         """
         Creates a completion request to the OpenAI API
         :param prompt: the prompt to complete from an interaction handler
-        :return: response
+        :return: response (str)
         """
         response = openai.Completion.create(
             request_timeout=120,
@@ -41,7 +41,21 @@ class OpenAIHandler(APIHandler):
             max_tokens=int(self.conf['max_tokens']),
             stream=bool(self.conf['stream']),
         )
-        return response
+        # if in stream mode chain the generator
+        if self.conf['stream']:
+            return response
+        else:
+            return response.choices[0].text.strip()
+
+    def stream_complete(self, prompt):
+        """
+        use generator chaining to keep the response provider agnostic
+        :param prompt:
+        :return:
+        """
+        response =  self.complete(prompt)
+        for event in response:
+            yield event['choices'][0]['text']
 
     def chat(self, messages):
         """

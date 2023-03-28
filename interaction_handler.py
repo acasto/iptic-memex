@@ -34,21 +34,20 @@ class FileCompletion(InteractionHandler):
         :param prompt: the prompt read in from the command line or file
         :return: None
         """
-        response = self.api_handler.complete(prompt)
         if self.session['stream']:
-            # iterate through the stream of events, lstrip() the first couple events to avoid the weird newline
+            response = self.api_handler.stream_complete(prompt)
+            # iterate through the stream, lstrip() the first couple events to avoid the weird newline
             for i, event in enumerate(response):
-                event_text = event['choices'][0]['text']  # extract the text
                 if i < 2:
-                    click.echo(event_text.lstrip(), nl=False)
+                    click.echo(event.lstrip(), nl=False)
                 else:
-                    click.echo(event_text, nl=False)
+                    click.echo(event, nl=False)
                 if 'stream_delay' in self.session:
                     time.sleep(self.session['stream_delay'])
-            print() # finish with a newline
+            click.echo() # finish with a newline
         else:
             response = self.api_handler.complete(prompt)
-            click.echo(response.choices[0].text.strip())
+            click.echo(response)
 
 
 class Completion(InteractionHandler):
