@@ -178,7 +178,6 @@ def get_prompt(conf, prompt_file=None):
     get the requested prompt
     :param conf: ConfigParser object
     :param prompt_file: optional path to a custom prompt file
-    todo: add support for mode specific default prompts
     """
     if prompt_file is not None:
         prompt_file = resolve_file_path(prompt_file, conf['DEFAULT']['prompt_directory'], '.txt')
@@ -320,7 +319,7 @@ def get_session(ctx, mode):
         session['endpoint'] = get_endpoint_from_model(conf, session['model'])
     if conf.has_option(provider, 'api_key') and conf.get(provider, 'api_key') != '':
         session['api_key'] = conf.get(provider, 'api_key')
-    if 'prompt' not in session:
+    if 'prompt' not in session: # todo: fetch mode specific default prompt file
         session['prompt'] = conf.get(provider, 'fallback_prompt')
     if mode == 'chat' and 'chats_directory' not in session:
         session['chats_directory'] = resolve_directory_path(conf['DEFAULT']['chats_directory'])
@@ -328,6 +327,8 @@ def get_session(ctx, mode):
         session['response_label'] = conf.get(provider, 'response_label')
     if 'interactive' not in session:
         session['interactive'] = True
+    if 'mode' not in session: # since some chat models can also do completion but need different parameters
+        session['mode'] = get_mode_from_model(conf, session['model'])
 
     provider_class = globals()[provider + 'Handler']
     session['api_handler'] = provider_class(session)

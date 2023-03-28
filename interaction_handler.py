@@ -33,59 +33,27 @@ class Completion(InteractionHandler):
         if self.session['interactive']:
             prompt += " User: "
             prompt += input("You: ")
+
         if self.session['stream']:
-            response = self.api_handler.stream_complete(prompt)
+            if 'mode' in self.session and self.session['mode'] == 'chat':
+                messages = [{"role": "user", "content": prompt}]
+                response = self.api_handler.stream_chat(messages)
+            else:
+                response = self.api_handler.stream_complete(prompt)
 
             completion_text = ''
-            buffer = []
-            backtick_buffer = []
-            inside_code_block = False
 
             print(f"{label}: ", end="", flush=True)
 
+            # if in interactive mode do some syntax highlighting
             if self.session['interactive']:
-                for i, event in enumerate(response):
-                    if i < 2:
-                        event = event.lstrip()
-                    for char in event:
-                        if char == '`':
-                            backtick_buffer.append(char)
-                        else:
-                            if len(backtick_buffer) >= 3:
-                                inside_code_block = not inside_code_block
-
-                                if not inside_code_block:
-                                    code_block = ''.join(buffer)
-                                    formatted_code_block = format_code_block(code_block)
-                                    click.echo(formatted_code_block, nl=False)
-                                    buffer = []
-                            else:
-                                # Flush stray backticks
-                                if inside_code_block:
-                                    buffer.extend(backtick_buffer)
-                                else:
-                                    click.echo(''.join(backtick_buffer), nl=False)
-                                    completion_text += ''.join(backtick_buffer)
-
-                            # Reset backtick buffer
-                            backtick_buffer = []
-
-                            if inside_code_block:
-                                buffer.append(char)
-                            else:
-                                click.echo(char, nl=False)
-                                completion_text += char
-                if 'stream_delay' in self.session:
-                    time.sleep(self.session['stream_delay'])
-
-            # Flush remaining backticks if any
-            if backtick_buffer:
-                if inside_code_block:
-                    buffer.extend(backtick_buffer)
-                else:
-                    click.echo(''.join(backtick_buffer), nl=False)
-                    completion_text += ''.join(backtick_buffer)
-
+                for i, part in enumerate(process_streamed_response(response)):
+                    if i < 4:
+                        part = part.lstrip()
+                    click.echo(part, nl=False)
+                    completion_text += part
+                    if 'stream_delay' in self.session:
+                        time.sleep(self.session['stream_delay'])
             else:
                 # iterate through the stream of events, lstrip() the first couple events to avoid the weird newline
                 for i, event in enumerate(response):
@@ -98,7 +66,11 @@ class Completion(InteractionHandler):
 
             click.echo() # finish with a newline
         else:
-            response = self.api_handler.complete(prompt)
+            if 'mode' in self.session and self.session['mode'] == 'chat':
+                messages = [{"role": "user", "content": prompt}]
+                response = self.api_handler.chat(messages)
+            else:
+                response = self.api_handler.complete(prompt)
             # format code blocks if in interactive mode
             if self.session['interactive']:
                 code_block_regex = re.compile(r'```(.+?)```', re.DOTALL)
@@ -167,50 +139,11 @@ class Chat(InteractionHandler):
 
                 click.echo(f"\n{label}: ", nl=False)
                 completion_text = ''
-                buffer = []
-                backtick_buffer = []
-                inside_code_block = False
-
-                for event in response:
-                    for char in event:
-                        if char == '`':
-                            backtick_buffer.append(char)
-                        else:
-                            if len(backtick_buffer) >= 3:
-                                inside_code_block = not inside_code_block
-
-                                if not inside_code_block:
-                                    code_block = ''.join(buffer)
-                                    formatted_code_block = format_code_block(code_block)
-                                    click.echo(formatted_code_block, nl=False)
-                                    buffer = []
-                            else:
-                                # Flush stray backticks
-                                if inside_code_block:
-                                    buffer.extend(backtick_buffer)
-                                else:
-                                    click.echo(''.join(backtick_buffer), nl=False)
-                                    completion_text += ''.join(backtick_buffer)
-
-                            # Reset backtick buffer
-                            backtick_buffer = []
-
-                            if inside_code_block:
-                                buffer.append(char)
-                            else:
-                                click.echo(char, nl=False)
-                                completion_text += char
-
+                for part in process_streamed_response(response):
+                    click.echo(part, nl=False)
+                    completion_text += part
                     if 'stream_delay' in self.session:
-                        time.sleep(self.session['stream_delay'])
-
-                # Flush remaining backticks if any
-                if backtick_buffer:
-                    if inside_code_block:
-                        buffer.extend(backtick_buffer)
-                    else:
-                        click.echo(''.join(backtick_buffer), nl=False)
-                        completion_text += ''.join(backtick_buffer)
+                          time.sleep(self.session['stream_delay'])
 
                 click.echo("\n")  # finish with a newline
                 messages.append({"role": "assistant", "content": completion_text})
@@ -280,3 +213,43 @@ def format_code_block(code_block):
         lexer = get_lexer_by_name("text", stripall=True)
     formatter = TerminalFormatter()
     return highlight(code_block, lexer, formatter)
+
+def process_streamed_response(response):
+    buffer = []
+    backtick_buffer = []
+    inside_code_block = False
+
+    for event in response:
+        for char in event:
+            if char == '`':
+                backtick_buffer.append(char)
+            else:
+                if len(backtick_buffer) >= 3:
+                    inside_code_block = not inside_code_block
+
+                    if not inside_code_block:
+                        code_block = ''.join(buffer)
+                        formatted_code_block = format_code_block(code_block)
+                        yield formatted_code_block
+                        buffer = []
+                else:
+                    # Flush stray backticks
+                    if inside_code_block:
+                        buffer.extend(backtick_buffer)
+                    else:
+                        yield ''.join(backtick_buffer)
+
+                # Reset backtick buffer
+                backtick_buffer = []
+
+                if inside_code_block:
+                    buffer.append(char)
+                else:
+                    yield char
+
+    # Flush remaining backticks if any
+    if backtick_buffer:
+        if inside_code_block:
+            buffer.extend(backtick_buffer)
+        else:
+            yield ''.join(backtick_buffer)
