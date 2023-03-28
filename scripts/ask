@@ -1,0 +1,15 @@
+#!/bin/bash
+
+if [ $# -eq 0 ]; then
+  echo 'Usage: ask "your question"'
+  exit 1
+fi
+
+#if [ "$1" = "-s" ]; then
+#  shift 1
+#  echo $@ | memex -s -f -
+#else
+#  echo $@ | memex -f -
+#fi
+
+echo $@ | memex -s -f -

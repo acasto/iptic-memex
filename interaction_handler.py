@@ -78,8 +78,6 @@ class Completion(InteractionHandler):
                  lambda match: format_code_block(match.group(1)), response)
             click.echo(f"{label}: "  + response)
 
-
-
 class Chat(InteractionHandler):
     """
     Chat interaction handler

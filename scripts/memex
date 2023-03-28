@@ -1,0 +1,3 @@
+#!/bin/bash
+
+python /home/adam/projects/iptic-memex/main.py "$@"

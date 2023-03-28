@@ -319,7 +319,7 @@ def get_session(ctx, mode):
         session['endpoint'] = get_endpoint_from_model(conf, session['model'])
     if conf.has_option(provider, 'api_key') and conf.get(provider, 'api_key') != '':
         session['api_key'] = conf.get(provider, 'api_key')
-    if 'prompt' not in session: # todo: fetch mode specific default prompt file
+    if 'prompt' not in session:
         mode = get_mode_from_model(conf, session['model'])
         prompt = resolve_file_path( mode + "_default.txt", conf['DEFAULT']['prompt_directory'])
         if prompt is not None:
