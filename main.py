@@ -57,15 +57,11 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file
     if file is not None:
         # if the file is '-', read from stdin
         if file == '-':
-            ctx.obj['SESSION']['prompt'] = sys.stdin.read()
+            ctx.obj['SESSION']['message'] = sys.stdin.read()
         else:
             file_path = resolve_file_path(file)
             with open(file_path, 'rt') as f:
-                # if there's already a prompt in the session, append the file to it
-                if prompt in ctx.obj['SESSION']:
-                    ctx.obj['SESSION']['prompt'] += f.read()
-                else:
-                    ctx.obj['SESSION']['prompt'] = f.read()
+                ctx.obj['SESSION']['message'] = f.read()
         ctx.obj['SESSION']['interactive'] = False # we're not in interactive mode
         session = get_session(ctx, 'completion')
         completion = Completion(session)
@@ -78,9 +74,17 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file
 
 @cli.command()
 @click.pass_context
-def ask(ctx):
+@click.option('-f', '--file', help='File to include in prompt (ask questions about file)')
+def ask(ctx, file):
     session = get_session(ctx, 'completion')
     prompt = session['prompt']
+    if file is not None:
+        file_path = resolve_file_path(file)
+        if file_path is None:
+            raise click.UsageError(f'Invalid file: {file}')
+        else:
+            with open(file_path, 'rt') as f:
+                session['load_file'] = f.read()
     if 'verbose' in session and session['verbose']:
         print_session_info(session)
     completion = Completion(session)
@@ -89,14 +93,22 @@ def ask(ctx):
 
 @cli.command()
 @click.pass_context
-@click.option('-f', '--chat-file', type=click.Path(), help="Load a chat log from a file")
-def chat(ctx, chat_file):
+@click.option('-s', '--session', 'load_chat', type=click.Path(), help="Load a saved chat session from a file")
+@click.option('-f', '--file', help='File to include in prompt (ask questions about file)')
+def chat(ctx, load_chat, file):
     conf = ctx.obj['CONF']
     session = get_session(ctx, 'chat')
     prompt = session['prompt']
+    if file is not None:
+        file_path = resolve_file_path(file)
+        if file_path is None:
+            raise click.UsageError(f'Invalid file: {file}')
+        else:
+            with open(file_path, 'rt') as f:
+                session['load_file'] = f.read()
     session['chats_extension'] = conf['DEFAULT']['chats_extension']
-    if chat_file is not None:
-        session['load_chat'] = resolve_file_path(chat_file, conf['DEFAULT']['chats_directory'])
+    if load_chat is not None:
+        session['load_chat'] = resolve_file_path(load_chat, conf['DEFAULT']['chats_directory'])
     if 'verbose' in session and session['verbose']:
         print_session_info(session)
     chat_session = Chat(session)
@@ -347,7 +359,7 @@ def print_session_info(session_object):
     """
     session = session_object
     for key in session:
-        exclude = ['api_handler', 'api_key', 'verbose']
+        exclude = ['api_handler', 'api_key', 'verbose', 'load_file']
         if key not in exclude:
             print(f'{key}: {session[key]}')
     print('-' * 80)

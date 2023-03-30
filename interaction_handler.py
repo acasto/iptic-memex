@@ -30,16 +30,26 @@ class Completion(InteractionHandler):
 
     def start(self, prompt):
         label = self.session['response_label']
+        message = ""
+
         if self.session['interactive']:
-            prompt += " User: "
-            prompt += input("You: ")
+            message = input("You: ")
+        else:
+            if 'message' in self.session:
+                message = self.session['message']
 
         if self.session['stream']:
             if 'mode' in self.session and self.session['mode'] == 'chat':
-                messages = [{"role": "user", "content": prompt}]
+                if 'load_file' in self.session:
+                    prompt = prompt +" "+ message
+                    message = self.session['load_file']
+                messages = [{"role": "system", "content": prompt },{"role": "user", "content": message}]
                 response = self.api_handler.stream_chat(messages)
             else:
-                response = self.api_handler.stream_complete(prompt)
+                if 'load_file' in self.session:
+                    prompt = prompt +" "+ message +" file: "+ self.session['load_file']
+                    message = ""
+                response = self.api_handler.stream_complete(prompt +" "+ message)
 
             completion_text = ''
 
@@ -67,10 +77,10 @@ class Completion(InteractionHandler):
             click.echo() # finish with a newline
         else:
             if 'mode' in self.session and self.session['mode'] == 'chat':
-                messages = [{"role": "user", "content": prompt}]
+                messages = [{"role": "system", "content": prompt },{"role": "user", "content": message}]
                 response = self.api_handler.chat(messages)
             else:
-                response = self.api_handler.complete(prompt)
+                response = self.api_handler.complete(prompt +" "+ message)
             # format code blocks if in interactive mode
             if self.session['interactive']:
                 code_block_regex = re.compile(r'```(.+?)```', re.DOTALL)
@@ -94,6 +104,8 @@ class Chat(InteractionHandler):
             if messages is not None:
                 for message in messages[1:]:
                     print(f"{message['role'].capitalize()}: {message['content']}\n")
+        elif 'load_file' in self.session:
+                messages = [{"role": "system", "content": prompt}, {"role": "user", "content": "file: " + self.session['load_file']}]
         else:
             messages = [{"role": "system", "content": prompt}]
         readline.set_completer(self.directory_completer)
