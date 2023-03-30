@@ -192,12 +192,16 @@ def get_prompt(conf, prompt_file=None):
     :param prompt_file: optional path to a custom prompt file
     """
     if prompt_file is not None:
-        prompt_file = resolve_file_path(prompt_file, conf['DEFAULT']['prompt_directory'], '.txt')
-        try:
-            with open(prompt_file, 'r') as f:
-                prompt = f.read()
-        except FileNotFoundError:
-            raise click.UsageError(f"Warning: Prompt file not found: {prompt_file}")
+        # if the file is '-', read from stdin
+        if prompt_file == '-':
+            prompt = sys.stdin.read()
+        else:
+            prompt_file = resolve_file_path(prompt_file, conf['DEFAULT']['prompt_directory'], '.txt')
+            try:
+                with open(prompt_file, 'r') as f:
+                    prompt = f.read()
+            except FileNotFoundError:
+                raise click.UsageError(f"Warning: Prompt file not found: {prompt_file}")
     return prompt
 
 def get_models(conf):
