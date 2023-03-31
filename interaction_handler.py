@@ -53,12 +53,14 @@ class Completion(InteractionHandler):
 
             completion_text = ''
 
-            print(f"{label}: ", end="", flush=True)
+            if self.session['interactive']:
+                click.echo(f"{label}: ", nl=False)
+
 
             # if in interactive mode do some syntax highlighting
             if self.session['interactive']:
                 for i, part in enumerate(process_streamed_response(response)):
-                    if i < 4:
+                    if i < 0:
                         part = part.lstrip()
                     click.echo(part, nl=False)
                     completion_text += part
@@ -67,7 +69,7 @@ class Completion(InteractionHandler):
             else:
                 # iterate through the stream of events, lstrip() the first couple events to avoid the weird newline
                 for i, event in enumerate(response):
-                    if i < 2:
+                    if i < 1:
                         click.echo(event.lstrip(), nl=False)
                     else:
                         click.echo(event, nl=False)
@@ -171,13 +173,19 @@ class Chat(InteractionHandler):
         if not os.path.isabs(filename):
             filename = os.path.join(session_info['chats_directory'], filename)
         contents = str()
-        exclude = ['api_key', 'api_handler', 'chats_directory', 'prompt', 'load_chat', 'chats_extension', 'stream', 'stream_delay']
+        include = [ 'model', 'temperature', 'max_tokens', 'endpoint' ]
         for parameter in session_info:
-            if parameter not in exclude:
+            if parameter in include:
                 contents += f"{parameter}: {session_info[parameter]}\n"
         contents += '_' * 80 + '\n'
-        for message in messages:
-            contents += f"{message['role']}: {message['content']}\n\n"
+        for i, message in enumerate(messages):
+            # if we loaded in a file then skip the first message to keep the save file reasonable
+            # this will affect the context if the file is loaded in again though
+            if 'load_file' in self.session:
+                if i == 1:
+                    contents += f"user: *** MISSING CONTEXT *** {self.session['load_file_name']} not present.\n\n"
+                    continue
+            contents += f"{message['role']}: {self.remove_ansi_codes(message['content'])}\n\n"
         with open(filename, "w") as f:
             f.write(contents)
 
@@ -199,6 +207,11 @@ class Chat(InteractionHandler):
             for message in message_parts:
                 messages.append({"role": message[0].strip(), "content": message[1].strip()})
             return messages
+
+    @staticmethod
+    def remove_ansi_codes(text):
+        ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+        return ansi_escape.sub('', text)
 
     def directory_completer(self, text, state):
         if not os.path.isabs(self.session['chats_directory']):
@@ -224,6 +237,7 @@ def format_code_block(code_block):
     formatter = TerminalFormatter()
     return highlight(code_block, lexer, formatter)
 
+# v2
 def process_streamed_response(response):
     buffer = []
     backtick_buffer = []
@@ -234,20 +248,10 @@ def process_streamed_response(response):
             if char == '`':
                 backtick_buffer.append(char)
             else:
-                if len(backtick_buffer) >= 3:
-                    inside_code_block = not inside_code_block
-
-                    if not inside_code_block:
-                        code_block = ''.join(buffer)
-                        formatted_code_block = format_code_block(code_block)
-                        yield formatted_code_block
-                        buffer = []
+                if inside_code_block:
+                    buffer.extend(backtick_buffer)
                 else:
-                    # Flush stray backticks
-                    if inside_code_block:
-                        buffer.extend(backtick_buffer)
-                    else:
-                        yield ''.join(backtick_buffer)
+                    yield ''.join(backtick_buffer)
 
                 # Reset backtick buffer
                 backtick_buffer = []
@@ -256,6 +260,15 @@ def process_streamed_response(response):
                     buffer.append(char)
                 else:
                     yield char
+
+            if len(backtick_buffer) >= 3:
+                inside_code_block = not inside_code_block
+
+                if not inside_code_block:
+                    code_block = ''.join(buffer)
+                    formatted_code_block = format_code_block(code_block)
+                    yield formatted_code_block
+                    buffer = []
 
     # Flush remaining backticks if any
     if backtick_buffer:

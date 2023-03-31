@@ -106,6 +106,7 @@ def chat(ctx, load_chat, file):
         else:
             with open(file_path, 'rt') as f:
                 session['load_file'] = f.read()
+                session['load_file_name'] = file_path
     session['chats_extension'] = conf['DEFAULT']['chats_extension']
     if load_chat is not None:
         session['load_chat'] = resolve_file_path(load_chat, conf['DEFAULT']['chats_directory'])
@@ -292,18 +293,18 @@ def get_default_provider(conf):
 
 def get_default_model(conf, provider, mode):
     """
-    returns the first listed for the chosen provider for the chosen mode
+    returns the default model for a given mode
     :param conf: ConfigParser object
     :param provider: name of the provider
     :param mode: mode
     :return: name of the default model or None
     """
     if mode == 'completion' or mode == 'complete':
-        if conf.has_option(provider, 'completion_models'):
-            return [model.strip() for model in conf.get(provider, 'completion_models').split(',')][0]
+        if conf.has_option('DEFAULT', 'default_completion_model'):
+            return conf.get('DEFAULT', 'default_completion_model')
     elif mode == 'chat':
-        if conf.has_option(provider, 'chat_models'):
-            return [model.strip() for model in conf.get(provider, 'chat_models').split(',')][0]
+        if conf.has_option('DEFAULT', 'default_chat_model'):
+            return conf.get('DEFAULT', 'default_chat_model')
     return None
 
 def get_session(ctx, mode):
