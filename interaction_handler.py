@@ -100,7 +100,7 @@ class Chat(InteractionHandler):
 
     def start(self, prompt):
         label = self.session['response_label']
-        commands = ["save", "load", "quit", "exit", "help", "?"]
+        commands = ["save", "load", "clear", "quit", "exit", "help", "?"]
         if 'load_chat' in self.session:
             messages = self.load_chat(self.session['load_chat'])
             if messages is not None:
@@ -131,16 +131,27 @@ class Chat(InteractionHandler):
                     filename = input("Enter a filename: ")
                     loading = self.load_chat(filename)
                     if loading is not None:
+                        user_input = ""
                         messages = loading
                         # print messages skipping the first 'system' message
                         for message in messages[1:]:
                             click.echo(f"{message['role'].capitalize()}: {message['content']}\n")
-
                     continue
+                if user_input.strip() == "clear":
+                    messages = [{"role": "system", "content": prompt}]
+                    os.system('cls' if os.name == 'nt' else 'clear')
+                    click.echo("Context cleared")
+                    continue
+                # if user_input.strip() == "show messages":
+                #     click.echo(messages)
+                #     continue
+
+
                 if user_input.strip() == "help" or user_input.strip() == "?":
                     click.echo("Commands:")
                     click.echo("save - save the chat history to a file")
                     click.echo("load - load a chat history from a file")
+                    click.echo("clear - clear the context and start over")
                     click.echo("quit - quit the chat")
                     continue
 
