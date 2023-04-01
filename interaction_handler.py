@@ -1,7 +1,6 @@
 import os
 import sys
 import json
-import readline
 import re
 import time
 import click

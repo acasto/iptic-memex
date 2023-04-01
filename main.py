@@ -174,10 +174,12 @@ def get_config(config_file=None):
     config = ConfigParser()
     config.read(default_config_file)
     # get the user config location from the default config file and check and read it
-    user_config = resolve_file_path(config['DEFAULT']['user_config'])
-    if user_config is None:
-        raise FileNotFoundError(f'Could not find the user config file at ' + config['DEFAULT']['user_config'])
-    config.read(user_config)
+    if 'user_config' in config['DEFAULT']:
+        user_config = resolve_file_path(config['DEFAULT']['user_config'])
+    # if user_config is None:
+    #     raise FileNotFoundError(f'Could not find the user config file at ' + config['DEFAULT']['user_config'])
+        if user_config is not None:
+            config.read(user_config)
     # if a custom config file was specified, check and read it
     if config_file is not None:
         file = resolve_file_path(config_file)
