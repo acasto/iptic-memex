@@ -119,7 +119,7 @@ class Chat(InteractionHandler):
                     break
                 if user_input.strip() == "save":
                     self.activate_completion()
-                    default_filename = "chat_" + datetime.now().strftime("%Y-%m-%d_%s") + self.session['chats_extension']
+                    default_filename = "chat_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + self.session['chats_extension']
                     while True:
                         filename = input(f"Enter a filename ({default_filename}): ")
                         if filename == "list" or filename == "ls":
