@@ -1,5 +1,4 @@
 openai
-transformers
-requests
 click
 Pygments
+readline;platform_system=="Linux" or platform_system=="Darwin"

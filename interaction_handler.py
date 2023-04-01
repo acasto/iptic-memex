@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import readline
 import re
@@ -100,7 +101,7 @@ class Chat(InteractionHandler):
 
     def start(self, prompt):
         label = self.session['response_label']
-        commands = ["save", "load", "clear", "quit", "exit", "help", "?"]
+        commands = ["save", "load", "clear", "quit", "exit", "help", "?", "show messages"]
         if 'load_chat' in self.session:
             messages = self.load_chat(self.session['load_chat'])
             if messages is not None:
@@ -110,8 +111,6 @@ class Chat(InteractionHandler):
                 messages = [{"role": "system", "content": prompt}, {"role": "user", "content": "file: " + self.session['load_file']}]
         else:
             messages = [{"role": "system", "content": prompt}]
-        readline.set_completer(self.directory_completer)
-        readline.parse_and_bind("tab: complete")
         while True:
             user_input = input("You: ")
 
@@ -119,8 +118,17 @@ class Chat(InteractionHandler):
                 if user_input.strip() == "quit" or user_input.strip() == "exit":
                     break
                 if user_input.strip() == "save":
+                    self.activate_completion()
                     default_filename = "chat_" + datetime.now().strftime("%Y-%m-%d_%s") + self.session['chats_extension']
-                    filename = input(f"Enter a filename ({default_filename}): ")
+                    while True:
+                        filename = input(f"Enter a filename ({default_filename}): ")
+                        if filename == "list" or filename == "ls":
+                            self.list_chats(self.session['chats_directory'])
+                            continue
+                        else:
+                            break
+                    if filename == "exit" or filename == "quit":
+                        continue
                     if filename == "":
                         filename = default_filename
                     if not filename.endswith(self.session['chats_extension']):
@@ -128,10 +136,18 @@ class Chat(InteractionHandler):
                     self.save_chat(messages, filename)
                     continue
                 if user_input.strip() == "load":
-                    filename = input("Enter a filename: ")
+                    self.activate_completion()
+                    while True:
+                        filename = input("Enter a filename: ")
+                        if filename == "list" or filename == "ls":
+                            self.list_chats(self.session['chats_directory'])
+                            continue
+                        else:
+                            break
+                    if filename == "exit" or filename == "quit":
+                        continue
                     loading = self.load_chat(filename)
                     if loading is not None:
-                        user_input = ""
                         messages = loading
                         # print messages skipping the first 'system' message
                         for message in messages[1:]:
@@ -142,9 +158,9 @@ class Chat(InteractionHandler):
                     os.system('cls' if os.name == 'nt' else 'clear')
                     click.echo("Context cleared")
                     continue
-                # if user_input.strip() == "show messages":
-                #     click.echo(messages)
-                #     continue
+                if user_input.strip() == "show messages":
+                    click.echo(messages)
+                    continue
 
 
                 if user_input.strip() == "help" or user_input.strip() == "?":
@@ -203,7 +219,7 @@ class Chat(InteractionHandler):
     def load_chat(self, filename):
         if not os.path.isabs(filename):
             filename = os.path.join(self.session['chats_directory'], filename)
-        if not os.path.exists(filename):
+        if not os.path.exists(filename) or os.path.isdir(filename):
             print("File does not exist.")
             return
         print("Loading chat history...")
@@ -223,6 +239,20 @@ class Chat(InteractionHandler):
     def remove_ansi_codes(text):
         ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
         return ansi_escape.sub('', text)
+
+    @staticmethod
+    def list_chats(directory):
+        if not os.path.isabs(directory):
+            directory = os.path.join(os.path.dirname(os.path.abspath(__file__)), directory)
+        files = os.listdir(directory)
+        for file in files:
+            print(file)
+
+    def activate_completion(self):
+        if sys.platform in ['linux', 'darwin']:
+            import readline
+            readline.set_completer(self.directory_completer)
+            readline.parse_and_bind("tab: complete")
 
     def directory_completer(self, text, state):
         if not os.path.isabs(self.session['chats_directory']):
@@ -250,6 +280,11 @@ def format_code_block(code_block):
 
 # v2
 def process_streamed_response(response):
+    for event in response:
+        yield ''.join(event)
+
+# todo: fix the issue with this dropping large codeblocks
+def xprocess_streamed_response(response):
     buffer = []
     backtick_buffer = []
     inside_code_block = False
