@@ -9,6 +9,8 @@ applications such as Obsidian.
 The name is a reference to the Memex, a device described by Vannevar Bush in his 1945 essay "As We May Think" which he
 envisioned a device that would compress and store all of their knowledge. https://en.wikipedia.org/wiki/Memex
 
+![Imgur Image](https://i.imgur.com/XLJ4AuY.gif)
+
 # Features
 
 - [x] CLI (command line) mode suitable for quick questions or scripting
@@ -21,17 +23,51 @@ envisioned a device that would compress and store all of their knowledge. https:
 - [x] Load saved conversations back into chat mode
 - [x] Supports streaming in both completion and chat
 - [x] Supports syntax highlighting in interactive modes
+- [x] Cross-platform support (tested on Windows and Linux)
 
 # Installation & Usage
 
-- Just clone the repo and install the requirements. Then run the program with `python main.py`.
+### Basic Usage
+
+- Clone the repository
+`git clone https://github.com/acasto/iptic-memex.git`
+- Install the dependencies
+`pip install -r requirements.txt`
+- Then run the program with `python main.py`
 - Configuration can be done through
   - `config.ini` in the project directory
   - `~/.config/iptic-memex/config.ini` in the user directory
   - via custom .ini file with `-c` or `--conf` flag
 - API key can be set in the config file as `api_key` or via environment variable `OPENAI_API_KEY`.
-- Usage is well documented with click and can be accessed with `python main.py --help`.
-- From within chat mode you can access the help menu with `help` or `?`. 
+- Usage is well documented with click and can be accessed with `python main.py --help` or `<subcommand> --help`
+- From within `chat` mode you can access the following commands: 
+  - Access the help menu with `help` or `?`.
+  - Load a conversation from a file with `load`.
+    - Enter a filename to load a conversation from the conversations directory.
+    - From the 'load' subcommand you can then use `list` or `ls` to list the available conversations.
+    - Tab completion is supported in Unix environments.
+    - Exit out of the subcommand with `exit` or `quit`.
+  - Save a conversation to a file with `save`.
+    - Enter a filename to save the conversation to the conversations directory.
+    - From the 'save' subcommand you can then use `list` or `ls` to list the available conversations.
+    - Tab completion is supported in Unix environments.
+    - Exit out of the subcommand with `exit` or `quit`.
+  - Clear the context and start a new conversation with `clear`.
+
+### Chat about a file
+
+![Imgur Image](https://i.imgur.com/XGxn7my.gif)
+
+One of the more useful ways to use this program is to chat or ask questions about a file. This can be done by supplying
+the `--file` or `-f` flag to the `chat` or `ask` subcommands. The file will be loaded into the context through the 
+prompt and avialbe for you to ask questions about. 
+
+For example:
+- `python main.py chat -f problem_code.py`
+- `python main.py ask -f logfile.txt`
+
+**Note:** Attaching large files can quickly exceed the token limit of your chosen model. Often it can be useful to copy the 
+relevant parts into a new file and chat about that instead. For example, a particular function or method. 
 
 # License
 
