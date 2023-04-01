@@ -146,6 +146,8 @@ class Chat(InteractionHandler):
                             break
                     if filename == "exit" or filename == "quit":
                         continue
+                    if not filename.endswith(self.session['chats_extension']):
+                        filename += self.session['chats_extension']
                     loading = self.load_chat(filename)
                     if loading is not None:
                         messages = loading
@@ -271,20 +273,36 @@ class Chat(InteractionHandler):
 #######################
 
 def format_code_block(code_block):
+    # Extract the content inside the triple backticks and the language specifier (if any)
+    match = re.match(r"^```(\w+)?\n(.*?)\n?```$", code_block, re.DOTALL)
+    if match:
+        language = match.group(1)
+        code_content = match.group(2)
+    else:
+        language = None
+        code_content = code_block
+
     try:
-        lexer = guess_lexer(code_block)
+        if language:
+            # If the language is PHP, we need to enable startinline
+            if language.lower() == "php":
+                lexer = get_lexer_by_name(language, startinline=True)
+            else:
+                lexer = get_lexer_by_name(language, stripall=True)
+        else:
+            lexer = guess_lexer(code_content)
     except ClassNotFound:
         lexer = get_lexer_by_name("text", stripall=True)
+
     formatter = TerminalFormatter()
-    return highlight(code_block, lexer, formatter)
+    highlighted_code = highlight(code_content, lexer, formatter)
 
-# v2
+    # Prepend and append triple backticks and language specifier (if any)
+    formatted_code_block = f"```{language or ''}\n{highlighted_code}```"
+    return formatted_code_block
+
+
 def process_streamed_response(response):
-    for event in response:
-        yield ''.join(event)
-
-# todo: fix the issue with this dropping large codeblocks
-def xprocess_streamed_response(response):
     buffer = []
     backtick_buffer = []
     inside_code_block = False
@@ -293,32 +311,36 @@ def xprocess_streamed_response(response):
         for char in event:
             if char == '`':
                 backtick_buffer.append(char)
+                if len(backtick_buffer) == 3:
+                    # Include the triple backticks in the buffer
+                    if inside_code_block:
+                        buffer.extend(backtick_buffer)
+                    inside_code_block = not inside_code_block
+                    if not inside_code_block:
+                        code_block = ''.join(buffer)
+                        formatted_code_block = format_code_block(code_block)
+                        yield formatted_code_block
+                        buffer = []
+                    else:
+                        # Start a new code block with the triple backticks
+                        buffer.extend(backtick_buffer)
+                    backtick_buffer = []
             else:
-                if inside_code_block:
-                    buffer.extend(backtick_buffer)
-                else:
-                    yield ''.join(backtick_buffer)
-
-                # Reset backtick buffer
-                backtick_buffer = []
-
                 if inside_code_block:
                     buffer.append(char)
                 else:
                     yield char
 
-            if len(backtick_buffer) >= 3:
-                inside_code_block = not inside_code_block
+                # Reset backtick buffer
+                backtick_buffer = []
 
-                if not inside_code_block:
-                    code_block = ''.join(buffer)
-                    formatted_code_block = format_code_block(code_block)
-                    yield formatted_code_block
-                    buffer = []
-
+    # Check if there's an unclosed code block
+    if inside_code_block:
+        # Close the code block with three backticks
+        buffer.extend(['\n', '`', '`', '`'])
+        code_block = ''.join(buffer)
+        formatted_code_block = format_code_block(code_block)
+        yield formatted_code_block
     # Flush remaining backticks if any
-    if backtick_buffer:
-        if inside_code_block:
-            buffer.extend(backtick_buffer)
-        else:
-            yield ''.join(backtick_buffer)
+    elif backtick_buffer:
+        yield ''.join(backtick_buffer)
