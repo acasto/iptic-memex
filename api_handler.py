@@ -42,19 +42,30 @@ class OpenAIHandler(APIHandler):
         :param prompt: the prompt to complete from an interaction handler
         :return: response (str)
         """
-        response = openai.Completion.create(
-            request_timeout=120,
-            model=self.conf['model'],
-            prompt=prompt,
-            temperature=float(self.conf['temperature']),
-            max_tokens=int(self.conf['max_tokens']),
-            stream=bool(self.conf['stream']),
-        )
-        # if in stream mode chain the generator
-        if self.conf['stream']:
-            return response
-        else:
-            return response.choices[0].text.strip()
+        try:
+            response = openai.Completion.create(
+                request_timeout=120,
+                model=self.conf['model'],
+                prompt=prompt,
+                temperature=float(self.conf['temperature']),
+                max_tokens=int(self.conf['max_tokens']),
+                stream=bool(self.conf['stream']),
+            )
+            # if in stream mode chain the generator
+            if self.conf['stream']:
+                return response
+            else:
+                return response.choices[0].text.strip()
+        except openai.error.InvalidRequestError as e:
+            # Handle token limit errors
+            if 'maximum context length ' in str(e):
+                return "Error: Token count exceeds the limit."
+        except openai.error.APIConnectionError as e:
+            # Handle timeout errors
+            return "Error: Connection timeout. Please try again later."
+        except Exception as e:
+            # Handle other exceptions
+            return f"An unexpected error occurred: {str(e)}"
 
     def stream_complete(self, prompt):
         """
@@ -63,8 +74,11 @@ class OpenAIHandler(APIHandler):
         :return:
         """
         response =  self.complete(prompt)
-        for event in response:
-            yield event['choices'][0]['text']
+        if type(response) == str:
+            yield response
+        else:
+            for event in response:
+                yield event['choices'][0]['text']
 
     def chat(self, messages):
         """
@@ -72,19 +86,30 @@ class OpenAIHandler(APIHandler):
         :param messages: the message to complete from an interaction handler
         :return: response (str)
         """
-        response = openai.ChatCompletion.create(
-            request_timeout=120,
-            model=self.conf['model'],
-            messages=messages,
-            temperature=float(self.conf['temperature']),
-            max_tokens=int(self.conf['max_tokens']),
-            stream=bool(self.conf['stream']),
-        )
-        # if in stream mode chain the generator
-        if self.conf['stream']:
-            return response
-        else:
-            return response['choices'][0]['message']['content']
+        try:
+            response = openai.ChatCompletion.create(
+                request_timeout=120,
+                model=self.conf['model'],
+                messages=messages,
+                temperature=float(self.conf['temperature']),
+                max_tokens=int(self.conf['max_tokens']),
+                stream=bool(self.conf['stream']),
+            )
+            # if in stream mode chain the generator
+            if self.conf['stream']:
+                return response
+            else:
+                return response['choices'][0]['message']['content']
+        except openai.error.InvalidRequestError as e:
+            # Handle token limit errors
+            if 'maximum context length ' in str(e):
+                return "Error: Token count exceeds the limit."
+        except openai.error.APIConnectionError as e:
+            # Handle timeout errors
+            return "Error: Connection timeout. Please try again later."
+        except Exception as e:
+            # Handle other exceptions
+            return f"An unexpected error occurred: {str(e)}"
 
     def stream_chat(self, messages):
         """
@@ -93,7 +118,10 @@ class OpenAIHandler(APIHandler):
         :return:
         """
         response = self.chat(messages)
-        for event in response:
-            if 'content' in event['choices'][0]['delta']:
-                yield event['choices'][0]['delta']['content']
+        if type(response) == str:
+            yield response
+        else:
+            for event in response:
+                if 'content' in event['choices'][0]['delta']:
+                    yield event['choices'][0]['delta']['content']
 

@@ -80,9 +80,18 @@ class Completion(InteractionHandler):
             click.echo() # finish with a newline
         else:
             if 'mode' in self.session and self.session['mode'] == 'chat':
-                messages = [{"role": "system", "content": prompt },{"role": "user", "content": message}]
+                if 'load_file' in self.session:
+                    messages = [
+                        {"role": "system", "content": prompt},
+                        {"role": "user", "content": "file: " + self.session['load_file']},
+                        {"role": "user", "content": message}
+                    ]
+                else:
+                    messages = [{"role": "system", "content": prompt },{"role": "user", "content": message}]
                 response = self.api_handler.chat(messages)
             else:
+                if self.session['load_file']: # if loading a file, append the file contents to the prompt
+                    prompt = prompt +" file: "+ self.session['load_file'] +" "
                 response = self.api_handler.complete(prompt +" "+ message)
             # format code blocks if in interactive mode
             if self.session['interactive']:
