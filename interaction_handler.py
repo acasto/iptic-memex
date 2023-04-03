@@ -41,23 +41,24 @@ class Completion(InteractionHandler):
         if self.session['stream']:
             if 'mode' in self.session and self.session['mode'] == 'chat':
                 if 'load_file' in self.session:
-                    prompt = prompt +" "+ message
-                    message = self.session['load_file']
-                messages = [{"role": "system", "content": prompt },{"role": "user", "content": message}]
+                    messages = [{"role": "system", "content": prompt +" "+ message}]
+                    for file in self.session['load_file']:
+                        messages.append({"role": "user", "content": "file: " + file})
+                else:
+                    messages = [{"role": "system", "content": prompt },{"role": "user", "content": message}]
                 response = self.api_handler.stream_chat(messages)
             else:
                 if 'load_file' in self.session:
-                    prompt = prompt +" "+ message +" file: "+ self.session['load_file']
-                    message = ""
+                    prompt = prompt
+                    for file in self.session['load_file']:
+                        prompt = prompt +" file: "+ file
                 response = self.api_handler.stream_complete(prompt +" "+ message)
-
-            completion_text = ''
 
             if self.session['interactive']:
                 click.echo(f"{label}: ", nl=False)
 
-
             # if in interactive mode do some syntax highlighting
+            completion_text = ''
             if self.session['interactive']:
                 for i, part in enumerate(process_streamed_response(response)):
                     if i < 0:
@@ -80,17 +81,19 @@ class Completion(InteractionHandler):
         else:
             if 'mode' in self.session and self.session['mode'] == 'chat':
                 if 'load_file' in self.session:
-                    messages = [
-                        {"role": "system", "content": prompt},
-                        {"role": "user", "content": "file: " + self.session['load_file']},
-                        {"role": "user", "content": message}
-                    ]
+                    messages = [{"role": "system", "content": prompt}]
+                    for file in self.session['load_file']:
+                        messages.append({"role": "user", "content": f"file: {file}"})
+                    messages.append({"role": "user", "content": message})
+
                 else:
                     messages = [{"role": "system", "content": prompt },{"role": "user", "content": message}]
                 response = self.api_handler.chat(messages)
             else:
-                if self.session['load_file']: # if loading a file, append the file contents to the prompt
-                    prompt = prompt +" file: "+ self.session['load_file'] +" "
+                if 'load_file' in self.session:
+                    prompt = prompt
+                    for file in self.session['load_file']:
+                        prompt = prompt +" file: "+ file
                 response = self.api_handler.complete(prompt +" "+ message)
             # format code blocks if in interactive mode
             if self.session['interactive']:
@@ -116,7 +119,10 @@ class Chat(InteractionHandler):
                 for message in messages[1:]:
                     print(f"{message['role'].capitalize()}: {message['content']}\n")
         elif 'load_file' in self.session:
-                messages = [{"role": "system", "content": prompt}, {"role": "user", "content": "file: " + self.session['load_file']}]
+            # if loading files go through the list and append each as a {role: user, content: file: filename} message
+            messages = [{"role": "system", "content": prompt}]
+            for file in self.session['load_file']:
+                messages.append({"role": "user", "content": "file: " + file})
         else:
             messages = [{"role": "system", "content": prompt}]
         while True:
@@ -178,6 +184,7 @@ class Chat(InteractionHandler):
                     click.echo("save - save the chat history to a file")
                     click.echo("load - load a chat history from a file")
                     click.echo("clear - clear the context and start over")
+                    click.echo("show messages - dump session messages")
                     click.echo("quit - quit the chat")
                     continue
 
@@ -216,13 +223,11 @@ class Chat(InteractionHandler):
                 contents += f"{parameter}: {session_info[parameter]}\n"
         contents += '_' * 80 + '\n'
         for i, message in enumerate(messages):
-            # if we loaded in a file then skip the first message to keep the save file reasonable
-            # this will affect the context if the file is loaded in again though
             if 'load_file' in self.session:
-                if i == 1:
-                    contents += f"user: *** MISSING CONTEXT *** {self.session['load_file_name']} not present.\n\n"
+                if 0 < i < len(self.session['load_file']) + 1:
+                    contents += f"user: *** MISSING CONTEXT *** {self.session['load_file_name'][i-1]} not present.\n\n\n"
                     continue
-            contents += f"{message['role']}: {self.remove_ansi_codes(message['content'])}\n\n"
+            contents += f"{message['role']}: {self.remove_ansi_codes(message['content'])}\n\n\n"
         with open(filename, "w") as f:
             f.write(contents)
 

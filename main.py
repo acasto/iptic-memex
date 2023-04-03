@@ -14,7 +14,7 @@ from interaction_handler import Completion, Chat
 @click.option('-l', '--max-tokens', help='Maximum number of tokens to use for completion')
 @click.option('-s', '--stream', is_flag=True, help='Stream the completion events')
 @click.option('-v', '--verbose', is_flag=True, help='Show session parameters')
-@click.option('-f', '--file', help='File to use for completion')
+@click.option('-f', '--file', multiple=True, help='File to use for completion')
 @click.pass_context
 def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file):
     """
@@ -54,14 +54,18 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file
         ctx.obj['SESSION']['verbose'] = True
 
     # if we're in file mode take care of that now
-    if file is not None:
-        # if the file is '-', read from stdin
-        if file == '-':
-            ctx.obj['SESSION']['message'] = sys.stdin.read()
-        else:
-            file_path = resolve_file_path(file)
-            with open(file_path, 'rt') as f:
-                ctx.obj['SESSION']['message'] = f.read()
+    if len(file) > 0:
+        message = ''
+        # loop through the files and read them in appending the content to the message
+        for f in file:
+            # if the file is '-', read from stdin
+            if f == '-':
+                message += sys.stdin.read()
+            else:
+                file_path = resolve_file_path(f)
+                with open(file_path, 'rt') as f:
+                    message += f.read()
+        ctx.obj['SESSION']['message'] = message
         ctx.obj['SESSION']['interactive'] = False # we're not in interactive mode
         session = get_session(ctx, 'completion')
         completion = Completion(session)
@@ -74,39 +78,48 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file
 
 @cli.command()
 @click.pass_context
-@click.option('-f', '--file', help='File to include in prompt (ask questions about file)')
+@click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
 def ask(ctx, file):
     session = get_session(ctx, 'completion')
     prompt = session['prompt']
-    if file is not None:
-        file_path = resolve_file_path(file)
-        if file_path is None:
-            raise click.UsageError(f'Invalid file: {file}')
-        else:
-            with open(file_path, 'rt') as f:
-                session['load_file'] = f.read()
+    if len(file) > 0:
+        session['load_file'] = []
+        session['load_file_name'] = []
+        for f in file:
+            file_path = resolve_file_path(f)
+            if file_path is None:
+                raise click.UsageError(f'Invalid file: {f}')
+            else:
+                with open(file_path, 'rt') as g:
+                    session['load_file'].append(g.read())
+                    session['load_file_name'].append(file_path)
     if 'verbose' in session and session['verbose']:
         print_session_info(session)
     completion = Completion(session)
     completion.start(prompt)
 
 
+
+
 @cli.command()
 @click.pass_context
 @click.option('-s', '--session', 'load_chat', type=click.Path(), help="Load a saved chat session from a file")
-@click.option('-f', '--file', help='File to include in prompt (ask questions about file)')
+@click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
 def chat(ctx, load_chat, file):
     conf = ctx.obj['CONF']
     session = get_session(ctx, 'chat')
     prompt = session['prompt']
-    if file is not None:
-        file_path = resolve_file_path(file)
-        if file_path is None:
-            raise click.UsageError(f'Invalid file: {file}')
-        else:
-            with open(file_path, 'rt') as f:
-                session['load_file'] = f.read()
-                session['load_file_name'] = file_path
+    if len(file) > 0:
+        session['load_file'] = []
+        session['load_file_name'] = []
+        for f in file:
+            file_path = resolve_file_path(f)
+            if file_path is None:
+                raise click.UsageError(f'Invalid file: {f}')
+            else:
+                with open(file_path, 'rt') as g:
+                    session['load_file'].append(g.read())
+                    session['load_file_name'].append(file_path)
     session['chats_extension'] = conf['DEFAULT']['chats_extension']
     if load_chat is not None:
         session['load_chat'] = resolve_file_path(load_chat, conf['DEFAULT']['chats_directory'])
@@ -114,6 +127,7 @@ def chat(ctx, load_chat, file):
         print_session_info(session)
     chat_session = Chat(session)
     chat_session.start(prompt)
+
 
 @cli.command()
 @click.pass_context
@@ -293,20 +307,28 @@ def get_default_provider(conf):
             return provider
     return None
 
-def get_default_model(conf, provider, mode):
+def get_default_model(conf, mode, provider=None):
     """
     returns the default model for a given mode
     :param conf: ConfigParser object
-    :param provider: name of the provider
     :param mode: mode
+    :param provider: name of the provider
     :return: name of the default model or None
     """
-    if mode == 'completion' or mode == 'complete':
-        if conf.has_option('DEFAULT', 'default_completion_model'):
-            return conf.get('DEFAULT', 'default_completion_model')
-    elif mode == 'chat':
-        if conf.has_option('DEFAULT', 'default_chat_model'):
-            return conf.get('DEFAULT', 'default_chat_model')
+    if provider is None:
+        if mode == 'completion' or mode == 'complete':
+            if conf.has_option('DEFAULT', 'default_completion_model'):
+                return conf.get('DEFAULT', 'default_completion_model')
+        elif mode == 'chat':
+            if conf.has_option('DEFAULT', 'default_chat_model'):
+                return conf.get('DEFAULT', 'default_chat_model')
+    else:
+        if mode == 'completion' or mode == 'complete':
+            if conf.has_option(provider, 'default_completion_model'):
+                return conf.get(provider, 'default_completion_model')
+        elif mode == 'chat':
+            if conf.has_option(provider, 'default_chat_model'):
+                return conf.get(provider, 'default_chat_model')
     return None
 
 def get_session(ctx, mode):
@@ -325,7 +347,7 @@ def get_session(ctx, mode):
         provider = get_provider_from_model(conf, session['model'])
     else:
         provider = get_default_provider(conf)
-        session['model'] = get_default_model(conf, provider, mode)
+        session['model'] = get_default_model(conf, mode, provider)
     if 'temperature' not in session:
         session['temperature'] = conf.getfloat(provider, 'temperature')
     if 'max_tokens' not in session:
