@@ -71,7 +71,8 @@ relevant parts into a new file and chat about that instead. For example, a parti
 
 # Changelog
 
-### 1.1.0 (04/03/2023) - Added ability to accept multiple '-f' options for all modes
+### 1.1.0 (04/03/2023) 
+- Added ability to accept multiple '-f' options for all modes
 
 # License
 
