@@ -59,15 +59,19 @@ envisioned a device that would compress and store all of their knowledge. https:
 ![Imgur Image](https://i.imgur.com/XGxn7my.gif)
 
 One of the more useful ways to use this program is to chat or ask questions about a file. This can be done by supplying
-the `--file` or `-f` flag to the `chat` or `ask` subcommands. The file will be loaded into the context through the 
-prompt and avialbe for you to ask questions about. 
+one or more `--file` or `-f` flags to the `chat` or `ask` subcommands. The file(s) will be loaded into the context 
+through the prompt and available for you to ask questions about. 
 
 For example:
 - `python main.py chat -f problem_code.py`
-- `python main.py ask -f logfile.txt`
+- `python main.py ask -f code.txt -f logfile.txt`
 
 **Note:** Attaching large files can quickly exceed the token limit of your chosen model. Often it can be useful to copy the 
 relevant parts into a new file and chat about that instead. For example, a particular function or method. 
+
+# Changelog
+
+### 1.1.0 (04/03/2023) - Added ability to accept multiple '-f' options for all modes
 
 # License
 
