@@ -97,8 +97,11 @@ def ask(ctx, file, url):
                     session['load_file'].append(g.read())
                     session['load_file_name'].append(file_path)
     if len(url) > 0:
-        session['load_file'] = []
-        session['load_file_name'] = []
+        # check so that -u will work alongside -f
+        if 'load_file' not in session:
+            session['load_file'] = []
+        if 'load_file_name' not in session:
+            session['load_file_name'] = []
         for u in url:
             # check prefix
             if not u.startswith('http') and not u.startswith('https'):
@@ -140,8 +143,11 @@ def chat(ctx, load_chat, file, url):
                     session['load_file'].append(g.read())
                     session['load_file_name'].append(file_path)
     if len(url) > 0:
-        session['load_file'] = []
-        session['load_file_name'] = []
+        # check so that -u will work alongside -f
+        if 'load_file' not in session:
+            session['load_file'] = []
+        if 'load_file_name' not in session:
+            session['load_file_name'] = []
         for u in url:
             # check prefix
             if not u.startswith('http') and not u.startswith('https'):
