@@ -81,7 +81,8 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file
 @cli.command()
 @click.pass_context
 @click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
-def ask(ctx, file):
+@click.option('-u', '--url', multiple=True, help='URL to include in prompt (ask questions about URL)')
+def ask(ctx, file, url):
     session = get_session(ctx, 'completion')
     prompt = session['prompt']
     if len(file) > 0:
@@ -95,6 +96,21 @@ def ask(ctx, file):
                 with open(file_path, 'rt') as g:
                     session['load_file'].append(g.read())
                     session['load_file_name'].append(file_path)
+    if len(url) > 0:
+        session['load_file'] = []
+        session['load_file_name'] = []
+        for u in url:
+            # check prefix
+            if not u.startswith('http') and not u.startswith('https'):
+                u = 'https://' + u
+            # make a request to URL
+            response = requests.get(u)
+            # parse the response
+            soup = BeautifulSoup(response.text, 'html.parser')
+            # extract text less unnecessary newlines and whitespace
+            text = '\n'.join([line.strip() for line in soup.get_text().split('\n') if line.strip()])
+            session['load_file'].append(text)
+            session['load_file_name'].append(u)
     if 'verbose' in session and session['verbose']:
         print_session_info(session)
     completion = Completion(session)

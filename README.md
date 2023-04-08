@@ -17,8 +17,9 @@ envisioned a device that would compress and store all of their knowledge. https:
 - [x] Chat mode for longer conversations
 - [x] Ask mode for single questions 
 - [x] Can load in files in both chat and ask modes
+- [x] Can load in text scraped from a URL in both chat and ask modes
 - [x] Load custom prompts from files including stdin
-- [x] Run completions on files or stdin
+- [x] Run completions on files, URLs, or stdin
 - [x] Save conversations in human-readable format
 - [x] Load saved conversations back into chat mode
 - [x] Supports streaming in both completion and chat
@@ -54,17 +55,19 @@ envisioned a device that would compress and store all of their knowledge. https:
     - Exit out of the subcommand with `exit` or `quit`.
   - Clear the context and start a new conversation with `clear`.
 
-### Chat about a file
+### Chat about a file or URL
 
 ![Imgur Image](https://i.imgur.com/XGxn7my.gif)
 
-One of the more useful ways to use this program is to chat or ask questions about a file. This can be done by supplying
-one or more `--file` or `-f` flags to the `chat` or `ask` subcommands. The file(s) will be loaded into the context 
-through the prompt and available for you to ask questions about. 
+One of the more useful ways to use this program is to chat or ask questions about a file or URL. This can be done by 
+supplying one or more `--file` (`-f`) or `--url` (`-u`) or flags to the `chat` or `ask` subcommands. The file(s) will 
+be loaded into the context through the prompt and available for you to ask questions about. URLs will be scraped for 
+text and loaded into the context same as files. 
 
 For example:
 - `python main.py chat -f problem_code.py`
 - `python main.py ask -f code.txt -f logfile.txt`
+- `python main.py chat -u iptic.com`
 
 **Note:** Attaching large files can quickly exceed the token limit of your chosen model. Often it can be useful to copy the 
 relevant parts into a new file and chat about that instead. For example, a particular function or method. 
