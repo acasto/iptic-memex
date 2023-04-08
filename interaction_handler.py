@@ -43,7 +43,7 @@ class Completion(InteractionHandler):
                 if 'load_file' in self.session:
                     messages = [{"role": "system", "content": prompt +" "+ message}]
                     for file in self.session['load_file']:
-                        messages.append({"role": "user", "content": "file: " + file})
+                        messages.append({"role": "user", "content": "context: " + file})
                 else:
                     messages = [{"role": "system", "content": prompt },{"role": "user", "content": message}]
                 response = self.api_handler.stream_chat(messages)
@@ -51,7 +51,7 @@ class Completion(InteractionHandler):
                 if 'load_file' in self.session:
                     prompt = prompt
                     for file in self.session['load_file']:
-                        prompt = prompt +" file: "+ file
+                        prompt = prompt +" context: "+ file
                 response = self.api_handler.stream_complete(prompt +" "+ message)
 
             if self.session['interactive']:
@@ -83,7 +83,7 @@ class Completion(InteractionHandler):
                 if 'load_file' in self.session:
                     messages = [{"role": "system", "content": prompt}]
                     for file in self.session['load_file']:
-                        messages.append({"role": "user", "content": f"file: {file}"})
+                        messages.append({"role": "user", "content": f"context: {file}"})
                     messages.append({"role": "user", "content": message})
 
                 else:
@@ -93,7 +93,7 @@ class Completion(InteractionHandler):
                 if 'load_file' in self.session:
                     prompt = prompt
                     for file in self.session['load_file']:
-                        prompt = prompt +" file: "+ file
+                        prompt = prompt +" context: "+ file
                 response = self.api_handler.complete(prompt +" "+ message)
             # format code blocks if in interactive mode
             if self.session['interactive']:
@@ -119,10 +119,10 @@ class Chat(InteractionHandler):
                 for message in messages[1:]:
                     print(f"{message['role'].capitalize()}: {message['content']}\n")
         elif 'load_file' in self.session:
-            # if loading files go through the list and append each as a {role: user, content: file: filename} message
+            # if loading files go through the list and append each as a {role: user, content: context: filename} message
             messages = [{"role": "system", "content": prompt}]
             for file in self.session['load_file']:
-                messages.append({"role": "user", "content": "file: " + file})
+                messages.append({"role": "user", "content": "context: " + file})
         else:
             messages = [{"role": "system", "content": prompt}]
         while True:

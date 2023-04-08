@@ -5,6 +5,8 @@ import io
 from configparser import ConfigParser
 from api_handler import OpenAIHandler
 from interaction_handler import Completion, Chat
+from bs4 import BeautifulSoup
+import requests
 
 @click.group(invoke_without_command=True)
 @click.option('-c', '--conf', help='Path to a custom configuration file')
@@ -63,8 +65,8 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file
                 message += sys.stdin.read()
             else:
                 file_path = resolve_file_path(f)
-                with open(file_path, 'rt') as f:
-                    message += f.read()
+                with open(file_path, 'rt') as g:
+                    message += g.read()
         ctx.obj['SESSION']['message'] = message
         ctx.obj['SESSION']['interactive'] = False # we're not in interactive mode
         session = get_session(ctx, 'completion')
@@ -105,7 +107,8 @@ def ask(ctx, file):
 @click.pass_context
 @click.option('-s', '--session', 'load_chat', type=click.Path(), help="Load a saved chat session from a file")
 @click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
-def chat(ctx, load_chat, file):
+@click.option('-u', '--url', multiple=True, help='URL to include in prompt (ask questions about URL)')
+def chat(ctx, load_chat, file, url):
     conf = ctx.obj['CONF']
     session = get_session(ctx, 'chat')
     prompt = session['prompt']
@@ -120,6 +123,21 @@ def chat(ctx, load_chat, file):
                 with open(file_path, 'rt') as g:
                     session['load_file'].append(g.read())
                     session['load_file_name'].append(file_path)
+    if len(url) > 0:
+        session['load_file'] = []
+        session['load_file_name'] = []
+        for u in url:
+            # check prefix
+            if not u.startswith('http') and not u.startswith('https'):
+                u = 'https://' + u
+            # make a request to URL
+            response = requests.get(u)
+            # parse the response
+            soup = BeautifulSoup(response.text, 'html.parser')
+            # extract text less unnecessary newlines and whitespace
+            text = '\n'.join([line.strip() for line in soup.get_text().split('\n') if line.strip()])
+            session['load_file'].append(text)
+            session['load_file_name'].append(u)
     session['chats_extension'] = conf['DEFAULT']['chats_extension']
     if load_chat is not None:
         session['load_chat'] = resolve_file_path(load_chat, conf['DEFAULT']['chats_directory'])

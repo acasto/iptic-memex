@@ -24,6 +24,7 @@ class APIHandler(ABC):
         pass
 
 
+# noinspection PyTypeChecker
 class OpenAIHandler(APIHandler):
     """
     OpenAI API handler
@@ -60,7 +61,7 @@ class OpenAIHandler(APIHandler):
             # Handle token limit errors
             if 'maximum context length ' in str(e):
                 return "Error: Token count exceeds the limit."
-        except openai.error.APIConnectionError as e:
+        except openai.error.APIConnectionError:
             # Handle timeout errors
             return "Error: Connection timeout. Please try again later."
         except Exception as e:
@@ -104,7 +105,7 @@ class OpenAIHandler(APIHandler):
             # Handle token limit errors
             if 'maximum context length ' in str(e):
                 return "Error: Token count exceeds the limit."
-        except openai.error.APIConnectionError as e:
+        except openai.error.APIConnectionError:
             # Handle timeout errors
             return "Error: Connection timeout. Please try again later."
         except Exception as e:
@@ -124,4 +125,3 @@ class OpenAIHandler(APIHandler):
             for event in response:
                 if 'content' in event['choices'][0]['delta']:
                     yield event['choices'][0]['delta']['content']
-
