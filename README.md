@@ -74,6 +74,9 @@ relevant parts into a new file and chat about that instead. For example, a parti
 
 # Changelog
 
+### 1.2.1 (04/08/2023)
+- Added ability to scrape text from a URL to be added into context for both chat and ask modes
+
 ### 1.1.0 (04/03/2023) 
 - Added ability to accept multiple '-f' options for all modes
 
