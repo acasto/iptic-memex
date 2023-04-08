@@ -18,6 +18,7 @@ envisioned a device that would compress and store all of their knowledge. https:
 - [x] Ask mode for single questions 
 - [x] Can load in files in both chat and ask modes
 - [x] Can load in text scraped from a URL in both chat and ask modes
+- [x] Select text to scrape by ID or Class
 - [x] Load custom prompts from files including stdin
 - [x] Run completions on files, URLs, or stdin
 - [x] Save conversations in human-readable format
@@ -54,6 +55,7 @@ envisioned a device that would compress and store all of their knowledge. https:
     - Tab completion is supported in Unix environments.
     - Exit out of the subcommand with `exit` or `quit`.
   - Clear the context and start a new conversation with `clear`.
+  - Dump the chat message array for debugging with `show messages`.
 
 ### Chat about a file or URL
 
@@ -62,20 +64,23 @@ envisioned a device that would compress and store all of their knowledge. https:
 One of the more useful ways to use this program is to chat or ask questions about a file or URL. This can be done by 
 supplying one or more `--file` (`-f`) or `--url` (`-u`) or flags to the `chat` or `ask` subcommands. The file(s) will 
 be loaded into the context through the prompt and available for you to ask questions about. URLs will be scraped for 
-text and loaded into the context same as files. 
+text and loaded into the context same as files. ID or Class can be used to select specific text scraped fro ma URL with
+the `--class` or `--id` flags.
 
 For example:
 - `python main.py chat -f problem_code.py`
 - `python main.py ask -f code.txt -f logfile.txt`
 - `python main.py chat -u iptic.com`
+- `python main.py chat -u iptic.com/about --class fl-node-606779cc7ec16`
 
 **Note:** Attaching large files can quickly exceed the token limit of your chosen model. Often it can be useful to copy the 
 relevant parts into a new file and chat about that instead. For example, a particular function or method. 
 
 # Changelog
 
-### 1.2.1 (04/08/2023)
+### 1.2.3 (04/08/2023)
 - Added ability to scrape text from a URL to be added into context for both chat and ask modes
+- Scraped text can be filtered by ID or Class
 
 ### 1.1.0 (04/03/2023) 
 - Added ability to accept multiple '-f' options for all modes

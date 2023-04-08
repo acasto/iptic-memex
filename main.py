@@ -82,7 +82,9 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file
 @click.pass_context
 @click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
 @click.option('-u', '--url', multiple=True, help='URL to include in prompt (ask questions about URL)')
-def ask(ctx, file, url):
+@click.option('--id', 'css_id', help='CSS ID selector of text to scrape from URL')
+@click.option('--class', 'css_class', help='CSS class selector of text to scrape from URL')
+def ask(ctx, file, url, css_id, css_class):
     session = get_session(ctx, 'completion')
     prompt = session['prompt']
     if len(file) > 0:
@@ -110,8 +112,15 @@ def ask(ctx, file, url):
             response = requests.get(u)
             # parse the response
             soup = BeautifulSoup(response.text, 'html.parser')
+            if css_id is not None:
+                text = soup.find(id=css_id).get_text()
+            elif css_class is not None:
+                text = soup.find(class_=css_class).get_text()
             # extract text less unnecessary newlines and whitespace
-            text = '\n'.join([line.strip() for line in soup.get_text().split('\n') if line.strip()])
+            if text is None:
+                text = '\n'.join([line.strip() for line in soup.get_text().split('\n') if line.strip()])
+            else:
+                text = '\n'.join([line.strip() for line in text.split('\n') if line.strip()])
             session['load_file'].append(text)
             session['load_file_name'].append(u)
     if 'verbose' in session and session['verbose']:
@@ -127,7 +136,9 @@ def ask(ctx, file, url):
 @click.option('-s', '--session', 'load_chat', type=click.Path(), help="Load a saved chat session from a file")
 @click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
 @click.option('-u', '--url', multiple=True, help='URL to include in prompt (ask questions about URL)')
-def chat(ctx, load_chat, file, url):
+@click.option('--id', 'css_id', help='CSS ID selector of text to scrape from URL')
+@click.option('--class', 'css_class', help='CSS class selector of text to scrape from URL')
+def chat(ctx, load_chat, file, url, css_id, css_class):
     conf = ctx.obj['CONF']
     session = get_session(ctx, 'chat')
     prompt = session['prompt']
@@ -156,8 +167,16 @@ def chat(ctx, load_chat, file, url):
             response = requests.get(u)
             # parse the response
             soup = BeautifulSoup(response.text, 'html.parser')
+            text = None
+            if css_id is not None:
+                text = soup.find(id=css_id).get_text()
+            elif css_class is not None:
+                text = soup.find(class_=css_class).get_text()
             # extract text less unnecessary newlines and whitespace
-            text = '\n'.join([line.strip() for line in soup.get_text().split('\n') if line.strip()])
+            if text is None:
+                text = '\n'.join([line.strip() for line in soup.get_text().split('\n') if line.strip()])
+            else:
+                text = '\n'.join([line.strip() for line in text.split('\n') if line.strip()])
             session['load_file'].append(text)
             session['load_file_name'].append(u)
     session['chats_extension'] = conf['DEFAULT']['chats_extension']
