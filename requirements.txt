@@ -4,3 +4,5 @@ Pygments
 readline;platform_system=="Linux" or platform_system=="Darwin"
 requests
 bs4
+beautifulsoup4
+tiktoken

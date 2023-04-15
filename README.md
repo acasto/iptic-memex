@@ -19,6 +19,7 @@ envisioned a device that would compress and store all of their knowledge. https:
 - [x] Can load in files in both chat and ask modes
 - [x] Can load in text scraped from a URL in both chat and ask modes
 - [x] Select text to scrape by ID or Class
+- [x] Tracks token usage in chat mode with tiktoken 
 - [x] Load custom prompts from files including stdin
 - [x] Run completions on files, URLs, or stdin
 - [x] Save conversations in human-readable format
@@ -45,17 +46,18 @@ envisioned a device that would compress and store all of their knowledge. https:
 - From within `chat` mode you can access the following commands: 
   - Access the help menu with `help` or `?`.
   - Load a conversation from a file with `load`.
-    - Enter a filename to load a conversation from the conversations directory.
+    - Enter a filename to load a conversation from the chats directory.
     - From the 'load' subcommand you can then use `list` or `ls` to list the available conversations.
     - Tab completion is supported in Unix environments.
     - Exit out of the subcommand with `exit` or `quit`.
   - Save a conversation to a file with `save`.
-    - Enter a filename to save the conversation to the conversations directory.
+    - Enter a filename to save the conversation to the chats directory.
     - From the 'save' subcommand you can then use `list` or `ls` to list the available conversations.
     - Tab completion is supported in Unix environments.
     - Exit out of the subcommand with `exit` or `quit`.
   - Clear the context and start a new conversation with `clear`.
   - Dump the chat message array for debugging with `show messages`.
+  - Show token length of current session with `show tokens`.
 
 ### Chat about a file or URL
 
@@ -64,7 +66,7 @@ envisioned a device that would compress and store all of their knowledge. https:
 One of the more useful ways to use this program is to chat or ask questions about a file or URL. This can be done by 
 supplying one or more `--file` (`-f`) or `--url` (`-u`) or flags to the `chat` or `ask` subcommands. The file(s) will 
 be loaded into the context through the prompt and available for you to ask questions about. URLs will be scraped for 
-text and loaded into the context same as files. ID or Class can be used to select specific text scraped fro ma URL with
+text and loaded into the context same as files. ID or Class can be used to select specific text scraped from a URL with
 the `--class` or `--id` flags.
 
 For example:
@@ -73,10 +75,22 @@ For example:
 - `python main.py chat -u iptic.com`
 - `python main.py chat -u iptic.com/about --class fl-node-606779cc7ec16`
 
-**Note:** Attaching large files can quickly exceed the token limit of your chosen model. Often it can be useful to copy the 
+**Note:** 
+- Attaching large files can quickly exceed the token limit of your chosen model. Often it can be useful to copy the 
 relevant parts into a new file and chat about that instead. For example, a particular function or method. 
 
+- The token count of the attached context is displayed before the first request is sent to the API, giving you a chance to 
+exit before incurring a cost. A notification will appear when the estimated remaining tokens is less than max_tokens. 
+
+
 # Changelog
+
+### 1.2.4 (04/15/2023)
+- Added ability to track token usage in chat mode with tiktoken
+  - New `context_window` option in config.ini for use in calculating remaining tokens
+  - Added `show tokens` command in chat mode to show current token count
+  - When loading context into chat mode the token count will be displayed before first request is sent
+  - A notice will display when *max_tokens* exceeds the estimated remaining tokens
 
 ### 1.2.3 (04/08/2023)
 - Added ability to scrape text from a URL to be added into context for both chat and ask modes

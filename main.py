@@ -14,11 +14,12 @@ import requests
 @click.option('-p', '--prompt', help='Filename from the prompt directory')
 @click.option('-t', '--temperature', help='Temperature to use for completion')
 @click.option('-l', '--max-tokens', help='Maximum number of tokens to use for completion')
+@click.option('-w', '--window', help='Window size to use for token limit')
 @click.option('-s', '--stream', is_flag=True, help='Stream the completion events')
 @click.option('-v', '--verbose', is_flag=True, help='Show session parameters')
 @click.option('-f', '--file', multiple=True, help='File to use for completion')
 @click.pass_context
-def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file):
+def cli(ctx, conf, model, prompt, temperature, max_tokens, window, stream, verbose, file):
     """
     the main entry point for the CLI click interface
     :param ctx: the context object that we can use to pass around information
@@ -27,6 +28,7 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file
     :param prompt: the prompt file to use for completion
     :param temperature: temperature to use for completion
     :param max_tokens: maximum number of tokens to use
+    :param window: window size to use for token limit
     :param stream: stream the completion events
     :param verbose: show session parameters
     :param file: file to use for completion (file mode)
@@ -48,6 +50,8 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file
         ctx.obj['SESSION']['temperature'] = temperature
     if max_tokens is not None:
         ctx.obj['SESSION']['max_tokens'] = max_tokens
+    if window is not None:
+        ctx.obj['SESSION']['context_window'] = window
     if stream:
         ctx.obj['SESSION']['stream'] = stream
     if prompt is not None:
@@ -112,6 +116,7 @@ def ask(ctx, file, url, css_id, css_class):
             response = requests.get(u)
             # parse the response
             soup = BeautifulSoup(response.text, 'html.parser')
+            text = None
             if css_id is not None:
                 text = soup.find(id=css_id).get_text()
             elif css_class is not None:
@@ -411,6 +416,8 @@ def get_session(ctx, mode):
         session['temperature'] = conf.getfloat(provider, 'temperature')
     if 'max_tokens' not in session:
         session['max_tokens'] = conf.getint(provider, 'max_tokens')
+    if 'context_window' not in session:
+        session['context_window'] = conf.getint(provider, 'context_window'  )
     if 'stream' not in session:
         session['stream'] = conf.getboolean(provider, 'stream')
     if 'stream_delay' not in session:

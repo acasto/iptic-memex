@@ -11,6 +11,7 @@ from pygments.lexers import get_lexer_by_name
 from pygments.formatters import TerminalFormatter
 from pygments.util import ClassNotFound
 from pygments.lexers import guess_lexer
+import tiktoken
 
 class InteractionHandler(ABC):
     """
@@ -112,7 +113,7 @@ class Chat(InteractionHandler):
 
     def start(self, prompt):
         label = self.session['response_label']
-        commands = ["save", "load", "clear", "quit", "exit", "help", "?", "show messages"]
+        commands = ["save", "load", "clear", "quit", "exit", "help", "?", "show messages", "show tokens"]
         if 'load_chat' in self.session:
             messages = self.load_chat(self.session['load_chat'])
             if messages is not None:
@@ -123,9 +124,20 @@ class Chat(InteractionHandler):
             messages = [{"role": "system", "content": prompt}]
             for file in self.session['load_file']:
                 messages.append({"role": "user", "content": "context: " + file})
+            print("Loaded " + str(count_tokens(messages, self.session['model'])) + " tokens into context")
         else:
             messages = [{"role": "system", "content": prompt}]
         while True:
+            ## compare the token count of hte current message to the context_window size and warn if the difference
+            ## is smaller than max_tokens
+            if 'context_window' in self.session:
+                tokens_count = count_tokens(messages, self.session['model'])
+                tokens_left = int(self.session['context_window']) - tokens_count
+                if tokens_left < int(self.session['max_tokens']):
+                    #print("\033[91m" + "Warning: the context window is smaller than max_tokens. This may result in incomplete responses." + "\033[0m")
+                    print("\033[91m" + "Tokens left in context window: " + str(tokens_left) + "\033[0m")
+
+
             user_input = input("You: ")
 
             if user_input.strip() in commands:
@@ -177,7 +189,9 @@ class Chat(InteractionHandler):
                 if user_input.strip() == "show messages":
                     click.echo(messages)
                     continue
-
+                if user_input.strip() == "show tokens":
+                    print(str(count_tokens(messages, self.session['model'])) + " tokens in session")
+                    continue
 
                 if user_input.strip() == "help" or user_input.strip() == "?":
                     click.echo("Commands:")
@@ -185,6 +199,7 @@ class Chat(InteractionHandler):
                     click.echo("load - load a chat history from a file")
                     click.echo("clear - clear the context and start over")
                     click.echo("show messages - dump session messages")
+                    click.echo("show tokens - show number of tokens in session")
                     click.echo("quit - quit the chat")
                     continue
 
@@ -357,3 +372,40 @@ def process_streamed_response(response):
     # Flush remaining backticks if any
     elif backtick_buffer:
         yield ''.join(backtick_buffer)
+
+
+def count_tokens(messages, model="gpt-3.5-turbo-0301"):
+    """Returns the number of tokens used"""
+    try:
+        encoding = tiktoken.encoding_for_model(model)
+    except KeyError:
+        print("Warning: model not found. Using cl100k_base encoding.")
+        encoding = tiktoken.get_encoding("cl100k_base")
+    if model == "gpt-3.5-turbo":
+        # print("Warning: gpt-3.5-turbo may change over time. Returning num tokens assuming gpt-3.5-turbo-0301.")
+        return count_tokens(messages, model="gpt-3.5-turbo-0301")
+    elif model == "gpt-4":
+        # print("Warning: gpt-4 may change over time. Returning num tokens assuming gpt-4-0314.")
+        return count_tokens(messages, model="gpt-4-0314")
+    elif model == "gpt-3.5-turbo-0301":
+        tokens_per_message = 4  # every message follows <|start|>{role/name}\n{content}<|end|>\n
+        tokens_per_name = -1  # if there's a name, the role is omitted
+    elif model == "gpt-4-0314":
+        tokens_per_message = 3
+        tokens_per_name = 1
+    else:
+        raise NotImplementedError(f"""count_tokens() is not implemented for model {model}. See https://github.com/openai/openai-python/blob/main/chatml.md for information on how messages are converted to tokens.""")
+
+    num_tokens = 0
+    # if we're given a str for a completion prompt, convert it to a list
+    if not isinstance(messages, list):
+        messages = [messages]
+    # process list of messages
+    for message in messages:
+        num_tokens += tokens_per_message
+        for key, value in message.items():
+            num_tokens += len(encoding.encode(value))
+            if key == "role":
+                num_tokens += tokens_per_name
+    num_tokens += 3  # every reply is primed with <|start|>assistant<|message|>
+    return num_tokens
