@@ -1,9 +1,7 @@
 import os
 import sys
 import click
-import io
 from configparser import ConfigParser
-from api_handler import OpenAIHandler
 from interaction_handler import Completion, Chat
 from bs4 import BeautifulSoup
 import requests
