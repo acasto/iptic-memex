@@ -122,13 +122,14 @@ class Chat(InteractionHandler):
             messages = [{"role": "system", "content": prompt}]
             for file in self.session['load_file']:
                 messages.append({"role": "user", "content": "context: " + file})
-            print("Loaded " + str(self.api_handler.count_tokens(messages, self.session['model'])) + " tokens into context")
+            if hasattr(self.api_handler, 'count_tokens'):
+                print("Loaded " + str(self.api_handler.count_tokens(messages, self.session['model'])) + " tokens into context")
         else:
             messages = [{"role": "system", "content": prompt}]
         while True:
             ## compare the token count of hte current message to the context_window size and warn if the difference
             ## is smaller than max_tokens
-            if 'context_window' in self.session:
+            if 'context_window' in self.session and hasattr(self.api_handler, 'count_tokens'):
                 tokens_count = self.api_handler.count_tokens(messages, self.session['model'])
                 tokens_left = int(self.session['context_window']) - tokens_count
                 if tokens_left < int(self.session['max_tokens']):
@@ -188,7 +189,10 @@ class Chat(InteractionHandler):
                     click.echo(messages)
                     continue
                 if user_input.strip() == "show tokens":
-                    print(str(self.api_handler.count_tokens(messages, self.session['model'])) + " tokens in session")
+                    if hasattr(self.api_handler, 'count_tokens'):
+                        print(str(self.api_handler.count_tokens(messages, self.session['model'])) + " tokens in session")
+                    else:
+                        print("This model does not support token counting")
                     continue
 
                 if user_input.strip() == "help" or user_input.strip() == "?":
