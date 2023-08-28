@@ -2,7 +2,8 @@ import os
 import sys
 import click
 from configparser import ConfigParser
-from interaction_handler import Completion, Chat
+import interaction_handler
+import api_handler
 from bs4 import BeautifulSoup
 import requests
 
@@ -72,7 +73,7 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, window, stream, verbo
         ctx.obj['SESSION']['message'] = message
         ctx.obj['SESSION']['interactive'] = False # we're not in interactive mode
         session = get_session(ctx, 'completion')
-        completion = Completion(session)
+        completion = interaction_handler.Completion(session)
         completion.start(ctx.obj['SESSION']['prompt'])
         return
 
@@ -128,7 +129,7 @@ def ask(ctx, file, url, css_id, css_class):
             session['load_file_name'].append(u)
     if 'verbose' in session and session['verbose']:
         print_session_info(session)
-    completion = Completion(session)
+    completion = interaction_handler.Completion(session)
     completion.start(prompt)
 
 
@@ -187,7 +188,7 @@ def chat(ctx, load_chat, file, url, css_id, css_class):
         session['load_chat'] = resolve_file_path(load_chat, conf['DEFAULT']['chats_directory'])
     if 'verbose' in session and session['verbose']:
         print_session_info(session)
-    chat_session = Chat(session)
+    chat_session = interaction_handler.Chat(session)
     chat_session.start(prompt)
 
 
@@ -440,7 +441,7 @@ def get_session(ctx, mode):
     if 'mode' not in session: # since some chat models can also do completion but need different parameters
         session['mode'] = get_mode_from_model(conf, session['model'])
 
-    provider_class = globals()[provider + 'Handler']
+    provider_class = getattr(api_handler, provider + 'Handler')
     session['api_handler'] = provider_class(session)
     return session
 
