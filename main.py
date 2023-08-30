@@ -10,6 +10,7 @@ import requests
 @click.group(invoke_without_command=True)
 @click.option('-c', '--conf', help='Path to a custom configuration file')
 @click.option('-m', '--model', help='Model to use for completion')
+@click.option( '-pv', '--provider', help='Provider to use for a given model' )
 @click.option('-p', '--prompt', help='Filename from the prompt directory')
 @click.option('-t', '--temperature', help='Temperature to use for completion')
 @click.option('-l', '--max-tokens', help='Maximum number of tokens to use for completion')
@@ -18,7 +19,7 @@ import requests
 @click.option('-v', '--verbose', is_flag=True, help='Show session parameters')
 @click.option('-f', '--file', multiple=True, help='File to use for completion')
 @click.pass_context
-def cli(ctx, conf, model, prompt, temperature, max_tokens, window, stream, verbose, file):
+def cli(ctx, conf, model, provider, prompt, temperature, max_tokens, window, stream, verbose, file):
     """
     the main entry point for the CLI click interface
     :param ctx: the context object that we can use to pass around information
@@ -191,7 +192,6 @@ def chat(ctx, load_chat, file, url, css_id, css_class):
     chat_session = interaction_handler.Chat(session)
     chat_session.start(prompt)
 
-
 @cli.command()
 @click.pass_context
 @click.option('-p', '--providers', is_flag=True, help="Show providers along with models")
@@ -203,6 +203,13 @@ def list_models(ctx, providers):
             print(model +' ('+ get_provider_from_model(conf, model) + ')')
         else:
             print(model)
+
+@cli.command()
+@click.pass_context
+def list_providers(ctx):
+    conf = ctx.obj['CONF']
+    for provider in conf.sections():
+        print(provider)
 
 @cli.command()
 @click.pass_context
@@ -304,9 +311,9 @@ def get_models_for_provider(conf, provider):
     """
     models = []
     if conf.has_option(provider, 'completion_models'):
-        models += [model.strip() for model in conf.get(provider, 'completion_models').split(',')]
+        models += [model.strip() for model in conf.get(provider, 'completion_models').split(',') if model.strip()]
     if conf.has_option(provider, 'chat_models'):
-        models += [model.strip() for model in conf.get(provider, 'chat_models').split(',')]
+        models += [model.strip() for model in conf.get(provider, 'chat_models').split(',') if model.strip()]
     return models
 
 def get_provider_from_model(conf, model):
@@ -412,15 +419,19 @@ def get_session(ctx, mode):
         provider = get_default_provider(conf)
         session['model'] = get_default_model(conf, mode, provider)
     if 'temperature' not in session:
-        session['temperature'] = conf.getfloat(provider, 'temperature')
+        session['temperature'] = conf.get(provider, 'temperature', fallback=0.7)
+        session['temperature'] = float(session['temperature']) if session['temperature'] is not None else 0.7
     if 'max_tokens' not in session:
-        session['max_tokens'] = conf.getint(provider, 'max_tokens')
+        session['max_tokens'] = conf.get(provider, 'max_tokens', fallback=100)
+        session['max_tokens'] = int(session['max_tokens']) if session['max_tokens'] is not None else 100
     if 'context_window' not in session:
-        session['context_window'] = conf.getint(provider, 'context_window'  )
+        session['context_window'] = conf.get(provider, 'context_window', fallback=None)
     if 'stream' not in session:
-        session['stream'] = conf.getboolean(provider, 'stream')
+        session['stream'] = conf.get(provider, 'stream', fallback=False)
+        session['stream'] = bool(session['stream']) if session['stream'] is not None else False
     if 'stream_delay' not in session:
-        session['stream_delay'] = conf.getfloat(provider, 'stream_delay')
+        session['stream_delay'] = conf.get(provider, 'stream_delay', fallback=0.008)
+        session['stream_delay'] = float(session['stream_delay']) if session['stream_delay'] is not None else 0.008
     if 'endpoint' not in session:
         session['endpoint'] = get_endpoint_from_model(conf, session['model'])
     if conf.has_option(provider, 'api_key') and conf.get(provider, 'api_key') != '':
@@ -436,6 +447,8 @@ def get_session(ctx, mode):
         session['chats_directory'] = resolve_directory_path(conf['DEFAULT']['chats_directory'])
     if conf.has_option(provider, 'response_label'):
         session['response_label'] = conf.get(provider, 'response_label')
+    else:
+        session['response_label'] = 'Response'
     if 'interactive' not in session:
         session['interactive'] = True
     if 'mode' not in session: # since some chat models can also do completion but need different parameters

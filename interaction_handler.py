@@ -129,7 +129,7 @@ class Chat(InteractionHandler):
         while True:
             ## compare the token count of hte current message to the context_window size and warn if the difference
             ## is smaller than max_tokens
-            if 'context_window' in self.session and hasattr(self.api_handler, 'count_tokens'):
+            if 'context_window' in self.session and self.session['context_window'] is not None and hasattr(self.api_handler, 'count_tokens'):
                 tokens_count = self.api_handler.count_tokens(messages, self.session['model'])
                 tokens_left = int(self.session['context_window']) - tokens_count
                 if tokens_left < int(self.session['max_tokens']):
