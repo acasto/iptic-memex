@@ -3,17 +3,11 @@ import openai
 import tiktoken
 from abc import ABC, abstractmethod
 
+
 class APIHandler(ABC):
     """
     Abstract class for API handlers
     """
-    @abstractmethod
-    def complete(self, prompt):
-        pass
-
-    @abstractmethod
-    def stream_complete(self, prompt):
-        pass
 
     @abstractmethod
     def chat(self, message):
@@ -37,50 +31,6 @@ class OpenAIHandler(APIHandler):
             self.api_key = os.environ['OPENAI_API_KEY']
         openai.api_key = self.api_key
 
-    def complete(self, prompt):
-        """
-        Creates a completion request to the OpenAI API
-        :param prompt: the prompt to complete from an interaction handler
-        :return: response (str)
-        """
-        try:
-            response = openai.Completion.create(
-                request_timeout=120,
-                model=self.conf['model'],
-                prompt=prompt,
-                temperature=float(self.conf['temperature']),
-                max_tokens=int(self.conf['max_tokens']),
-                stream=bool(self.conf['stream']),
-            )
-            # if in stream mode chain the generator
-            if self.conf['stream']:
-                return response
-            else:
-                return response.choices[0].text.strip()
-        except openai.error.InvalidRequestError as e:
-            # Handle token limit errors
-            if 'maximum context length ' in str(e):
-                return "Error: Token count exceeds the limit."
-        except openai.error.APIConnectionError:
-            # Handle timeout errors
-            return "Error: Connection timeout. Please try again later."
-        except Exception as e:
-            # Handle other exceptions
-            return f"An unexpected error occurred: {str(e)}"
-
-    def stream_complete(self, prompt):
-        """
-        Use generator chaining to keep the response provider-agnostic
-        :param prompt:
-        :return:
-        """
-        response =  self.complete(prompt)
-        if type(response) == str:
-            yield response
-        else:
-            for event in response:
-                yield event['choices'][0]['text']
-
     def chat(self, messages):
         """
         Creates a chat completion request to the OpenAI API
@@ -88,8 +38,7 @@ class OpenAIHandler(APIHandler):
         :return: response (str)
         """
         try:
-            response = openai.ChatCompletion.create(
-                request_timeout=120,
+            response = openai.chat.completions.create(
                 model=self.conf['model'],
                 messages=messages,
                 temperature=float(self.conf['temperature']),
@@ -100,17 +49,16 @@ class OpenAIHandler(APIHandler):
             if self.conf['stream']:
                 return response
             else:
-                return response['choices'][0]['message']['content']
-        except openai.error.InvalidRequestError as e:
-            # Handle token limit errors
-            if 'maximum context length ' in str(e):
-                return "Error: Token count exceeds the limit."
-        except openai.error.APIConnectionError:
-            # Handle timeout errors
-            return "Error: Connection timeout. Please try again later."
-        except Exception as e:
-            # Handle other exceptions
-            return f"An unexpected error occurred: {str(e)}"
+                return response.choices[0].message.content
+        except openai.APIConnectionError as e:
+            print("The server could not be reached")
+            print(e.__cause__)  # an underlying Exception, likely raised within httpx.
+        except openai.RateLimitError:
+            print("A 429 status code was received; we should back off a bit.")
+        except openai.APIStatusError as e:
+            print("Another non-200-range status code was received")
+            print(e.status_code)
+            print(e.response)
 
     def stream_chat(self, messages):
         """
@@ -119,12 +67,9 @@ class OpenAIHandler(APIHandler):
         :return:
         """
         response = self.chat(messages)
-        if type(response) == str:
-            yield response
-        else:
-            for event in response:
-                if 'content' in event['choices'][0]['delta']:
-                    yield event['choices'][0]['delta']['content']
+        for event in response:
+            if hasattr(event.choices[0].delta, 'content'):
+                yield event.choices[0].delta.content
 
     # See: https://github.com/openai/openai-cookbook/blob/main/examples/How_to_count_tokens_with_tiktoken.ipynb
     def count_tokens(self, messages, model="gpt-3.5-turbo-0613"):
@@ -153,7 +98,8 @@ class OpenAIHandler(APIHandler):
             tokens_per_name = -1  # if there's a name, the role is omitted
         else:
             raise NotImplementedError(
-                f"""num_tokens_from_messages() is not implemented for model {model}. See https://github.com/openai/openai-python/blob/main/chatml.md for information on how messages are converted to tokens."""
+                f"""num_tokens_from_messages() is not implemented for model {model}. See https://github.com/openai
+                /openai-python/blob/main/chatml.md for information on how messages are converted to tokens."""
             )
 
         num_tokens = 0
@@ -175,6 +121,7 @@ class OpenRouterHandler(APIHandler):
     """
     OpenAI API handler
     """
+
     def __init__(self, conf):
         self.conf = conf
         if 'api_key' in conf:
@@ -183,50 +130,6 @@ class OpenRouterHandler(APIHandler):
             self.api_key = os.environ['OPENROUTER_API_KEY']
         openai.api_key = self.api_key
         openai.api_base = "https://openrouter.ai/api/v1"
-
-    def complete(self, prompt):
-        """
-        Creates a completion request to the OpenAI API
-        :param prompt: the prompt to complete from an interaction handler
-        :return: response (str)
-        """
-        try:
-            response = openai.Completion.create(
-                request_timeout=120,
-                model=self.conf['model'],
-                prompt=prompt,
-                temperature=float(self.conf['temperature']),
-                max_tokens=int(self.conf['max_tokens']),
-                stream=bool(self.conf['stream']),
-            )
-            # if in stream mode chain the generator
-            if self.conf['stream']:
-                return response
-            else:
-                return response.choices[0].text.strip()
-        except openai.error.InvalidRequestError as e:
-            # Handle token limit errors
-            if 'maximum context length ' in str(e):
-                return "Error: Token count exceeds the limit."
-        except openai.error.APIConnectionError:
-            # Handle timeout errors
-            return "Error: Connection timeout. Please try again later."
-        except Exception as e:
-            # Handle other exceptions
-            return f"An unexpected error occurred: {str(e)}"
-
-    def stream_complete(self, prompt):
-        """
-        Use generator chaining to keep the response provider-agnostic
-        :param prompt:
-        :return:
-        """
-        response =  self.complete(prompt)
-        if type(response) == str:
-            yield response
-        else:
-            for event in response:
-                yield event['choices'][0]['text']
 
     def chat(self, messages):
         """
@@ -242,24 +145,23 @@ class OpenRouterHandler(APIHandler):
                 temperature=float(self.conf['temperature']),
                 max_tokens=int(self.conf['max_tokens']),
                 stream=bool(self.conf['stream']),
-                headers= { "HTTP-Referer": "https://iptic.com",
-                           "X-Title": "iptic-memex" },
+                headers={"HTTP-Referer": "https://iptic.com",
+                         "X-Title": "iptic-memex"},
             )
             # if in stream mode chain the generator
             if self.conf['stream']:
                 return response
             else:
                 return response['choices'][0]['message']['content']
-        except openai.error.InvalidRequestError as e:
-            # Handle token limit errors
-            if 'maximum context length ' in str(e):
-                return "Error: Token count exceeds the limit."
-        except openai.error.APIConnectionError:
-            # Handle timeout errors
-            return "Error: Connection timeout. Please try again later."
-        except Exception as e:
-            # Handle other exceptions
-            return f"An unexpected error occurred: {str(e)}"
+        except openai.APIConnectionError as e:
+            print("The server could not be reached")
+            print(e.__cause__)  # an underlying Exception, likely raised within httpx.
+        except openai.RateLimitError:
+            print("A 429 status code was received; we should back off a bit.")
+        except openai.APIStatusError as e:
+            print("Another non-200-range status code was received")
+            print(e.status_code)
+            print(e.response)
 
     def stream_chat(self, messages):
         """
@@ -268,7 +170,7 @@ class OpenRouterHandler(APIHandler):
         :return:
         """
         response = self.chat(messages)
-        if type(response) == str:
+        if response is str:
             yield response
         else:
             for event in response:

@@ -11,18 +11,22 @@ from pygments.formatters import TerminalFormatter
 from pygments.util import ClassNotFound
 from pygments.lexers import guess_lexer
 
+
 class InteractionHandler(ABC):
     """
     Abstract class for interaction handlers
     """
+
     @abstractmethod
     def start(self, message):
         pass
+
 
 class Completion(InteractionHandler):
     """
     Completion interaction handler
     """
+
     def __init__(self, session):
         self.session = session
         self.api_handler = session['api_handler']
@@ -31,27 +35,21 @@ class Completion(InteractionHandler):
         label = self.session['response_label']
         message = ""
 
+        # get the prompt
         if self.session['interactive']:
             message = input("You: ")
         else:
             if 'message' in self.session:
                 message = self.session['message']
 
-        if self.session['stream']:
-            if 'mode' in self.session and self.session['mode'] == 'chat':
-                if 'load_file' in self.session:
-                    messages = [{"role": "system", "content": prompt +" "+ message}]
-                    for file in self.session['load_file']:
-                        messages.append({"role": "user", "content": "context: " + file})
-                else:
-                    messages = [{"role": "system", "content": prompt },{"role": "user", "content": message}]
-                response = self.api_handler.stream_chat(messages)
+        if self.session['stream']:  # handle streaming response
+            if 'load_file' in self.session:
+                messages = [{"role": "system", "content": prompt + " " + message}]
+                for file in self.session['load_file']:
+                    messages.append({"role": "user", "content": "context: " + file})
             else:
-                if 'load_file' in self.session:
-                    prompt = prompt
-                    for file in self.session['load_file']:
-                        prompt = prompt +" context: "+ file
-                response = self.api_handler.stream_complete(prompt +" "+ message)
+                messages = [{"role": "system", "content": prompt}, {"role": "user", "content": message}]
+            response = self.api_handler.stream_chat(messages)
 
             if self.session['interactive']:
                 click.echo(f"{label}: ", nl=False)
@@ -76,35 +74,31 @@ class Completion(InteractionHandler):
                 if 'stream_delay' in self.session:
                     time.sleep(self.session['stream_delay'])
 
-            click.echo() # finish with a newline
-        else:
-            if 'mode' in self.session and self.session['mode'] == 'chat':
-                if 'load_file' in self.session:
-                    messages = [{"role": "system", "content": prompt}]
-                    for file in self.session['load_file']:
-                        messages.append({"role": "user", "content": f"context: {file}"})
-                    messages.append({"role": "user", "content": message})
+            click.echo()  # finish with a newline
+        else:  # handle non-streaming response
+            if 'load_file' in self.session:
+                messages = [{"role": "system", "content": prompt}]
+                for file in self.session['load_file']:
+                    messages.append({"role": "user", "content": f"context: {file}"})
+                messages.append({"role": "user", "content": message})
 
-                else:
-                    messages = [{"role": "system", "content": prompt },{"role": "user", "content": message}]
-                response = self.api_handler.chat(messages)
             else:
-                if 'load_file' in self.session:
-                    prompt = prompt
-                    for file in self.session['load_file']:
-                        prompt = prompt +" context: "+ file
-                response = self.api_handler.complete(prompt +" "+ message)
+                messages = [{"role": "system", "content": prompt}, {"role": "user", "content": message}]
+            response = self.api_handler.chat(messages)
+
             # format code blocks if in interactive mode
             if self.session['interactive']:
                 code_block_regex = re.compile(r'```(.+?)```', re.DOTALL)
                 response = code_block_regex.sub(
-                 lambda match: format_code_block(match.group(1)), response)
-            click.echo(f"{label}: "  + response)
+                    lambda match: format_code_block(match.group(1)), response)
+            click.echo(f"{label}: " + response)
+
 
 class Chat(InteractionHandler):
     """
     Chat interaction handler
     """
+
     def __init__(self, session):
         self.session = session
         self.api_handler = session['api_handler']
@@ -123,19 +117,20 @@ class Chat(InteractionHandler):
             for file in self.session['load_file']:
                 messages.append({"role": "user", "content": "context: " + file})
             if hasattr(self.api_handler, 'count_tokens'):
-                print("Loaded " + str(self.api_handler.count_tokens(messages, self.session['model'])) + " tokens into context")
+                print("Loaded " + str(
+                    self.api_handler.count_tokens(messages, self.session['model'])) + " tokens into context")
         else:
             messages = [{"role": "system", "content": prompt}]
         while True:
-            ## compare the token count of hte current message to the context_window size and warn if the difference
-            ## is smaller than max_tokens
-            if 'context_window' in self.session and self.session['context_window'] is not None and hasattr(self.api_handler, 'count_tokens'):
+            # compare the token count of hte current message to the context_window size and warn if the difference
+            # is smaller than max_tokens
+            if 'context_window' in self.session and self.session['context_window'] is not None and hasattr(
+                    self.api_handler, 'count_tokens'):
                 tokens_count = self.api_handler.count_tokens(messages, self.session['model'])
                 tokens_left = int(self.session['context_window']) - tokens_count
                 if tokens_left < int(self.session['max_tokens']):
-                    #print("\033[91m" + "Warning: the context window is smaller than max_tokens. This may result in incomplete responses." + "\033[0m")
+                    # print("\033[91m" + "Warning: the context window is smaller than max_tokens. This may result in incomplete responses." + "\033[0m")
                     print("\033[91m" + "Tokens left in context window: " + str(tokens_left) + "\033[0m")
-
 
             user_input = input("You: ")
 
@@ -144,7 +139,8 @@ class Chat(InteractionHandler):
                     break
                 if user_input.strip() == "save":
                     self.activate_completion()
-                    default_filename = "chat_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + self.session['chats_extension']
+                    default_filename = "chat_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + self.session[
+                        'chats_extension']
                     while True:
                         filename = input(f"Enter a filename ({default_filename}): ")
                         if filename == "list" or filename == "ls":
@@ -190,7 +186,8 @@ class Chat(InteractionHandler):
                     continue
                 if user_input.strip() == "show tokens":
                     if hasattr(self.api_handler, 'count_tokens'):
-                        print(str(self.api_handler.count_tokens(messages, self.session['model'])) + " tokens in session")
+                        print(
+                            str(self.api_handler.count_tokens(messages, self.session['model'])) + " tokens in session")
                     else:
                         print("This model does not support token counting")
                     continue
@@ -216,7 +213,7 @@ class Chat(InteractionHandler):
                     click.echo(part, nl=False)
                     completion_text += part
                     if 'stream_delay' in self.session:
-                          time.sleep(self.session['stream_delay'])
+                        time.sleep(self.session['stream_delay'])
 
                 click.echo("\n")  # finish with a newline
                 messages.append({"role": "assistant", "content": completion_text})
@@ -228,13 +225,12 @@ class Chat(InteractionHandler):
                 click.echo(f"\n{label}: " + response + "\n")
                 messages.append({"role": "assistant", "content": response})
 
-
     def save_chat(self, messages, filename):
         session_info = self.session
         if not os.path.isabs(filename):
             filename = os.path.join(session_info['chats_directory'], filename)
         contents = str()
-        include = [ 'model', 'temperature', 'max_tokens', 'endpoint' ]
+        include = ['model', 'temperature', 'max_tokens', 'endpoint']
         for parameter in session_info:
             if parameter in include:
                 contents += f"{parameter}: {session_info[parameter]}\n"
@@ -242,7 +238,8 @@ class Chat(InteractionHandler):
         for i, message in enumerate(messages):
             if 'load_file' in self.session:
                 if 0 < i < len(self.session['load_file']) + 1:
-                    contents += f"user: *** MISSING CONTEXT *** {self.session['load_file_name'][i-1]} not present.\n\n\n"
+                    contents += (f"user: *** MISSING CONTEXT *** {self.session['load_file_name'][i - 1]} not present"
+                                 f".\n\n\n")
                     continue
             contents += f"{message['role']}: {self.remove_ansi_codes(message['content'])}\n\n\n"
         with open(filename, "w") as f:
@@ -298,6 +295,7 @@ class Chat(InteractionHandler):
         except IndexError:
             return None
 
+
 #######################
 #  Helper functions   #
 #######################
@@ -338,6 +336,8 @@ def process_streamed_response(response):
     inside_code_block = False
 
     for event in response:
+        if event is None:
+            continue
         for char in event:
             if char == '`':
                 backtick_buffer.append(char)
@@ -374,4 +374,3 @@ def process_streamed_response(response):
     # Flush remaining backticks if any
     elif backtick_buffer:
         yield ''.join(backtick_buffer)
-

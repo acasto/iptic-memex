@@ -7,10 +7,11 @@ import api_handler
 from bs4 import BeautifulSoup
 import requests
 
+
 @click.group(invoke_without_command=True)
 @click.option('-c', '--conf', help='Path to a custom configuration file')
 @click.option('-m', '--model', help='Model to use for completion')
-@click.option( '-pv', '--provider', help='Provider to use for a given model' )
+@click.option('-pv', '--provider', help='Provider to use for a given model')
 @click.option('-p', '--prompt', help='Filename from the prompt directory')
 @click.option('-t', '--temperature', help='Temperature to use for completion')
 @click.option('-l', '--max-tokens', help='Maximum number of tokens to use for completion')
@@ -25,6 +26,7 @@ def cli(ctx, conf, model, provider, prompt, temperature, max_tokens, window, str
     :param ctx: the context object that we can use to pass around information
     :param conf: a path to a custom configuration file
     :param model: the model to use for completion
+    :param provider: the provider to use for a given model
     :param prompt: the prompt file to use for completion
     :param temperature: temperature to use for completion
     :param max_tokens: maximum number of tokens to use
@@ -34,7 +36,7 @@ def cli(ctx, conf, model, provider, prompt, temperature, max_tokens, window, str
     :param file: file to use for completion (file mode)
     :return: none (this is a click entry point)
     """
-    ctx.ensure_object(dict) # set up the context object to be passed around
+    ctx.ensure_object(dict)  # set up the context object to be passed around
 
     # load the configuration file(s)
     ctx.obj['CONF'] = get_config(conf)
@@ -72,8 +74,8 @@ def cli(ctx, conf, model, provider, prompt, temperature, max_tokens, window, str
                 with open(file_path, 'rt') as g:
                     message += g.read()
         ctx.obj['SESSION']['message'] = message
-        ctx.obj['SESSION']['interactive'] = False # we're not in interactive mode
-        session = get_session(ctx, 'completion')
+        ctx.obj['SESSION']['interactive'] = False  # we're not in interactive mode
+        session = get_session(ctx)
         completion = interaction_handler.Completion(session)
         completion.start(ctx.obj['SESSION']['prompt'])
         return
@@ -82,6 +84,7 @@ def cli(ctx, conf, model, provider, prompt, temperature, max_tokens, window, str
     if ctx.invoked_subcommand is None:
         raise click.UsageError(cli.get_help(ctx))
 
+
 @cli.command()
 @click.pass_context
 @click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
@@ -89,7 +92,7 @@ def cli(ctx, conf, model, provider, prompt, temperature, max_tokens, window, str
 @click.option('--id', 'css_id', help='CSS ID selector of text to scrape from URL')
 @click.option('--class', 'css_class', help='CSS class selector of text to scrape from URL')
 def ask(ctx, file, url, css_id, css_class):
-    session = get_session(ctx, 'completion')
+    session = get_session(ctx)
     prompt = session['prompt']
     if len(file) > 0:
         session['load_file'] = []
@@ -130,10 +133,9 @@ def ask(ctx, file, url, css_id, css_class):
             session['load_file_name'].append(u)
     if 'verbose' in session and session['verbose']:
         print_session_info(session)
+    # call the completion handler since we're in ask mode
     completion = interaction_handler.Completion(session)
     completion.start(prompt)
-
-
 
 
 @cli.command()
@@ -145,7 +147,7 @@ def ask(ctx, file, url, css_id, css_class):
 @click.option('--class', 'css_class', help='CSS class selector of text to scrape from URL')
 def chat(ctx, load_chat, file, url, css_id, css_class):
     conf = ctx.obj['CONF']
-    session = get_session(ctx, 'chat')
+    session = get_session(ctx)
     prompt = session['prompt']
     if len(file) > 0:
         session['load_file'] = []
@@ -192,6 +194,7 @@ def chat(ctx, load_chat, file, url, css_id, css_class):
     chat_session = interaction_handler.Chat(session)
     chat_session.start(prompt)
 
+
 @cli.command()
 @click.pass_context
 @click.option('-p', '--providers', is_flag=True, help="Show providers along with models")
@@ -200,9 +203,10 @@ def list_models(ctx, providers):
     models = get_models(conf)
     for model in models:
         if providers:
-            print(model +' ('+ get_provider_from_model(conf, model) + ')')
+            print(model + ' (' + get_provider_from_model(conf, model) + ')')
         else:
             print(model)
+
 
 @cli.command()
 @click.pass_context
@@ -210,6 +214,7 @@ def list_providers(ctx):
     conf = ctx.obj['CONF']
     for provider in conf.sections():
         print(provider)
+
 
 @cli.command()
 @click.pass_context
@@ -228,17 +233,19 @@ def list_chats(ctx):
     for chat_session in os.listdir(path):
         click.echo(chat_session)
 
+
 @cli.command()
 @click.pass_context
 def list_config(ctx):
     conf = ctx.obj['CONF']
     print()
-    for section in conf.sections(): # dump the settings in the ini format
+    for section in conf.sections():  # dump the settings in the ini format
         print(f'[ {section} ]')
         for option in conf.options(section):
             value = conf.get(section, option)
             print(f'{option} = {value}')
         print()
+
 
 #######################
 #  Helper functions   #
@@ -260,8 +267,8 @@ def get_config(config_file=None):
     # get the user config location from the default config file and check and read it
     if 'user_config' in config['DEFAULT']:
         user_config = resolve_file_path(config['DEFAULT']['user_config'])
-    # if user_config is None:
-    #     raise FileNotFoundError(f'Could not find the user config file at ' + config['DEFAULT']['user_config'])
+        # if user_config is None:
+        #     raise FileNotFoundError(f'Could not find the user config file at ' + config['DEFAULT']['user_config'])
         if user_config is not None:
             config.read(user_config)
     # if a custom config file was specified, check and read it
@@ -269,8 +276,9 @@ def get_config(config_file=None):
         file = resolve_file_path(config_file)
         if file is None:
             raise FileNotFoundError(f'Could not find the custom config file at {config_file}')
-        config.read(config_file) # read the custom config file
+        config.read(config_file)  # read the custom config file
     return config
+
 
 def get_prompt(conf, prompt_file=None):
     """
@@ -291,6 +299,7 @@ def get_prompt(conf, prompt_file=None):
                 raise click.UsageError(f"Warning: Prompt file not found: {prompt_file}")
     return prompt
 
+
 def get_models(conf):
     """
     returns a list of available models in the config files
@@ -300,21 +309,21 @@ def get_models(conf):
     models = []
     for provider in conf.sections():
         models += get_models_for_provider(conf, provider)
-    return set(models) # remove duplicates with set()
+    return set(models)  # remove duplicates with set()
+
 
 def get_models_for_provider(conf, provider):
     """
-    builds up a list of models for a given provider, combines mode specific and general models
+    builds up a list of models for a given provider
     :param conf: ConfigParser object
     :param provider: name of the provider
     :return: list of models
     """
     models = []
-    if conf.has_option(provider, 'completion_models'):
-        models += [model.strip() for model in conf.get(provider, 'completion_models').split(',') if model.strip()]
-    if conf.has_option(provider, 'chat_models'):
-        models += [model.strip() for model in conf.get(provider, 'chat_models').split(',') if model.strip()]
+    if conf.has_option(provider, 'models'):
+        models = [model.strip() for model in conf.get(provider, 'models').split(',') if model.strip()]
     return models
+
 
 def get_provider_from_model(conf, model):
     """
@@ -330,6 +339,7 @@ def get_provider_from_model(conf, model):
             return provider
     return None
 
+
 def get_endpoint_from_model(conf, model):
     """
     returns the endpoint for a given model
@@ -340,28 +350,10 @@ def get_endpoint_from_model(conf, model):
     provider = get_provider_from_model(conf, model)
     if provider is None:
         return None
-    mode = get_mode_from_model(conf, model)
-    if conf.has_option(provider, mode+'_endpoint'):
-        return conf.get(provider, mode+'_endpoint')
+    if conf.has_option(provider, 'endpoint'):
+        return conf.get(provider, 'endpoint')
     return None
 
-def get_mode_from_model(conf, model):
-    """
-    returns the mode for a given model
-    :param conf: ConfigParser object
-    :param model: name of the model
-    :return: mode
-    """
-    provider = get_provider_from_model(conf, model)
-    if provider is None:
-        return None
-    if conf.has_option(provider, 'completion_models'):
-        if model in [model.strip() for model in conf.get(provider, 'completion_models').split(',')]:
-            return 'completion'
-    if conf.has_option(provider, 'chat_models'):
-        if model in [model.strip() for model in conf.get(provider, 'chat_models').split(',')]:
-            return 'chat'
-    return None
 
 def get_default_provider(conf):
     """
@@ -377,47 +369,40 @@ def get_default_provider(conf):
             return provider
     return None
 
-def get_default_model(conf, mode, provider=None):
+
+def get_default_model(conf, provider=None):
     """
     returns the default model for a given mode
     :param conf: ConfigParser object
-    :param mode: mode
     :param provider: name of the provider
     :return: name of the default model or None
     """
     if provider is None:
-        if mode == 'completion' or mode == 'complete':
-            if conf.has_option('DEFAULT', 'default_completion_model'):
-                return conf.get('DEFAULT', 'default_completion_model')
-        elif mode == 'chat':
-            if conf.has_option('DEFAULT', 'default_chat_model'):
-                return conf.get('DEFAULT', 'default_chat_model')
+        if conf.has_option('DEFAULT', 'default_model'):
+            return conf.get('DEFAULT', 'default_model')
     else:
-        if mode == 'completion' or mode == 'complete':
-            if conf.has_option(provider, 'default_completion_model'):
-                return conf.get(provider, 'default_completion_model')
-        elif mode == 'chat':
-            if conf.has_option(provider, 'default_chat_model'):
-                return conf.get(provider, 'default_chat_model')
+        if conf.has_option(provider, 'default_model'):
+            return conf.get(provider, 'default_model')
+
     return None
 
-def get_session(ctx, mode):
+
+def get_session(ctx):
     """
     sets up the session and returns it with an 'api_handler' key and a handler instance for the chosen provider
     todo: maybe fetch a dict of parameters from the provider classes so that we don't have to hardcode them all here
           and a new provider could be added without having to change this function
     :param ctx: click context
-    :param mode: mode
     :return: session dict
     """
     conf = ctx.obj['CONF']
     session = ctx.obj['SESSION']
-    ## finish setting up the session object if needed
+    # finish setting up the session object if needed
     if 'model' in session:
         provider = get_provider_from_model(conf, session['model'])
     else:
         provider = get_default_provider(conf)
-        session['model'] = get_default_model(conf, mode, provider)
+        session['model'] = get_default_model(conf, provider)
     if 'temperature' not in session:
         session['temperature'] = conf.get(provider, 'temperature', fallback=0.7)
         session['temperature'] = float(session['temperature']) if session['temperature'] is not None else 0.7
@@ -427,8 +412,7 @@ def get_session(ctx, mode):
     if 'context_window' not in session:
         session['context_window'] = conf.get(provider, 'context_window', fallback=None)
     if 'stream' not in session:
-        session['stream'] = conf.get(provider, 'stream', fallback=False)
-        session['stream'] = bool(session['stream']) if session['stream'] is not None else False
+        session['stream'] = conf.getboolean(provider, 'stream', fallback=False)
     if 'stream_delay' not in session:
         session['stream_delay'] = conf.get(provider, 'stream_delay', fallback=0.008)
         session['stream_delay'] = float(session['stream_delay']) if session['stream_delay'] is not None else 0.008
@@ -437,13 +421,12 @@ def get_session(ctx, mode):
     if conf.has_option(provider, 'api_key') and conf.get(provider, 'api_key') != '':
         session['api_key'] = conf.get(provider, 'api_key')
     if 'prompt' not in session:
-        mode = get_mode_from_model(conf, session['model'])
-        prompt = resolve_file_path( mode + "_default.txt", conf['DEFAULT']['prompt_directory'])
+        prompt = resolve_file_path("default.txt", conf['DEFAULT']['prompt_directory'])
         if prompt is not None:
-            session['prompt'] = get_prompt(conf, mode + "_default.txt")
+            session['prompt'] = get_prompt(conf, "default.txt")
         else:
             session['prompt'] = conf.get(provider, 'fallback_prompt')
-    if mode == 'chat' and 'chats_directory' not in session:
+    if 'chats_directory' not in session:
         session['chats_directory'] = resolve_directory_path(conf['DEFAULT']['chats_directory'])
     if conf.has_option(provider, 'response_label'):
         session['response_label'] = conf.get(provider, 'response_label')
@@ -451,12 +434,13 @@ def get_session(ctx, mode):
         session['response_label'] = 'Response'
     if 'interactive' not in session:
         session['interactive'] = True
-    if 'mode' not in session: # since some chat models can also do completion but need different parameters
-        session['mode'] = get_mode_from_model(conf, session['model'])
+    # if 'mode' not in session:  # since some chat models can also do completion but need different parameters
+    #     session['mode'] = get_mode_from_model(conf, session['model'])
 
     provider_class = getattr(api_handler, provider + 'Handler')
     session['api_handler'] = provider_class(session)
     return session
+
 
 def print_session_info(session_object):
     """
@@ -470,6 +454,7 @@ def print_session_info(session_object):
         if key not in exclude:
             print(f'{key}: {session[key]}')
     print('-' * 80)
+
 
 def resolve_file_path(file_name, base_dir=None, extension=None):
     """
@@ -518,6 +503,7 @@ def resolve_file_path(file_name, base_dir=None, extension=None):
     # If none of the conditions are met, return None
     return None
 
+
 def resolve_directory_path(dir_name):
     """
     works out the path to a directory
@@ -533,6 +519,7 @@ def resolve_directory_path(dir_name):
         if os.path.isdir(dir_name):
             return dir_name
     return None
+
 
 # take care of business
 if __name__ == "__main__":
