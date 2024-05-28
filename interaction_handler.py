@@ -91,7 +91,8 @@ class Completion(InteractionHandler):
                 code_block_regex = re.compile(r'```(.+?)```', re.DOTALL)
                 response = code_block_regex.sub(
                     lambda match: format_code_block(match.group(1)), response)
-            click.echo(f"{label}: " + response)
+            # click.echo(f"{label}: " + response)
+            click.echo(response)
 
 
 class Chat(InteractionHandler):

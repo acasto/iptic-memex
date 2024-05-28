@@ -106,7 +106,8 @@ class AnthropicHandler(APIHandler):
         try:
             response = self.client.messages.create(
                 model=self.conf['model'],
-                messages=messages,
+                system=messages[0]['content'],
+                messages=messages[1:],
                 temperature=float(self.conf['temperature']),
                 max_tokens=int(self.conf['max_tokens']),
                 stream=bool(self.conf['stream']),
@@ -115,7 +116,9 @@ class AnthropicHandler(APIHandler):
             if self.conf['stream']:
                 return response
             else:
-                return response.choices[0].message.content
+                # return response.content as a string
+                return response.content[0].text
+
         except openai.APIConnectionError as e:
             print("The server could not be reached")
             print(e.__cause__)  # an underlying Exception, likely raised within httpx.
@@ -134,6 +137,5 @@ class AnthropicHandler(APIHandler):
         """
         response = self.chat(messages)
         for event in response:
-            if hasattr(event.choices[0].delta, 'content'):
-                if event.choices[0].delta.content is not None:
-                    yield event.choices[0].delta.content
+            if event.type == "content_block_delta":
+                yield event.delta.text
