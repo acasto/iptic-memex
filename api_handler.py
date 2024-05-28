@@ -107,7 +107,7 @@ class AnthropicHandler(APIHandler):
             response = self.client.messages.create(
                 model=self.conf['model'],
                 system=messages[0]['content'],
-                messages=messages[1:],
+                messages=self.merge_consecutive_users(messages[1:]),
                 temperature=float(self.conf['temperature']),
                 max_tokens=int(self.conf['max_tokens']),
                 stream=bool(self.conf['stream']),
@@ -139,3 +139,21 @@ class AnthropicHandler(APIHandler):
         for event in response:
             if event.type == "content_block_delta":
                 yield event.delta.text
+
+    @staticmethod
+    def merge_consecutive_users(messages):
+        merged_messages = []
+        i = 0
+        while i < len(messages):
+            if messages[i]['role'] == 'user':
+                # Start merging content
+                merged_content = messages[i]['content']
+                i += 1
+                while i < len(messages) and messages[i]['role'] == 'user':
+                    merged_content += ' ' + messages[i]['content']
+                    i += 1
+                merged_messages.append({'role': 'user', 'content': merged_content})
+            else:
+                merged_messages.append(messages[i])
+                i += 1
+        return merged_messages
