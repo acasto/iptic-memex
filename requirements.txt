@@ -1,4 +1,5 @@
 openai
+anthropic
 click
 Pygments
 gnureadline;platform_system=="Linux" or platform_system=="Darwin"

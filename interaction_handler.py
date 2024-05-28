@@ -122,7 +122,7 @@ class Chat(InteractionHandler):
         else:
             messages = [{"role": "system", "content": prompt}]
         while True:
-            # compare the token count of hte current message to the context_window size and warn if the difference
+            # compare the token count of the current message to the context_window size and warn if the difference
             # is smaller than max_tokens
             if 'context_window' in self.session and self.session['context_window'] is not None and hasattr(
                     self.api_handler, 'count_tokens'):
@@ -336,8 +336,6 @@ def process_streamed_response(response):
     inside_code_block = False
 
     for event in response:
-        if event is None:
-            continue
         for char in event:
             if char == '`':
                 backtick_buffer.append(char)
