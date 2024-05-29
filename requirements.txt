@@ -1,5 +1,6 @@
 openai
 anthropic
+google-generativeai
 click
 Pygments
 gnureadline;platform_system=="Linux" or platform_system=="Darwin"
