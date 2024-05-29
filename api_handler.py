@@ -132,7 +132,8 @@ class AnthropicHandler(APIHandler):
         #     print(e.status_code)
         #     print(e.response)
         finally:
-            print("something went wrong")
+            pass
+
 
     def stream_chat(self, messages):
         """
@@ -209,7 +210,7 @@ class GoogleHandler(APIHandler):
         #     print(e.status_code)
         #     print(e.response)
         finally:
-            print("something went wrong")
+            pass
 
     def stream_chat(self, messages):
         """
