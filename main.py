@@ -11,26 +11,22 @@ import requests
 @click.group(invoke_without_command=True)
 @click.option('-c', '--conf', help='Path to a custom configuration file')
 @click.option('-m', '--model', help='Model to use for completion')
-@click.option('-pv', '--provider', help='Provider to use for a given model')
 @click.option('-p', '--prompt', help='Filename from the prompt directory')
 @click.option('-t', '--temperature', help='Temperature to use for completion')
 @click.option('-l', '--max-tokens', help='Maximum number of tokens to use for completion')
-@click.option('-w', '--window', help='Window size to use for token limit')
 @click.option('-s', '--stream', is_flag=True, help='Stream the completion events')
 @click.option('-v', '--verbose', is_flag=True, help='Show session parameters')
 @click.option('-f', '--file', multiple=True, help='File to use for completion')
 @click.pass_context
-def cli(ctx, conf, model, provider, prompt, temperature, max_tokens, window, stream, verbose, file):
+def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file):
     """
     the main entry point for the CLI click interface
     :param ctx: the context object that we can use to pass around information
     :param conf: a path to a custom configuration file
     :param model: the model to use for completion
-    :param provider: the provider to use for a given model
     :param prompt: the prompt file to use for completion
     :param temperature: temperature to use for completion
     :param max_tokens: maximum number of tokens to use
-    :param window: window size to use for token limit
     :param stream: stream the completion events
     :param verbose: show session parameters
     :param file: file to use for completion (file mode)
@@ -41,10 +37,14 @@ def cli(ctx, conf, model, provider, prompt, temperature, max_tokens, window, str
     # load the configuration file(s)
     ctx.obj['CONF'] = get_config(conf)
 
+    # Load the filtered list of models
+    ctx.obj['MODELS'] = get_models(ctx.obj['CONF'])
+
     # start building up the session object with the information we have
     ctx.obj['SESSION'] = {}
     if model is not None:
-        if model in get_models(ctx.obj['CONF']):
+        # see if model is one of the sections in ctx.obj['MODELS']
+        if model in ctx.obj['MODELS']:
             ctx.obj['SESSION']['model'] = model
         else:
             raise click.UsageError(f'Invalid model: {model}')
@@ -52,8 +52,6 @@ def cli(ctx, conf, model, provider, prompt, temperature, max_tokens, window, str
         ctx.obj['SESSION']['temperature'] = temperature
     if max_tokens is not None:
         ctx.obj['SESSION']['max_tokens'] = max_tokens
-    if window is not None:
-        ctx.obj['SESSION']['context_window'] = window
     if stream:
         ctx.obj['SESSION']['stream'] = stream
     if prompt is not None:
@@ -197,23 +195,38 @@ def chat(ctx, load_chat, file, url, css_id, css_class):
 
 @cli.command()
 @click.pass_context
-@click.option('-p', '--providers', is_flag=True, help="Show providers along with models")
-def list_models(ctx, providers):
-    conf = ctx.obj['CONF']
-    models = get_models(conf)
-    for model in models:
-        if providers:
-            print(model + ' (' + get_provider_from_model(conf, model) + ')')
+@click.option('-a', '--all', 'showall', is_flag=True, help="Show all models")
+@click.option('-d', '--details', is_flag=True, help="Show model details")
+def list_models(ctx, showall, details):
+    if showall:
+        models = get_models(ctx.obj['CONF'], showall=True)
+    else:
+        models = get_models(ctx.obj['CONF'],)
+    for section in models.sections():  # dump the settings in the ini format
+        # if details is set display all else just show the section name
+        if details:
+            print()
+            print(f'[ {section} ]')
+            for option in models.options(section):
+                value = models.get(section, option)
+                print(f'{option} = {value}')
+            print()
         else:
-            print(model)
+            print(section)
 
 
 @cli.command()
+@click.option('-a', '--all', 'showall', is_flag=True, help="Show all providers")
 @click.pass_context
-def list_providers(ctx):
+def list_providers(ctx, showall):
     conf = ctx.obj['CONF']
-    for provider in conf.sections():
-        print(provider)
+    if showall:
+        for provider in conf.sections():
+            print(provider)
+    else:
+        for provider in conf.sections():
+            if conf.getboolean(provider, 'active', fallback=False):
+                print(provider)
 
 
 @cli.command()
@@ -267,8 +280,6 @@ def get_config(config_file=None):
     # get the user config location from the default config file and check and read it
     if 'user_config' in config['DEFAULT']:
         user_config = resolve_file_path(config['DEFAULT']['user_config'])
-        # if user_config is None:
-        #     raise FileNotFoundError(f'Could not find the user config file at ' + config['DEFAULT']['user_config'])
         if user_config is not None:
             config.read(user_config)
     # if a custom config file was specified, check and read it
@@ -278,6 +289,46 @@ def get_config(config_file=None):
             raise FileNotFoundError(f'Could not find the custom config file at {config_file}')
         config.read(config_file)  # read the custom config file
     return config
+
+
+def get_models(conf, showall=False):
+    # Read the 'models.ini' file
+    models_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models.ini')
+    if not os.path.exists(models_file):
+        raise FileNotFoundError(f'Could not find the models file at {models_file}')
+    models = ConfigParser()
+    models.read(models_file)
+
+    # Get the user model definition overrides from the configuration file
+    if 'user_models' in conf['DEFAULT']:
+        user_models = resolve_file_path(conf['DEFAULT']['user_models'])
+        if user_models is not None:
+            models.read(user_models)
+
+    # Filter the models based on the provider configuration or show all if specified
+    filtered_models = ConfigParser()
+    if showall:
+        for model in models.sections():
+            filtered_models.add_section(model)
+            for option in models.options(model):
+                filtered_models.set(model, option, models.get(model, option))
+    else:
+        for provider in conf.sections():
+            # Check if the provider is active
+            if conf.getboolean(provider, 'active', fallback=False):
+                # See if user has a preferred list of models to use for this provider, else use all
+                desired_models = conf.get(provider, 'models', fallback=None)
+                if desired_models is not None:
+                    desired_models = [model.strip() for model in desired_models.split(',')]
+                # Filter the models based on the provider configuration
+                for model in models.sections():
+                    if models.get(model, 'provider') == provider:  # Check if the provider of the current model matches the current provider
+                        if desired_models is None or model in desired_models:
+                            filtered_models.add_section(model)
+                            for option in models.options(model):
+                                filtered_models.set(model, option, models.get(model, option))
+
+    return filtered_models
 
 
 def get_prompt(conf, prompt_file=None):
@@ -298,18 +349,6 @@ def get_prompt(conf, prompt_file=None):
             except FileNotFoundError:
                 raise click.UsageError(f"Warning: Prompt file not found: {prompt_file}")
     return prompt
-
-
-def get_models(conf):
-    """
-    returns a list of available models in the config files
-    :param conf: ConfigParser object
-    :return: list of models
-    """
-    models = []
-    for provider in conf.sections():
-        models += get_models_for_provider(conf, provider)
-    return set(models)  # remove duplicates with set()
 
 
 def get_models_for_provider(conf, provider):
@@ -396,28 +435,34 @@ def get_session(ctx):
     :return: session dict
     """
     conf = ctx.obj['CONF']
+    models = ctx.obj['MODELS']
     session = ctx.obj['SESSION']
     # finish setting up the session object if needed
-    if 'model' in session:
-        provider = get_provider_from_model(conf, session['model'])
-    else:
-        provider = get_default_provider(conf)
-        session['model'] = get_default_model(conf, provider)
+
+    # if we don't have a model yet get one, and set the provider and model_name
+    if 'model' not in session:
+        if conf.has_option('DEFAULT', 'default_model'):
+            session['model'] = conf.get('DEFAULT', 'default_model')
+        else:
+            session['model'] = models.sections()[0]
+    provider = models.get(session['model'], 'provider')
+    session['model_name'] = models.get(session['model'], 'model_name')
+
     if 'temperature' not in session:
-        session['temperature'] = conf.get(provider, 'temperature', fallback=0.7)
+        session['temperature'] = conf.get('DEFAULT', 'temperature', fallback=0.7)
         session['temperature'] = float(session['temperature']) if session['temperature'] is not None else 0.7
     if 'max_tokens' not in session:
-        session['max_tokens'] = conf.get(provider, 'max_tokens', fallback=100)
+        session['max_tokens'] = conf.get('DEFAULT', 'max_tokens', fallback=100)
         session['max_tokens'] = int(session['max_tokens']) if session['max_tokens'] is not None else 100
     if 'context_window' not in session:
-        session['context_window'] = conf.get(provider, 'context_window', fallback=None)
+        session['context_window'] = models.get(session['model'], 'context', fallback=None)
     if 'stream' not in session:
-        session['stream'] = conf.getboolean(provider, 'stream', fallback=False)
+        session['stream'] = conf.getboolean('DEFAULT', 'stream', fallback=False)
     if 'stream_delay' not in session:
-        session['stream_delay'] = conf.get(provider, 'stream_delay', fallback=0.008)
+        session['stream_delay'] = conf.get('DEFAULT', 'stream_delay', fallback=0.008)
         session['stream_delay'] = float(session['stream_delay']) if session['stream_delay'] is not None else 0.008
     if 'endpoint' not in session:
-        session['endpoint'] = get_endpoint_from_model(conf, session['model'])
+        session['endpoint'] = models.get(session['model'], 'endpoint', fallback=None)
     if conf.has_option(provider, 'api_key') and conf.get(provider, 'api_key') != '':
         session['api_key'] = conf.get(provider, 'api_key')
     if 'prompt' not in session:
@@ -436,6 +481,7 @@ def get_session(ctx):
         session['interactive'] = True
     # if 'mode' not in session:  # since some chat models can also do completion but need different parameters
     #     session['mode'] = get_mode_from_model(conf, session['model'])
+    session['model'] = session['model_name'] # temporary fix since model is now the nickname
 
     provider_class = getattr(api_handler, provider + 'Handler')
     session['api_handler'] = provider_class(session)
