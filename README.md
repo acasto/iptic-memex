@@ -1,7 +1,7 @@
 # Description
 
 Iptic Memex is a Python program that offers a straight-forward CLI interface for interacting with LLM providers through
-their APIs. Currently tested with OpenAI and OpenRouter. Input can be piped in from the command line or entered interactively 
+their APIs. Currently tested with OpenAI, Anthropic, and Google Gemini. Input can be piped in from the command line or entered interactively 
 through 'ask' and 'chat' modes. Chat mode features the ability to save conversations in a human-readable conversation format 
 with a configurable extension for use with external applications such as Obsidian.
 
@@ -27,10 +27,6 @@ envisioned a device that would compress and store all of their knowledge. https:
 - [x] Supports syntax highlighting in interactive modes
 - [x] Cross-platform support (tested on Windows and Linux)
 
-**Note:**
-Multi-provider support is currently in development. OpenRouter currently works alongside OpenAI but there are 
-plenty of kludges and caveats as this is the first alternate provider to be implemented. 
-
 # Installation & Usage
 
 ### Basic Usage
@@ -45,7 +41,6 @@ plenty of kludges and caveats as this is the first alternate provider to be impl
   - `~/.config/iptic-memex/config.ini` in the user directory
   - via custom .ini file with `-c` or `--conf` flag
 - API key can be set in the config file as `api_key` or via environment variable `OPENAI_API_KEY`.
-- If using OpenRouter, be sure to set 'api_key' in the [OpenRouter] section of the config file.
 - Usage is well documented with click and can be accessed with `python main.py --help` or `<subcommand> --help`
 - From within `chat` mode you can access the following commands: 
   - Access the help menu with `help` or `?`.
@@ -88,6 +83,12 @@ exit before incurring a cost. A notification will appear when the estimated rema
 
 
 # Changelog
+
+### 1.3.0 (05/29/2024)
+- Added support for Anthropic and Google Gemini models 
+- Removed OpenRouter support temporarily  
+- Added models.ini for storing detailed model information
+- Changed how model information is loaded and displayed 
 
 ### 1.2.4 (04/15/2023)
 - Added ability to track token usage in chat mode with tiktoken
