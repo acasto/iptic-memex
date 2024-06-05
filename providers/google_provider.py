@@ -1,6 +1,6 @@
 import os
 import google.generativeai as genai
-from api_handler import APIProvider
+from session_handler import APIProvider
 
 
 class GoogleHandler(APIProvider):

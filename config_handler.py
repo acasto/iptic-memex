@@ -1,5 +1,6 @@
 import os
 from configparser import ConfigParser
+from helpers import resolve_file_path, resolve_directory_path
 
 
 class ConfigHandler:
@@ -8,10 +9,8 @@ class ConfigHandler:
     """
 
     def __init__(self, config_file=None):
-        self.user_options = {}
         self.conf = self.read_config_files(config_file)
         self.models = self.read_models_files()
-        self.session = {}
 
     @staticmethod
     def read_config_files(config_file=None) -> ConfigParser:
@@ -92,17 +91,17 @@ class ConfigHandler:
             return None
         return [f for f in os.listdir(prompt_dir) if os.path.isfile(os.path.join(prompt_dir, f))]
 
-    def list_chats(self):
-        """
-        List the chat logs available in the chat directory, used mostly for output to the user
-        """
-        chat_dir = self.conf['DEFAULT'].get('chats_directory', None)
-        if chat_dir is None:
-            return None
-        chat_dir = resolve_directory_path(chat_dir)
-        if chat_dir is None:
-            return None
-        return [f for f in os.listdir(chat_dir) if os.path.isfile(os.path.join(chat_dir, f))]
+    # def list_chats(self):
+    #     """
+    #     List the chat logs available in the chat directory, used mostly for output to the user
+    #     """
+    #     chat_dir = self.conf['DEFAULT'].get('chats_directory', None)
+    #     if chat_dir is None:
+    #         return None
+    #     chat_dir = resolve_directory_path(chat_dir)
+    #     if chat_dir is None:
+    #         return None
+    #     return [f for f in os.listdir(chat_dir) if os.path.isfile(os.path.join(chat_dir, f))]
 
     def list_models(self, showall=False) -> dict:
         """
@@ -193,116 +192,3 @@ class ConfigHandler:
         except FileNotFoundError:
             print(f'Warning: Could not find the prompt file. Using fallback prompt.')
             return self.conf['DEFAULT'].get('fallback_prompt', None)
-
-    def set_user_option(self, key, value):
-        """
-        Set a user option which can be processed later into the session configuration
-        :param key: the key to set
-        :param value: the value to set
-        """
-        self.user_options[key] = value
-
-    def add_file(self, file_name):
-        """
-        Add a file to the user options as a list of dictionaries for multiple file support
-        :param file_name: the file name to add
-        """
-        if 'files' not in self.user_options:
-            self.user_options['files'] = []
-        # try to read the file if it exists else just add the file name
-        file_path = resolve_file_path(file_name)
-        if file_path is not None:
-            with open(file_path, 'r') as f:
-                file = {'name': file_name, 'content': f.read()}
-                self.user_options['files'].append(file)
-        else:
-            file = {'name': 'stdin', 'content': file_name}
-            self.user_options['files'].append(file)
-
-    def list_files(self):
-        """
-        List the files stored in the user options
-        """
-        if 'files' in self.user_options:
-            return self.user_options['files']
-        return None
-
-    def start_session_conf(self):
-        """
-        build the session configuration from the user options and the configuration files
-            """
-        self.session = {
-            'prompt': self.get_prompt(),
-        }
-
-    def get_session_conf(self):
-        pass
-
-
-############################################################################################################
-# Helper functions
-############################################################################################################
-
-def resolve_file_path(file_name: str, base_dir=None, extension=None):
-    """
-    works out the path to a file based on the filename and optional base directory and can take an optional extension
-    :param file_name: name of the file to resolve the path to
-    :param base_dir: optional base directory to resolve the path from
-    :param extension: optional extension to append to the file name
-    :return: absolute path to the file or None
-    """
-    # If base_dir is not specified, use the current working directory
-    if base_dir is None:
-        base_dir = os.getcwd()
-    # If base_dir is a relative path, convert it to an absolute path based on the main.py directory
-    elif not os.path.isabs(base_dir):
-        main_dir = os.path.dirname(os.path.abspath(__file__))
-        base_dir = os.path.abspath(os.path.join(main_dir, base_dir))
-    # Expand user's home directory if base_dir starts with a tilde
-    base_dir = os.path.expanduser(base_dir)
-
-    # Check if base_dir exists and is a directory
-    if not os.path.isdir(base_dir):
-        return None
-
-    # If the file_name is an absolute path, check if it exists
-    file_name = os.path.expanduser(file_name)
-    if os.path.isabs(file_name):
-        if os.path.isfile(file_name):
-            return file_name
-        elif extension is not None and os.path.isfile(file_name + extension):
-            return file_name + extension
-    else:
-        # If the file_name is a relative path, check if it exists
-        full_path = os.path.join(base_dir, file_name)
-        if os.path.isfile(full_path):
-            return full_path
-        elif extension is not None and os.path.isfile(full_path + extension):
-            return full_path + extension
-
-        # If the file_name is just a file name, check if it exists in the base directory
-        full_path = os.path.join(base_dir, file_name)
-        if os.path.isfile(full_path):
-            return full_path
-        elif extension is not None and os.path.isfile(full_path + extension):
-            return full_path + extension
-
-    # If none of the conditions are met, return None
-    return None
-
-
-def resolve_directory_path(dir_name: str):
-    """
-    works out the path to a directory
-    :param dir_name: name of the directory to resolve the path to
-    :return: absolute path to the directory
-    """
-    dir_name = os.path.expanduser(dir_name)
-    if not os.path.isabs(dir_name):
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), dir_name)
-        if os.path.isdir(path):
-            return path
-    else:
-        if os.path.isdir(dir_name):
-            return dir_name
-    return None

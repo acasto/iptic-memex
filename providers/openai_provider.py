@@ -1,7 +1,7 @@
 import os
 import openai
 from openai import OpenAI
-from api_handler import APIProvider
+from session_handler import APIProvider
 
 
 class OpenAIHandler(APIProvider):

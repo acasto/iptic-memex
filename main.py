@@ -28,33 +28,28 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file
     :return: none (this is a click entry point)
     """
     ctx.ensure_object(dict)  # set up the context object to be passed around
-    ctx.obj['CONF'] = SessionHandler(conf)  # start up the ConfigHandler
+    session = SessionHandler()  # start up a session handler
+    ctx.obj['SESSION'] = session
 
     # if user specified a prompt file, check if we need to read it from stdin and then pass to ConfigHandler
     if prompt is not None:
-        if prompt == '-':
-            ctx.obj['CONF'].set_user_option('prompt', sys.stdin.read())
-        else:
-            ctx.obj['CONF'].set_user_option('prompt', prompt)
+        session.add_context('prompt', prompt)
 
     # if user specified a model, check if it's in the models file and then pass to ConfigHandler
     if model is not None:
-        if ctx.obj['CONF'].valid_model(model):
-            ctx.obj['CONF'].set_user_option('model', model)
-        else:
-            raise click.UsageError(f'Invalid model: {model}')
+        session.set_option('model', model)
 
     # set user supplied temperature
     if temperature is not None:
-        ctx.obj['CONF'].set_user_option('temperature', temperature)
+        session.set_option('temperature', temperature)
 
     # set user supplied max_tokens
     if max_tokens is not None:
-        ctx.obj['CONF'].set_user_option('max_tokens', max_tokens)
+        session.set_option('max_tokens', max_tokens)
 
     # if the user specified the stream flag, set it in the ConfigHandler
     if stream:
-        ctx.obj['CONF'].set_user_option('stream', True)
+        session.set_option('stream', True)
 
     # this is a cli specific flag
     if verbose:
@@ -65,16 +60,18 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file
     if len(file) > 0:
         # loop through the files and read them in appending the content to the message
         for f in file:
-            # if the file is '-', read from stdin
-            if f == '-':
-                ctx.obj['CONF'].add_file(sys.stdin.read())
-            else:
-                ctx.obj['CONF'].add_file(f)
+            session.add_context('file', f)
 
-        ctx.obj['CONF'].set_user_option('interactive', False)  # we're not in interactive mode
+        session.set_option('interactive', False)  # we're not in interactive mode
 
-        session = SessionHandler(ctx.obj['CONF'])
         session.start_interaction("completion")
+
+        # temp debug
+        # print out the contents of session.dump_session()['file']
+        #for f in session.dump_session()['file']:
+        #    print(f.dump())
+        print(session.dump_session())
+
         return
 
     # if no subcommand was invoked, show the help (since we're using invoke_without_command=True)
@@ -89,15 +86,13 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file
 @click.option('--id', 'css_id', help='CSS ID selector of text to scrape from URL')
 @click.option('--class', 'css_class', help='CSS class selector of text to scrape from URL')
 def ask(ctx, file, url, css_id, css_class):
+    session = ctx.obj['SESSION']
     # if we have files to read in, do that now
     if len(file) > 0:
         # loop through the files and read them in appending the content to the message
         for f in file:
-            # if the file is '-', read from stdin
-            if f == '-':
-                ctx.obj['CONF'].add_file(sys.stdin.read())
-            else:
-                ctx.obj['CONF'].add_file(f)
+            session.add_context('file', f)
+
     # if len(url) > 0:
     #     # check so that -u will work alongside -f
     #     if 'load_file' not in session:
@@ -129,7 +124,6 @@ def ask(ctx, file, url, css_id, css_class):
     # call the completion handler since we're in ask mode
     # completion = interaction_handler.Completion(session)
     # completion.start(prompt)
-    session = SessionHandler(ctx.obj['CONF'])
     session.start_interaction("ask")
     return
 
@@ -142,15 +136,13 @@ def ask(ctx, file, url, css_id, css_class):
 @click.option('--id', 'css_id', help='CSS ID selector of text to scrape from URL')
 @click.option('--class', 'css_class', help='CSS class selector of text to scrape from URL')
 def chat(ctx, load_chat, file, url, css_id, css_class):
+    session = ctx.obj['SESSION']
     # if we have files to read in, do that now
     if len(file) > 0:
         # loop through the files and read them in appending the content to the message
         for f in file:
-            # if the file is '-', read from stdin
-            if f == '-':
-                ctx.obj['CONF'].add_file(sys.stdin.read())
-            else:
-                ctx.obj['CONF'].add_file(f)
+            session.add_context('file', f)
+
     # if len(url) > 0:
     #     # check so that -u will work alongside -f
     #     if 'load_file' not in session:
@@ -184,7 +176,6 @@ def chat(ctx, load_chat, file, url, css_id, css_class):
     #     print_session_info(session)
     # chat_session = interaction_handler.Chat(session)
     # chat_session.start(prompt)
-    session = SessionHandler(ctx.obj['CONF'])
     session.start_interaction("chat")
     return
 
@@ -200,10 +191,11 @@ def list_models(ctx, showall, details):
     :param showall: show all models
     :param details: show model details
     """
+    session = ctx.obj['SESSION']
     if showall:
-        models = ctx.obj['CONF'].list_models(showall=True)
+        models = session.list_models(showall=True)
     else:
-        models = ctx.obj['CONF'].list_models(showall=False)
+        models = session.list_models(showall=False)
     for section, options in models.items():
         if details:
             print()
@@ -224,10 +216,11 @@ def list_providers(ctx, showall):
     :param ctx: click context
     :param showall: show all providers
     """
+    session = ctx.obj['SESSION']
     if showall:
-        providers = ctx.obj['CONF'].list_providers(showall=True)
+        providers = session.list_providers(showall=True)
     else:
-        providers = ctx.obj['CONF'].list_providers(showall=False)
+        providers = session.list_providers(showall=False)
     for provider in providers:
         print(provider)
 
@@ -239,7 +232,8 @@ def list_prompts(ctx):
     list the available prompts
     :param ctx: click context
     """
-    prompts = ctx.obj['CONF'].list_prompts()
+    session = ctx.obj['SESSION']
+    prompts = session.list_prompts()
     if prompts is not None:
         for prompt in prompts:
             print(prompt)
@@ -254,7 +248,8 @@ def list_chats(ctx):
     list the available chats
     :param ctx: click context
     """
-    chats = ctx.obj['CONF'].list_chats()
+    session = ctx.obj['SESSION']
+    chats = session.list_chats()
     if chats is not None:
         for session in chats:
             print(session)
@@ -269,7 +264,8 @@ def list_files(ctx):
     list the available files
     :param ctx: click context
     """
-    files = ctx.obj['CONF'].list_files()
+    session = ctx.obj['SESSION']
+    files = session.list_files()
     if files is not None:
         for file in files:
             print(file)
