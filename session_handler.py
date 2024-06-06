@@ -103,28 +103,15 @@ class SessionHandler:
             raise ValueError(f"Invalid model: {self.session['model']}")
 
         # get the full model name
-        self.session['parms']['model_name'] = self.conf.get_option_from_model('model_name', self.session['model'])
+        self.session['parms']['model'] = self.conf.get_option_from_model('model_name', self.session['model'])
 
         # get the provider from the model (mostly for the dump-session command)
         self.session['provider'] = self.conf.get_option_from_model('provider', self.session['model'])
 
-        # get the api_key from the provider
-        self.session['api_key'] = self.conf.get_option_from_provider('api_key', self.session['provider'])
-
-        # get the endpoint from the provider
-        self.session['endpoint'] = self.conf.get_option_from_provider('endpoint', self.session['provider'])
-
-        # get the max_tokens from the provider if not in session already
-        if 'max_tokens' not in self.session['parms']:
-            self.session['parms']['max_tokens'] = self.conf.get_option_from_provider('max_tokens', self.session['provider'])
-
-        # get the temperature from the provider if not in session already
-        if 'temperature' not in self.session['parms']:
-            self.session['parms']['temperature'] = self.conf.get_option_from_provider('temperature', self.session['provider'])
-
-        # get the stream setting from the config if not in session already
-        if 'stream' not in self.session['parms']:
-            self.session['parms']['stream'] = self.conf.get_option_from_provider('stream', self.session['provider'])
+        # go through all the options in teh [<provider>] section and add them to the session if not already there
+        for option in self.conf.conf.options(self.session['provider']):
+            if option not in self.session['parms']:
+                self.session['parms'][option] = self.conf.get_option_from_provider(option, self.session['provider'])
 
         return self.session
 

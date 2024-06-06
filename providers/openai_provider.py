@@ -11,11 +11,34 @@ class OpenAIProvider(APIProvider):
 
     def __init__(self, session: SessionHandler):
         self.conf = session.get_session_settings()
-        if 'api_key' in self.conf:
-            self.api_key = self.conf['api_key']
+        if 'api_key' in self.conf['parms']:
+            self.api_key = self.conf['parms']['api_key']
         else:
             self.api_key = os.environ['OPENAI_API_KEY']
         self.client = OpenAI(api_key=self.api_key)
+
+        # List of parameters that can be passed to the OpenAI API that we want to handle automatically
+        self.parameters = [
+            'model',
+            'messages',
+            'max_tokens',
+            'frequency_penalty',
+            'logit_bias',
+            'logprobs',
+            'top_logprobs',
+            'n',
+            'presence_penalty',
+            'response_format',
+            'seed',
+            'stop',
+            'stream',
+            'stream_options'
+            'temperature',
+            'top_p',
+            'tools',
+            'tool_choice',
+            'user',
+        ]
 
     def chat(self, messages):
         """
@@ -24,22 +47,23 @@ class OpenAIProvider(APIProvider):
         :return: response (str)
         """
         try:
-            # Build the parameters list
-            openai_parms = {
-                'model': self.conf['parms']['model_name'],
-                'messages': messages,
-            }
-            # Add temperature and max_tokens to the parameters list if they are available
-            if 'stream' in self.conf['parms'] and (self.conf['parms']['stream'] == 'True' or self.conf['parms']['stream'] == 'true'):
-                 openai_parms['stream'] = True
-            if self.conf['parms']['temperature'] is not None:
-                openai_parms['temperature'] = float(self.conf['parms']['temperature'])
-            if self.conf['parms']['max_tokens'] is not None:
-                openai_parms['max_tokens'] = int(self.conf['parms']['max_tokens'])
+            self.conf['parms']['messages'] = messages  # add the messages to the parms so we can loop
+            openai_parms = {}
+            # Loop through the parameters and add them to the list if they are available
+            for parameter in self.parameters:
+                if parameter in self.conf['parms'] and self.conf['parms'][parameter] is not None:
+                    openai_parms[parameter] = self.conf['parms'][parameter]
+
+            # unset stream if it's false
+            if 'stream' in openai_parms and openai_parms['stream'] == 'False':
+                del openai_parms['stream']
+
+            # print(openai_parms)
+            # quit()
 
             response = self.client.chat.completions.create(**openai_parms)
             # if in stream mode chain the generator
-            if 'stream' in openai_parms and openai_parms['stream'] is True:
+            if 'stream' in openai_parms and openai_parms['stream'] == 'True':
                 return response
             else:
                 return response.choices[0].message.content
