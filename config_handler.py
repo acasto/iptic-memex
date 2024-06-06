@@ -91,24 +91,18 @@ class ConfigHandler:
             return None
         return [f for f in os.listdir(prompt_dir) if os.path.isfile(os.path.join(prompt_dir, f))]
 
-    # def list_chats(self):
-    #     """
-    #     List the chat logs available in the chat directory, used mostly for output to the user
-    #     """
-    #     chat_dir = self.conf['DEFAULT'].get('chats_directory', None)
-    #     if chat_dir is None:
-    #         return None
-    #     chat_dir = resolve_directory_path(chat_dir)
-    #     if chat_dir is None:
-    #         return None
-    #     return [f for f in os.listdir(chat_dir) if os.path.isfile(os.path.join(chat_dir, f))]
-
     def list_models(self, showall=False) -> dict:
         """
         List the models available in the models file, used mostly for output to the user
         :param showall: optional flag to show all models
         """
         filtered_models = {}
+
+        # first lets add "default = True" to the default model
+        for model in self.models.sections():
+            if model == self.get_default_model():
+                self.models.set(model, 'default', 'True')
+
         if showall:
             for model in self.models.sections():
                 filtered_models[model] = {option: self.models.get(model, option) for option in
@@ -141,35 +135,42 @@ class ConfigHandler:
         return model in self.list_models().keys() or model in [model['model_name'] for model in
                                                                self.list_models().values()]
 
+    def get_default_model(self) -> str:
+        """
+        Get the default model from the configuration file
+        :return: the default model name
+        """
+        return self.conf['DEFAULT'].get('default_model', None)
+
+    def get_option_from_model(self, option, model):
+        """
+        Get an option from the model based on the output of list_models
+        :param option: the option to get
+        :param model: the model name
+        :return: the provider name
+        """
+        # check against both the keys and value of 'model_name' in the output of list_models
+        for key, value in self.list_models().items():
+            if model == key or model == value['model_name']:
+                return value[option]
+
+    def get_option_from_provider(self, option, provider):
+        """
+        Get an option from the respective config section based on the provider
+        :param option: the option to get
+        :param provider: the provider name
+        :return: the provider name
+        """
+        # should make sure it exists before returning
+        if self.conf.has_option(provider, option):
+            return self.conf.get(provider, option)
+
     def get_prompt(self) -> str:
         """
         gets the prompt as a string either from user specified, <prompt_dir>/default.txt, or the fallback prompt
         :return: the prompt string
         """
         try:
-            if 'prompt' in self.user_options:
-                input_prompt = self.user_options['prompt']
-
-                # if prompt is a file in prompt_directory check and make sure it exists and return it
-                prompt_file = resolve_file_path(input_prompt, self.conf['DEFAULT']['prompt_directory'], '.txt')
-                if prompt_file is not None:
-                    with open(prompt_file, 'r') as f:
-                        return f.read()
-
-                # if prompt is a file check and make sure it exists and return it
-                prompt_file = resolve_file_path(input_prompt)
-                if prompt_file is not None:
-                    with open(prompt_file, 'r') as f:
-                        return f.read()
-
-                # if it seems like the user meant to specify a file, but it doesn't exist, raise an error
-                if input_prompt.endswith(('.txt', '.md', '.prompt')) or ' ' not in input_prompt:
-                    raise FileNotFoundError(f'Could not find the prompt file at {input_prompt}')
-
-                # if prompt is not a file but a string check and make sure it's not empty and return it
-                elif self.user_options['prompt'].strip() != '':
-                    return self.user_options['prompt']
-
             # if there is a default_prompt in the config file, check and make sure it exists and return it
             if self.conf.has_option('DEFAULT', 'default_prompt'):
                 prompt_file = resolve_file_path(self.conf['DEFAULT']['default_prompt'],
@@ -192,3 +193,12 @@ class ConfigHandler:
         except FileNotFoundError:
             print(f'Warning: Could not find the prompt file. Using fallback prompt.')
             return self.conf['DEFAULT'].get('fallback_prompt', None)
+
+    def get_setting(self, section, option):
+        """
+        Get a setting from the configuration file
+        :param section: the section to get the setting from
+        :param option: the option to get
+        :return: the setting
+        """
+        return self.conf.get(section, option)

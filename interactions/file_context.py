@@ -31,5 +31,9 @@ class FileContext(InteractionHandler):
             with open(file_path, 'r') as f:
                 self.file = {'name': file, 'content': f.read()}
 
-    def start(self, data):
-        pass
+    def start(self):
+        """
+        Start the file context
+        :param data: the data to process
+        """
+        return self.file

@@ -68,3 +68,31 @@ def resolve_directory_path(dir_name: str):
         if os.path.isdir(dir_name):
             return dir_name
     return None
+
+
+    # if len(url) > 0:
+    #     # check so that -u will work alongside -f
+    #     if 'load_file' not in session:
+    #         session['load_file'] = []
+    #     if 'load_file_name' not in session:
+    #         session['load_file_name'] = []
+    #     for u in url:
+    #         # check prefix
+    #         if not u.startswith('http') and not u.startswith('https'):
+    #             u = 'https://' + u
+    #         # make a request to URL
+    #         response = requests.get(u)
+    #         # parse the response
+    #         soup = BeautifulSoup(response.text, 'html.parser')
+    #         text = None
+    #         if css_id is not None:
+    #             text = soup.find(id=css_id).get_text()
+    #         elif css_class is not None:
+    #             text = soup.find(class_=css_class).get_text()
+    #         # extract text less unnecessary newlines and whitespace
+    #         if text is None:
+    #             text = '\n'.join([line.strip() for line in soup.get_text().split('\n') if line.strip()])
+    #         else:
+    #             text = '\n'.join([line.strip() for line in text.split('\n') if line.strip()])
+    #         session['load_file'].append(text)
+    #         session['load_file_name'].append(u)

@@ -3,7 +3,7 @@ import anthropic
 from session_handler import APIProvider
 
 
-class AnthropicHandler(APIProvider):
+class AnthropicProvider(APIProvider):
     """
     OpenAI API handler
     """

@@ -1,18 +1,18 @@
 import os
 import openai
 from openai import OpenAI
-from session_handler import APIProvider
+from session_handler import APIProvider, SessionHandler
 
 
-class OpenAIHandler(APIProvider):
+class OpenAIProvider(APIProvider):
     """
     OpenAI API handler
     """
 
-    def __init__(self, conf):
-        self.conf = conf
-        if 'api_key' in conf:
-            self.api_key = conf['api_key']
+    def __init__(self, session: SessionHandler):
+        self.conf = session.get_session_settings()
+        if 'api_key' in self.conf:
+            self.api_key = self.conf['api_key']
         else:
             self.api_key = os.environ['OPENAI_API_KEY']
         self.client = OpenAI(api_key=self.api_key)
@@ -24,15 +24,22 @@ class OpenAIHandler(APIProvider):
         :return: response (str)
         """
         try:
-            response = self.client.chat.completions.create(
-                model=self.conf['model'],
-                messages=messages,
-                temperature=float(self.conf['temperature']),
-                max_tokens=int(self.conf['max_tokens']),
-                stream=bool(self.conf['stream']),
-            )
+            # Build the parameters list
+            openai_parms = {
+                'model': self.conf['parms']['model_name'],
+                'messages': messages,
+            }
+            # Add temperature and max_tokens to the parameters list if they are available
+            if 'stream' in self.conf['parms'] and (self.conf['parms']['stream'] == 'True' or self.conf['parms']['stream'] == 'true'):
+                 openai_parms['stream'] = True
+            if self.conf['parms']['temperature'] is not None:
+                openai_parms['temperature'] = float(self.conf['parms']['temperature'])
+            if self.conf['parms']['max_tokens'] is not None:
+                openai_parms['max_tokens'] = int(self.conf['parms']['max_tokens'])
+
+            response = self.client.chat.completions.create(**openai_parms)
             # if in stream mode chain the generator
-            if self.conf['stream']:
+            if 'stream' in openai_parms and openai_parms['stream'] is True:
                 return response
             else:
                 return response.choices[0].message.content

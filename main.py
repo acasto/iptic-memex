@@ -1,16 +1,15 @@
-import sys
 import click
 from session_handler import SessionHandler
 
 
 @click.group(invoke_without_command=True)
 @click.option('-c', '--conf', help='Path to a custom configuration file')
-@click.option('-m', '--model', help='Model to use for completion')
-@click.option('-p', '--prompt', help='Filename from the prompt directory')
-@click.option('-t', '--temperature', help='Temperature to use for completion')
-@click.option('-l', '--max-tokens', help='Maximum number of tokens to use for completion')
-@click.option('-s', '--stream', is_flag=True, help='Stream the completion events')
-@click.option('-v', '--verbose', is_flag=True, help='Show session parameters')
+@click.option('-m', '--model', default='', help='Model to use for completion')
+@click.option('-p', '--prompt', default='', help='Filename from the prompt directory')
+@click.option('-t', '--temperature', default='', help='Temperature to use for completion')
+@click.option('-l', '--max-tokens', default='', help='Maximum number of tokens to use for completion')
+@click.option('-s', '--stream', default=False, is_flag=True, help='Stream the completion events')
+@click.option('-v', '--verbose', default=False, is_flag=True, help='Show session parameters')
 @click.option('-f', '--file', multiple=True, help='File to use for completion')
 @click.pass_context
 def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file):
@@ -32,45 +31,30 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file
     ctx.obj['SESSION'] = session
 
     # if user specified a prompt file, check if we need to read it from stdin and then pass to ConfigHandler
-    if prompt is not None:
+    if prompt:
         session.add_context('prompt', prompt)
 
-    # if user specified a model, check if it's in the models file and then pass to ConfigHandler
-    if model is not None:
+    # Update session parameters only if they are provided
+    if prompt:
+        session.add_context('prompt', prompt)
+    if model:
         session.set_option('model', model)
-
-    # set user supplied temperature
-    if temperature is not None:
+    if temperature:
         session.set_option('temperature', temperature)
-
-    # set user supplied max_tokens
-    if max_tokens is not None:
+    if max_tokens:
         session.set_option('max_tokens', max_tokens)
-
-    # if the user specified the stream flag, set it in the ConfigHandler
     if stream:
-        session.set_option('stream', True)
-
-    # this is a cli specific flag
+        session.set_option('stream', stream)
     if verbose:
-        ctx.obj['VERBOSE'] = True
+        ctx.obj['VERBOSE'] = verbose
 
-    # todo: finsh file mode once we have the session handler and interaction handler working
     # if we're in file mode take care of that now
     if len(file) > 0:
         # loop through the files and read them in appending the content to the message
         for f in file:
             session.add_context('file', f)
 
-        session.set_option('interactive', False)  # we're not in interactive mode
-
-        session.start_interaction("completion")
-
-        # temp debug
-        # print out the contents of session.dump_session()['file']
-        #for f in session.dump_session()['file']:
-        #    print(f.dump())
-        print(session.dump_session())
+        session.start_mode("completion")
 
         return
 
@@ -93,44 +77,17 @@ def ask(ctx, file, url, css_id, css_class):
         for f in file:
             session.add_context('file', f)
 
-    # if len(url) > 0:
-    #     # check so that -u will work alongside -f
-    #     if 'load_file' not in session:
-    #         session['load_file'] = []
-    #     if 'load_file_name' not in session:
-    #         session['load_file_name'] = []
-    #     for u in url:
-    #         # check prefix
-    #         if not u.startswith('http') and not u.startswith('https'):
-    #             u = 'https://' + u
-    #         # make a request to URL
-    #         response = requests.get(u)
-    #         # parse the response
-    #         soup = BeautifulSoup(response.text, 'html.parser')
-    #         text = None
-    #         if css_id is not None:
-    #             text = soup.find(id=css_id).get_text()
-    #         elif css_class is not None:
-    #             text = soup.find(class_=css_class).get_text()
-    #         # extract text less unnecessary newlines and whitespace
-    #         if text is None:
-    #             text = '\n'.join([line.strip() for line in soup.get_text().split('\n') if line.strip()])
-    #         else:
-    #             text = '\n'.join([line.strip() for line in text.split('\n') if line.strip()])
-    #         session['load_file'].append(text)
-    #         session['load_file_name'].append(u)
-    # if 'verbose' in session and session['verbose']:
-    #     print_session_info(session)
+    if len(url) > 0:
+        pass
+
     # call the completion handler since we're in ask mode
-    # completion = interaction_handler.Completion(session)
-    # completion.start(prompt)
-    session.start_interaction("ask")
+    session.start_mode("ask")
     return
 
 
 @cli.command()
 @click.pass_context
-@click.option('-s', '--session', 'load_chat', type=click.Path(), help="Load a saved chat session from a file")
+@click.option('-s', '--session', 'load_chat', default='', type=click.Path(), help="Load a saved chat session from a file")
 @click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
 @click.option('-u', '--url', multiple=True, help='URL to include in prompt (ask questions about URL)')
 @click.option('--id', 'css_id', help='CSS ID selector of text to scrape from URL')
@@ -143,40 +100,13 @@ def chat(ctx, load_chat, file, url, css_id, css_class):
         for f in file:
             session.add_context('file', f)
 
-    # if len(url) > 0:
-    #     # check so that -u will work alongside -f
-    #     if 'load_file' not in session:
-    #         session['load_file'] = []
-    #     if 'load_file_name' not in session:
-    #         session['load_file_name'] = []
-    #     for u in url:
-    #         # check prefix
-    #         if not u.startswith('http') and not u.startswith('https'):
-    #             u = 'https://' + u
-    #         # make a request to URL
-    #         response = requests.get(u)
-    #         # parse the response
-    #         soup = BeautifulSoup(response.text, 'html.parser')
-    #         text = None
-    #         if css_id is not None:
-    #             text = soup.find(id=css_id).get_text()
-    #         elif css_class is not None:
-    #             text = soup.find(class_=css_class).get_text()
-    #         # extract text less unnecessary newlines and whitespace
-    #         if text is None:
-    #             text = '\n'.join([line.strip() for line in soup.get_text().split('\n') if line.strip()])
-    #         else:
-    #             text = '\n'.join([line.strip() for line in text.split('\n') if line.strip()])
-    #         session['load_file'].append(text)
-    #         session['load_file_name'].append(u)
-    # session['chats_extension'] = conf['DEFAULT']['chats_extension']
-    # if load_chat is not None:
-    #     session['load_chat'] = resolve_file_path(load_chat, conf['DEFAULT']['chats_directory'])
-    # if 'verbose' in session and session['verbose']:
-    #     print_session_info(session)
-    # chat_session = interaction_handler.Chat(session)
-    # chat_session.start(prompt)
-    session.start_interaction("chat")
+    if len(url) > 0:
+        pass
+
+    if load_chat:
+        pass
+
+    session.start_mode("chat")
     return
 
 
@@ -202,9 +132,11 @@ def list_models(ctx, showall, details):
             print(f'[ {section} ]')
             for option, value in options.items():
                 print(f'{option} = {value}')
-            # print()
         else:
-            print(section)
+            if 'default' in options and options['default'] == 'True':
+                print(f'{section} (default)')
+            else:
+                print(section)
 
 
 @cli.command()
@@ -217,12 +149,24 @@ def list_providers(ctx, showall):
     :param showall: show all providers
     """
     session = ctx.obj['SESSION']
+    models = session.list_models(showall=False)
+
+    # get the provider of the default model
+    for model, options in models.items():
+        if 'default' in options and options['default'] == 'True':
+            default_model = model
+            default_provider = options['provider']
+
     if showall:
         providers = session.list_providers(showall=True)
     else:
         providers = session.list_providers(showall=False)
+
     for provider in providers:
-        print(provider)
+        if provider == default_provider:
+            print(f'{provider} (default w/ {default_model})')
+        else:
+            print(provider)
 
 
 @cli.command()
@@ -243,34 +187,28 @@ def list_prompts(ctx):
 
 @cli.command()
 @click.pass_context
-def list_chats(ctx):
+def dump_session(ctx):
     """
-    list the available chats
+    dump the session data
     :param ctx: click context
     """
     session = ctx.obj['SESSION']
-    chats = session.list_chats()
-    if chats is not None:
-        for session in chats:
-            print(session)
-    else:
-        print("No chats available")
+    print(session.get_session_settings())
 
-
-@cli.command()
-@click.pass_context
-def list_files(ctx):
-    """
-    list the available files
-    :param ctx: click context
-    """
-    session = ctx.obj['SESSION']
-    files = session.list_files()
-    if files is not None:
-        for file in files:
-            print(file)
-    else:
-        print("No files available")
+# @cli.command()
+# @click.pass_context
+# def list_chats(ctx):
+#     """
+#     list the available chats
+#     :param ctx: click context
+#     """
+#     session = ctx.obj['SESSION']
+#     chats = session.list_chats()
+#     if chats is not None:
+#         for session in chats:
+#             print(session)
+#     else:
+#         print("No chats available")
 
 
 # take care of business

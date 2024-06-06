@@ -3,7 +3,7 @@ import google.generativeai as genai
 from session_handler import APIProvider
 
 
-class GoogleHandler(APIProvider):
+class GoogleProvider(APIProvider):
     """
     OpenAI API handler
     """
