@@ -56,11 +56,11 @@ class SessionHandler:
         :param key: the key to set
         :param value: the value to set
         """
-        if 'options' not in self.session:
-            self.session['options'] = {}
-        self.session['options'][key] = value
+        if 'parms' not in self.session:
+            self.session['parms'] = {}
+        self.session['parms'][key] = value
 
-    def add_context(self, context_type: str, context_data: Any):
+    def add_context(self, context_type: str, context_data=None):
         """
         Add a context object to the session
         :param context_type: the type of context to add
@@ -78,11 +78,13 @@ class SessionHandler:
             raise ValueError(f"Unsupported context type: {context_type}")
 
         # Instantiate the class and add the context to the session
-        context = context_class(context_data, self.conf)
+        context = context_class(self.conf, context_data)
         # Add the context to the session under self.session[context_type]
-        if context_type not in self.session:
-            self.session[context_type] = []
-        self.session[context_type].append(context)
+        if 'loadctx' not in self.session:
+            self.session['loadctx'] = {}
+        if context_type not in self.session['loadctx']:
+            self.session['loadctx'][context_type] = []
+        self.session['loadctx'][context_type].append(context)
 
     def get_session_settings(self):
         """
@@ -102,14 +104,14 @@ class SessionHandler:
         if not self.conf.valid_model(self.session['model']):
             raise ValueError(f"Invalid model: {self.session['model']}")
 
-        # get the full model name
+        # get the full model name and place it in parms for use with the API
         self.session['parms']['model'] = self.conf.get_option_from_model('model_name', self.session['model'])
 
         # get the provider from the model (mostly for the dump-session command)
         self.session['provider'] = self.conf.get_option_from_model('provider', self.session['model'])
 
-        # go through all the options in teh [<provider>] section and add them to the session if not already there
-        for option in self.conf.conf.options(self.session['provider']):
+        # go through all the options in the [<provider>] section and add them to the session if not already there
+        for option in self.conf.get_all_options_from_provider(self.session['provider']):
             if option not in self.session['parms']:
                 self.session['parms'][option] = self.conf.get_option_from_provider(option, self.session['provider'])
 

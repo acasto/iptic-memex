@@ -152,7 +152,7 @@ class ConfigHandler:
         # check against both the keys and value of 'model_name' in the output of list_models
         for key, value in self.list_models().items():
             if model == key or model == value['model_name']:
-                return value[option]
+                return self.fix_bools(value[option])
 
     def get_option_from_provider(self, option, provider):
         """
@@ -163,9 +163,18 @@ class ConfigHandler:
         """
         # should make sure it exists before returning
         if self.conf.has_option(provider, option):
-            return self.conf.get(provider, option)
+            return self.fix_bools(self.conf.get(provider, option))
 
-    def get_prompt(self) -> str:
+    def get_all_options_from_provider(self, provider):
+        """
+        Get all the options from the respective config section of provider
+        :param provider: the provider name
+        :return: the provider name
+        """
+        # should make sure it exists before returning
+        return {option: self.fix_bools(self.conf.get(provider, option)) for option in self.conf.options(provider)}
+
+    def get_default_prompt(self) -> str:
         """
         gets the prompt as a string either from user specified, <prompt_dir>/default.txt, or the fallback prompt
         :return: the prompt string
@@ -202,3 +211,14 @@ class ConfigHandler:
         :return: the setting
         """
         return self.conf.get(section, option)
+
+    @staticmethod
+    def fix_bools(value):
+        """
+        Fix the boolean values from the configuration file since our loops only return strings
+        """
+        if value.lower() in ['true', 'yes', '1']:
+            return True
+        if value.lower() in ['false', 'no', '0']:
+            return False
+        return value

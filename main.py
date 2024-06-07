@@ -44,7 +44,7 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file
     if max_tokens:
         session.set_option('max_tokens', max_tokens)
     if stream:
-        session.set_option('stream', stream)
+        session.set_option('stream', True)
     if verbose:
         ctx.obj['VERBOSE'] = verbose
 
@@ -152,6 +152,8 @@ def list_providers(ctx, showall):
     models = session.list_models(showall=False)
 
     # get the provider of the default model
+    default_model = ''
+    default_provider = ''
     for model, options in models.items():
         if 'default' in options and options['default'] == 'True':
             default_model = model

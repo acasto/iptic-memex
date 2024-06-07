@@ -10,6 +10,7 @@ class OpenAIProvider(APIProvider):
     """
 
     def __init__(self, session: SessionHandler):
+        self.usage = None
         self.conf = session.get_session_settings()
         if 'api_key' in self.conf['parms']:
             self.api_key = self.conf['parms']['api_key']
@@ -32,7 +33,6 @@ class OpenAIProvider(APIProvider):
             'seed',
             'stop',
             'stream',
-            'stream_options'
             'temperature',
             'top_p',
             'tools',
@@ -47,26 +47,35 @@ class OpenAIProvider(APIProvider):
         :return: response (str)
         """
         try:
-            self.conf['parms']['messages'] = messages  # add the messages to the parms so we can loop
-            openai_parms = {}
             # Loop through the parameters and add them to the list if they are available
+            api_parms = {}
             for parameter in self.parameters:
                 if parameter in self.conf['parms'] and self.conf['parms'][parameter] is not None:
-                    openai_parms[parameter] = self.conf['parms'][parameter]
+                    api_parms[parameter] = self.conf['parms'][parameter]
 
-            # unset stream if it's false
-            if 'stream' in openai_parms and openai_parms['stream'] == 'False':
-                del openai_parms['stream']
+            # Add the messages to the API parameters
+            api_parms['messages'] = messages
 
-            # print(openai_parms)
+            # If streaming set stream_options
+            if 'stream' in api_parms and api_parms['stream'] is True:
+                api_parms['stream_options'] = {
+                    'include_usage': True,
+                }
+
+            # print(api_parms)
             # quit()
 
-            response = self.client.chat.completions.create(**openai_parms)
-            # if in stream mode chain the generator
-            if 'stream' in openai_parms and openai_parms['stream'] == 'True':
+            # Call the OpenAI API
+            response = self.client.chat.completions.create(**api_parms)
+
+            # if in stream mode chain the generator, else return the text response
+            if 'stream' in api_parms and api_parms['stream'] is True:
                 return response
             else:
+                if response.usage is not None:
+                    self.usage = response.usage
                 return response.choices[0].message.content
+
         except openai.APIConnectionError as e:
             print("The server could not be reached")
             print(e.__cause__)  # an underlying Exception, likely raised within httpx.
@@ -85,6 +94,16 @@ class OpenAIProvider(APIProvider):
         """
         response = self.chat(messages)
         for event in response:
-            if hasattr(event.choices[0].delta, 'content'):
-                if event.choices[0].delta.content is not None:
-                    yield event.choices[0].delta.content
+            if event.choices and len(event.choices) > 0:
+                if event.choices[0].finish_reason != 'stop':
+                    yield event.choices[0].delta.content  # return the content delta
+            if event.usage is not None:
+                self.usage = event.usage
+
+    def get_usage(self):
+        if self.usage is not None:
+            return {
+                'in': self.usage.prompt_tokens,
+                'out': self.usage.completion_tokens,
+                'total': self.usage.total_tokens
+            }

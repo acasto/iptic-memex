@@ -8,11 +8,12 @@ class FileContext(InteractionHandler):
     Class for handling files that go into context
     """
 
-    def __init__(self, file, conf):
+    def __init__(self, conf, file=None):
         """
         Initialize the file context
         :param file: the data to process
         """
+        self.conf = conf  # ConfigHandler object
         self.file = {}  # dictionary to hold the file name and content
         self.proces_file(file)
 
@@ -34,6 +35,5 @@ class FileContext(InteractionHandler):
     def start(self):
         """
         Start the file context
-        :param data: the data to process
         """
         return self.file

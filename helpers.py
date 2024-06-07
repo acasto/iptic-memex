@@ -13,6 +13,10 @@ def resolve_file_path(file_name: str, base_dir=None, extension=None):
     :param extension: optional extension to append to the file name
     :return: absolute path to the file or None
     """
+    # return if file_name is None
+    if file_name is None:
+        return None
+
     # If base_dir is not specified, use the current working directory
     if base_dir is None:
         base_dir = os.getcwd()
