@@ -1,9 +1,9 @@
 import sys
-from session_handler import InteractionHandler
+from session_handler import InteractionContext
 from helpers import resolve_file_path
 
 
-class PromptContext(InteractionHandler):
+class PromptContext(InteractionContext):
     """
     Class for processing system prompts
     """
@@ -59,5 +59,5 @@ class PromptContext(InteractionHandler):
         self.prompt['name'] = 'default'
         self.prompt['content'] = self.conf.get_default_prompt()
 
-    def start(self):
+    def get(self):
         return self.prompt

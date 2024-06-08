@@ -16,23 +16,47 @@ class APIProvider(ABC):
     """
 
     @abstractmethod
-    def chat(self, message: Any) -> Any:
+    def chat(self, context: dict) -> Any:
         pass
 
     @abstractmethod
-    def stream_chat(self, message: Any) -> Generator[Any, None, None]:
+    def stream_chat(self, context: Any) -> Generator[Any, None, None]:
         pass
 
 
-# The InteractionHandler class is an abstract class that defines the methods that
-# an Interaction Handler must implement to work with the SessionHandler.
-class InteractionHandler(ABC):
+# The InteractionMode class is an abstract class that defines the methods that interactions modes
+# like chat, ask, and completion must implement to work.
+class InteractionMode(ABC):
     """
     Abstract class for interaction handlers
     """
 
     @abstractmethod
     def start(self):
+        pass
+
+
+# The InteractionContext class is an abstract class that defines the methods that interaction contexts
+# like prompt, file, and chat contexts must implement to work.
+class InteractionContext(ABC):
+    """
+    Abstract class for interaction contexts
+    """
+
+    @abstractmethod
+    def get(self):
+        pass
+
+
+# The InteractionAction class is an abstract class that defines the methods that interaction actions
+# like count_tokens, list_chats, save_chat, etc. must implement to work.
+class InteractionAction(ABC):
+    """
+    Abstract class for interaction actions
+    """
+
+    @abstractmethod
+    def run(self):
         pass
 
 
@@ -67,7 +91,7 @@ class SessionHandler:
         :param context_data: the data for the context
         """
         # Construct the module and class names based on the context type
-        module_name = f'interactions.{context_type}_context'
+        module_name = f'contexts.{context_type}_context'
         class_name = f'{context_type.capitalize()}Context'
 
         # Import the module and get the class
@@ -86,12 +110,35 @@ class SessionHandler:
             self.session['loadctx'][context_type] = []
         self.session['loadctx'][context_type].append(context)
 
+    def get_action(self, action: str):
+        """
+        Instantiate and return an action class
+        :param action: the action to instantiate
+        """
+        # construct the module and class names based on the action
+        module_name = f'actions.{action}_action'
+        class_name = f'{action.capitalize()}Action'
+
+        # import the module and get the class
+        try:
+            module = importlib.import_module(module_name)
+            action_class = getattr(module, class_name)
+            return action_class(self)
+        except (ImportError, AttributeError):
+            raise ValueError(f"Unsupported action: {action}")
+
     def get_session_settings(self):
         """
         Build the settings for the session by reconciling user supplied options and those from ConfigHandler
         """
         if 'parms' not in self.session:
             self.session['parms'] = {}
+        if 'loadctx' not in self.session:
+            self.session['loadctx'] = {}
+
+        # get the default prompt if needed
+        if 'prompt' not in self.session['loadctx']:
+            self.add_context('prompt')
 
         # if model is not set, use the default model
         if 'model' not in self.session['parms']:
@@ -117,9 +164,9 @@ class SessionHandler:
 
         return self.session
 
-    def intialize_api_provider(self) -> APIProvider:
+    def get_provider(self) -> APIProvider:
         """
-        Initialize the API provider
+        Initialize and return an API provider
         """
         session = self.get_session_settings()
         provider = session['provider']
@@ -142,11 +189,8 @@ class SessionHandler:
         :param mode: the interaction to start
         """
 
-        # get a provider
-        provider = self.intialize_api_provider()
-
         # Construct the module and class names based on the context type
-        module_name = f'interactions.{mode}_mode'
+        module_name = f'modes.{mode}_mode'
         class_name = f'{mode.capitalize()}Mode'
 
         # Import the module and get the class
@@ -157,7 +201,7 @@ class SessionHandler:
             raise ValueError(f"Unsupported interaction: {mode}")
 
         # Instantiate the class and start the interaction
-        interaction = mode_class(self, provider)
+        interaction = mode_class(self)
         interaction.start()
 
     ############################################################################################################

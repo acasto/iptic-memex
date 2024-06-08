@@ -1,10 +1,21 @@
 import tiktoken
 from abc import ABC, abstractmethod
+from session_handler import InteractionAction
 
 
 class TokenCounter(ABC):
     @abstractmethod
     def count_tokens(self, messages, model):
+        pass
+
+
+class CountTokens(InteractionAction):
+
+    def __init__(self, token_counter: str):
+        self.token_counter = token_counter
+        pass
+
+    def run(self):
         pass
 
 

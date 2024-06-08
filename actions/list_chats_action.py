@@ -1,3 +1,13 @@
+from session_handler import InteractionAction
+
+class ListChatsAction(InteractionAction):
+
+    def __init__(self, conf):
+        self.conf = conf
+
+    def run(self):
+        pass
+
 # def list_chats(self):
 #     """
 #     List the chat logs available in the chat directory, used mostly for output to the user

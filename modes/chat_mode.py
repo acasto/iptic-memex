@@ -1,24 +1,22 @@
 import time
-from session_handler import InteractionHandler
+from session_handler import InteractionMode
 
 
-class ChatMode(InteractionHandler):
+class ChatMode(InteractionMode):
     """
-    Interaction handler for ask mode
-    This interaction handler is used when the user wants to ask questions about a file or URL. It will
-    put together the necessary context and then ask for the users input.
+    Interaction handler for chat mode
     """
 
-    def __init__(self, session, provider):
+    def __init__(self, session):
         self.conf = session.get_session_settings()
-        self.provider = provider
+        self.provider = session.get_provider()
 
         # set the system prompt
         if 'prompt' not in self.conf['loadctx']:  # get the default prompt if needed
             session.add_context('prompt')
         self.conf['system_prompt'] = ''
         for p in self.conf['loadctx']['prompt']:
-            prompt = p.start()
+            prompt = p.get()
             self.conf['system_prompt'] += prompt['content']
 
     def start(self):
@@ -28,7 +26,7 @@ class ChatMode(InteractionHandler):
             # go through each file and place the contents in tags in the format
             # <|project_context|><|file:file_name|>{file content}<|end_file|><|end_project_context|>
             for f in self.conf['loadctx']['file']:
-                file = f.start()
+                file = f.get()
                 print(f"Loading file: {file['name']}", end='\n')
                 self.conf['file'] += f"<|file:{file['name']}|>{file['content']}<|end_file|>"
             self.conf['file'] += "<|end_project_context|>"

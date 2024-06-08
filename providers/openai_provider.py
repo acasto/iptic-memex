@@ -40,13 +40,16 @@ class OpenAIProvider(APIProvider):
             'user',
         ]
 
-    def chat(self, messages):
+    def chat(self, context: dict):
         """
         Creates a chat completion request to the OpenAI API
-        :param messages: the message to complete from an interaction handler
+        :param context:
         :return: response (str)
         """
         try:
+            # Assemble the message from the context
+            messages = self.assemble_message(context)
+
             # Loop through the parameters and add them to the list if they are available
             api_parms = {}
             for parameter in self.parameters:
@@ -61,9 +64,6 @@ class OpenAIProvider(APIProvider):
                 api_parms['stream_options'] = {
                     'include_usage': True,
                 }
-
-            # print(api_parms)
-            # quit()
 
             # Call the OpenAI API
             response = self.client.chat.completions.create(**api_parms)
@@ -86,19 +86,52 @@ class OpenAIProvider(APIProvider):
             print(e.status_code)
             print(e.response)
 
-    def stream_chat(self, messages):
+    def stream_chat(self, context):
         """
         Use generator chaining to keep the response provider-agnostic
-        :param messages:
+        :param context:
         :return:
         """
-        response = self.chat(messages)
+        response = self.chat(context)
         for event in response:
             if event.choices and len(event.choices) > 0:
                 if event.choices[0].finish_reason != 'stop':
                     yield event.choices[0].delta.content  # return the content delta
             if event.usage is not None:
                 self.usage = event.usage
+
+    @staticmethod
+    def assemble_message(context) -> list:
+        """
+        Assemble the message from the context
+        :param context:
+        :return: message (str)
+        """
+        prompt = ''
+        chat = None
+        if 'prompt' in context:
+            for p in context['prompt']:  # there could be multiple prompts
+                prompt += p.get()['content']
+        if 'chat' in context:
+            chat = context['chat'][0]  # there should only be one chat in context
+        message = []
+        if prompt:
+            message.append({'role': 'system', 'content': prompt})
+        if chat is not None:
+            turn_context = ''
+            for turn in chat.get():  # go through each turn in the conversation
+                # if context is in turn and not an empty list
+                if 'context' in turn and turn['context']:
+                    turn_context += "<|project_context|>"
+                    # go through each object and place the contents in tags in the format:
+                    # <|project_context|><|file:file_name|>{file content}<|end_file|><|end_project_context|>
+                    for f in turn['context']:
+                        file = f.get()
+                        turn_context += f"<|file:{file['name']}|>{file['content']}<|end_file|>"
+                    turn_context += "<|end_project_context|>"
+
+                message.append({'role': turn['role'], 'content': turn_context + "\n" + turn['message']})
+        return message
 
     def get_usage(self):
         if self.usage is not None:

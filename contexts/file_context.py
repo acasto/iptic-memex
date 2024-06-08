@@ -1,9 +1,9 @@
 import sys
-from session_handler import InteractionHandler
+from session_handler import InteractionContext
 from helpers import resolve_file_path
 
 
-class FileContext(InteractionHandler):
+class FileContext(InteractionContext):
     """
     Class for handling files that go into context
     """
@@ -32,8 +32,8 @@ class FileContext(InteractionHandler):
             with open(file_path, 'r') as f:
                 self.file = {'name': file, 'content': f.read()}
 
-    def start(self):
+    def get(self):
         """
-        Start the file context
+        Get a formated string of the file content ready to be inserted into the chat
         """
         return self.file
