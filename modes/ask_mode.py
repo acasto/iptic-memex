@@ -10,48 +10,40 @@ class AskMode(InteractionMode):
     """
 
     def __init__(self, session):
+        self.session = session
         self.conf = session.get_session_settings()
         self.provider = session.get_provider()
 
         # Initialize a chat context object
-        session.add_context('chat')  # initialize a chat context object
+        self.session.add_context('chat')  # initialize a chat context object
         self.chat = self.conf['loadctx']['chat'][0]  # get the chat context object
 
     def start(self):
+        # Get any files that came in from the CLI to add to the message context
+        contexts = []
+        if 'file' in self.conf['loadctx']:  # todo: we'll need to revisit this with additional contexts
+            contexts.extend(self.conf['loadctx']['file'])
+            self.conf['loadctx'].pop('file')  # remove the file from context
+
+        # Let the user know what file(s) we are working with
+        if len(contexts) > 0:
+            print()
+            for context in contexts:
+                print(f"In context: {context.get()['name']}")
+            print()
+
+        # get the labels
+        user_label = self.session.get_label('user')
+        response_label = self.session.get_label('response')
+
         # Get the users input
-        question = ''
-        if 'file' in self.conf:
-            question += self.conf['file']
-        question += input("You: ")
+        question = input(f"{user_label} ")
         print()
 
-        # # get files if needed
-        # if 'file' in self.conf['loadctx']:
-        #     self.conf['file'] = "<|project_context|>"
-        #     # go through each file and place the contents in tags in the format
-        #     # <|project_context|><|file:file_name|>{file content}<|end_file|><|end_project_context|>
-        #     for f in self.conf['loadctx']['file']:
-        #         file = f.get()
-        #         print(f"Loading file: {file['name']}", end='\n')
-        #         self.conf['file'] += f"<|file:{file['name']}|>{file['content']}<|end_file|>"
-        #     self.conf['file'] += "<|end_project_context|>"
-        #     print()
-        #
-        # # Get the users input
-        # question = ''
-        # if 'file' in self.conf:
-        #     question += self.conf['file']
-        # question += input("You: ")
-        # print()
-        contexts = []
-        if 'file' in self.conf['loadctx']:
-            contexts.extend(self.conf['loadctx']['file'])
+        # Add the question to the chat context
         self.chat.add(question, 'user', contexts)
 
-        # print(self.conf['loadctx'])
-        # print(self.conf['loadctx']['chat'][0].get())
-        # quit()
-
+        print(f"{response_label} ", end='', flush=True)
         # if we are in stream mode, iterate through the stream of events
         if self.conf['parms']['stream'] is True:
             response = self.provider.stream_chat(self.conf['loadctx'])

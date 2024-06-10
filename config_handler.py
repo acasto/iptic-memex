@@ -140,6 +140,8 @@ class ConfigHandler:
         Get the default model from the configuration file
         :return: the default model name
         """
+        # NOTE: We used to fall back to the first model in the list, but now we require a default model
+        # so that a user doesn't accidentally use the wrong model and run up a huge bill
         return self.conf['DEFAULT'].get('default_model', None)
 
     def get_option_from_model(self, option, model):
@@ -202,6 +204,24 @@ class ConfigHandler:
         except FileNotFoundError:
             print(f'Warning: Could not find the prompt file. Using fallback prompt.')
             return self.conf['DEFAULT'].get('fallback_prompt', None)
+
+    def get_labels(self, model) -> dict:
+        """
+        Get the user and response labels from the configuration file
+        :return: the labels
+        """
+        provider = self.get_option_from_model('provider', model)
+        labels = {
+            'user_label': 'You',
+            'response_label': 'Response',
+        }
+
+        if self.conf.has_option(provider, 'user_label'):
+            labels['user_label'] = self.conf.get(provider, 'user_label').strip('"')
+        if self.conf.has_option(provider, 'response_label'):
+            labels['response_label'] = self.conf.get(provider, 'response_label').strip('"')
+
+        return labels
 
     def get_setting(self, section, option):
         """

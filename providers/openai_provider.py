@@ -121,6 +121,7 @@ class OpenAIProvider(APIProvider):
             turn_context = ''
             for turn in chat.get():  # go through each turn in the conversation
                 # if context is in turn and not an empty list
+                # todo: eventually we might want to differentiate between different types of context objects
                 if 'context' in turn and turn['context']:
                     turn_context += "<|project_context|>"
                     # go through each object and place the contents in tags in the format:

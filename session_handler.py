@@ -71,7 +71,6 @@ class SessionHandler:
 
     def __init__(self):
         self.conf = ConfigHandler()
-        self.options = {}
         self.session = {}
 
     def set_option(self, key, value):
@@ -164,12 +163,20 @@ class SessionHandler:
 
         return self.session
 
-    def get_provider(self) -> APIProvider:
+    def get_provider(self, model=None) -> APIProvider:
         """
         Initialize and return an API provider
         """
         session = self.get_session_settings()
-        provider = session['provider']
+
+        # Support for changing provider from within a mode
+        if model and self.conf.valid_model(model):
+            session['model'] = model
+            session['parms']['model'] = self.conf.get_option_from_model('model_name', model)
+            session['provider'] = self.conf.get_option_from_model('provider', model)
+            provider = session['provider']
+        else:
+            provider = session['provider']
 
         # Construct the module and class names based on the provider
         module_name = f'providers.{provider.lower()}_provider'
@@ -203,6 +210,22 @@ class SessionHandler:
         # Instantiate the class and start the interaction
         interaction = mode_class(self)
         interaction.start()
+
+    ############################################################################################################
+    # Some methods for common functionality
+    ############################################################################################################
+
+    def get_label(self, label=None):
+        """
+        Get the labels from the session
+        """
+        labels = self.conf.get_labels(self.session['model'])
+        if label == 'user':
+            return labels['user_label']
+        if label == 'response':
+            return labels['response_label']
+        else:
+            return labels
 
     ############################################################################################################
     # Passthrough methods for CLI interaction
