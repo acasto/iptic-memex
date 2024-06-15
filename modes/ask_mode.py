@@ -56,8 +56,3 @@ class AskMode(InteractionMode):
             print(self.session.get_provider().chat())
 
         print()
-        # activity = self.provider.get_usage()
-        # if activity:
-        #     print()
-        #     print(f"Tokens: {activity}")
-        #     print()

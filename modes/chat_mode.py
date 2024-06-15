@@ -17,6 +17,7 @@ class ChatMode(InteractionMode):
     def start(self):
         # Setup some core actions
         tc = self.session.get_action('tab_completion')
+        # sc = self.session.get_action('process_subcommands')
         sc = self.session.get_action('process_subcommands')
         response = self.session.get_action('print_response')
 
@@ -63,8 +64,3 @@ class ChatMode(InteractionMode):
             response.run()
 
             print()
-            # activity = self.provider.get_usage()
-            # if activity:
-            #     print()
-            #     print(f"Tokens: {activity}")
-            #     print()

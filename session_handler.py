@@ -77,8 +77,8 @@ class SessionHandler:
     Class for handling the current session
     """
 
-    def __init__(self):
-        self.conf = ConfigHandler()
+    def __init__(self, config_file=None):
+        self.conf = ConfigHandler(config_file)
         self.session_state = {
             "context": {},
             "params": {},

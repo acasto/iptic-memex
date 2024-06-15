@@ -3,7 +3,7 @@ from session_handler import SessionHandler
 
 
 @click.group(invoke_without_command=True)
-@click.option('-c', '--conf', help='Path to a custom configuration file')
+@click.option('-c', '--conf', default=None, help='Path to a custom configuration file')
 @click.option('-m', '--model', default='', help='Model to use for completion')
 @click.option('-p', '--prompt', default='', help='Filename from the prompt directory')
 @click.option('-t', '--temperature', default='', help='Temperature to use for completion')
@@ -27,7 +27,7 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file
     :return: none (this is a click entry point)
     """
     ctx.ensure_object(dict)  # set up the context object to be passed around
-    session = SessionHandler()  # start up a session handler
+    session = SessionHandler(conf)  # start up a session handler
     ctx.obj['SESSION'] = session
 
     # if user specified a prompt file, check if we need to read it from stdin and then pass to ConfigHandler
@@ -186,16 +186,6 @@ def list_prompts(ctx):
     else:
         print("No prompts available")
 
-
-@cli.command()
-@click.pass_context
-def dump_session(ctx):
-    """
-    dump the session data
-    :param ctx: click context
-    """
-    session = ctx.obj['SESSION']
-    print(session.get_session_settings())
 
 # @cli.command()
 # @click.pass_context

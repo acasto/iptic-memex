@@ -41,9 +41,3 @@ class CompletionMode(InteractionMode):
         # else just print the response
         else:
             print(self.session.get_provider().chat())
-
-        # activity = self.provider.get_usage()
-        # if activity:
-        #     print()
-        #     print(f"Tokens: {activity}")
-        #     print()
