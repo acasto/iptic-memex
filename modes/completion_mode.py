@@ -10,36 +10,37 @@ class CompletionMode(InteractionMode):
     """
 
     def __init__(self, session):
-        self.conf = session.get_session_settings()
-        self.provider = session.get_provider()
+        self.session = session
+        self.params = session.get_params()
 
         # Since in this interaction we want the file contents to serve as the prompt we'll remove the default
         # prompt and initialize a chat context object and add the file contents to it
         #
-        self.conf['loadctx'].pop('prompt', None)  # get rid of the default prompt
+        session.remove_context('prompt')  # get rid of the default prompt
         session.add_context('chat')  # initialize a chat context object
-        self.chat = self.conf['loadctx']['chat'][0]  # get the chat context object
-        file = self.conf['loadctx']['file'][0].get()['content']  # get the file contents
-        self.chat.add(file)  # add the file contents as the user input
+        self.chat = self.session.get_context('chat')  # get the chat context object
+        self.chat.add(session.get_context('file')[0].get()['content'])  # add the file contents as the user input
 
     def start(self):
         """
         Start the completion mode interaction
         """
+        # print(self.session.get_session_state())
+        # quit()
         # if we are in stream mode, iterate through the stream of events
-        if self.conf['parms']['stream'] is True:
-            response = self.provider.stream_chat(self.conf['loadctx'])
+        if self.params['stream'] is True:
+            response = self.session.get_provider().stream_chat()
             # iterate through the stream of events, add in a delay to simulate a more natural conversation
             if response:
                 for i, event in enumerate(response):
                     print(event, end='', flush=True)
-                    if 'stream_delay' in self.conf['parms']:
-                        time.sleep(float(self.conf['parms']['stream_delay']))
+                    if 'stream_delay' in self.params:
+                        time.sleep(float(self.params['stream_delay']))
             print()
 
         # else just print the response
         else:
-            print(self.provider.chat(self.conf['loadctx']))
+            print(self.session.get_provider().chat())
 
         # activity = self.provider.get_usage()
         # if activity:

@@ -1,29 +1,27 @@
 import tiktoken
-from abc import ABC, abstractmethod
 from session_handler import InteractionAction
 
 
-class TokenCounter(ABC):
-    @abstractmethod
-    def count_tokens(self, messages, model):
-        pass
+class CountTokensAction(InteractionAction):
+    """
+    Class for counting tokens in a message
+    """
 
+    def __init__(self, session):
+        self.session = session
 
-class CountTokens(InteractionAction):
+    def run(self, message=None):
+        """
+        Count the tokens in the chat context
+        """
+        params = self.session.get_params()
+        if params['tokenizer'] == 'tiktoken':
+            messages = self.session.get_provider().get_messages()
+            num_tokens = self.count_tiktoken(messages)
+            print(f"Number of tokens: {num_tokens}")
 
-    def __init__(self, token_counter: str):
-        self.token_counter = token_counter
-        pass
-
-    def run(self):
-        pass
-
-
-class TikTokenCounter(TokenCounter):
-    # A method to count the number of tokens in a message
-    # using the tiktoken library
-    # See: https://github.com/openai/openai-cookbook/blob/main/examples/How_to_count_tokens_with_tiktoken.ipynb
-    def count_tokens(self, messages, model="gpt-4o"):
+    @staticmethod
+    def count_tiktoken(messages, model="gpt-4o"):
         """Returns the number of tokens used"""
         try:
             encoding = tiktoken.encoding_for_model(model)

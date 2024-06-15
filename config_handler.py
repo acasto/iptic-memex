@@ -100,7 +100,7 @@ class ConfigHandler:
 
         # first lets add "default = True" to the default model
         for model in self.models.sections():
-            if model == self.get_default_model():
+            if model == self.conf['DEFAULT'].get('default_model', None):
                 self.models.set(model, 'default', 'True')
 
         if showall:
@@ -135,14 +135,14 @@ class ConfigHandler:
         return model in self.list_models().keys() or model in [model['model_name'] for model in
                                                                self.list_models().values()]
 
-    def get_default_model(self) -> str:
+    def normalize_model_name(self, model) -> str:
         """
-        Get the default model from the configuration file
-        :return: the default model name
+        Config section names and use a shorter simplified name for a model. The full name is stored in the 'model_name'
+        option. The user can specify either, but we want to  normalize to the full name.
         """
-        # NOTE: We used to fall back to the first model in the list, but now we require a default model
-        # so that a user doesn't accidentally use the wrong model and run up a huge bill
-        return self.conf['DEFAULT'].get('default_model', None)
+        for key, value in self.list_models().items():
+            if model == key or model == value['model_name']:
+                return value['model_name']
 
     def get_option_from_model(self, option, model):
         """
@@ -154,7 +154,7 @@ class ConfigHandler:
         # check against both the keys and value of 'model_name' in the output of list_models
         for key, value in self.list_models().items():
             if model == key or model == value['model_name']:
-                return self.fix_bools(value[option])
+                return self.fix_values(value[option])
 
     def get_option_from_provider(self, option, provider):
         """
@@ -165,7 +165,7 @@ class ConfigHandler:
         """
         # should make sure it exists before returning
         if self.conf.has_option(provider, option):
-            return self.fix_bools(self.conf.get(provider, option))
+            return self.fix_values(self.conf.get(provider, option))
 
     def get_all_options_from_provider(self, provider):
         """
@@ -174,7 +174,18 @@ class ConfigHandler:
         :return: the provider name
         """
         # should make sure it exists before returning
-        return {option: self.fix_bools(self.conf.get(provider, option)) for option in self.conf.options(provider)}
+        return {option: self.fix_values(self.conf.get(provider, option)) for option in self.conf.options(provider)}
+
+    def get_all_options_from_model(self, model):
+        """
+        Get all the options from the respective config section of model based on short name or full name
+        :param model: the model name
+        :return: the model name
+        """
+        # should make sure it exists before returning
+        for key, value in self.list_models().items():
+            if model == key or model == value['model_name']:
+                return {option: self.fix_values(value[option]) for option in self.models.options(key)}
 
     def get_default_prompt(self) -> str:
         """
@@ -205,40 +216,24 @@ class ConfigHandler:
             print(f'Warning: Could not find the prompt file. Using fallback prompt.')
             return self.conf['DEFAULT'].get('fallback_prompt', None)
 
-    def get_labels(self, model) -> dict:
-        """
-        Get the user and response labels from the configuration file
-        :return: the labels
-        """
-        provider = self.get_option_from_model('provider', model)
-        labels = {
-            'user_label': 'You',
-            'response_label': 'Response',
-        }
-
-        if self.conf.has_option(provider, 'user_label'):
-            labels['user_label'] = self.conf.get(provider, 'user_label').strip('"')
-        if self.conf.has_option(provider, 'response_label'):
-            labels['response_label'] = self.conf.get(provider, 'response_label').strip('"')
-
-        return labels
-
-    def get_setting(self, section, option):
+    def get_option(self, section, option):
         """
         Get a setting from the configuration file
         :param section: the section to get the setting from
         :param option: the option to get
         :return: the setting
         """
-        return self.conf.get(section, option)
+        return self.fix_values(self.conf.get(section, option))
 
     @staticmethod
-    def fix_bools(value):
+    def fix_values(value):
         """
-        Fix the boolean values from the configuration file since our loops only return strings
+        Fix some of the values due to how they are stored and retrieved with ConfigParser
         """
+        # if the value is a boolean, return it as a boolean
         if value.lower() in ['true', 'yes', '1']:
             return True
         if value.lower() in ['false', 'no', '0']:
             return False
-        return value
+        # strip quotes from the value
+        return value.strip('"')

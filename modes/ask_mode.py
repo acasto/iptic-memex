@@ -11,30 +11,26 @@ class AskMode(InteractionMode):
 
     def __init__(self, session):
         self.session = session
-        self.conf = session.get_session_settings()
-        self.provider = session.get_provider()
+        self.params = session.get_params()
 
         # Initialize a chat context object
-        self.session.add_context('chat')  # initialize a chat context object
-        self.chat = self.conf['loadctx']['chat'][0]  # get the chat context object
+        session.add_context('chat')  # initialize a chat context object
+        self.chat = session.get_context('chat')  # get the chat context object
 
     def start(self):
+        # get the labels
+        user_label = self.params['user_label']
+        response_label = self.params['response_label']
+
         # Get any files that came in from the CLI to add to the message context
-        contexts = []
-        if 'file' in self.conf['loadctx']:  # todo: we'll need to revisit this with additional contexts
-            contexts.extend(self.conf['loadctx']['file'])
-            self.conf['loadctx'].pop('file')  # remove the file from context
+        contexts = self.session.get_context('file')
 
         # Let the user know what file(s) we are working with
-        if len(contexts) > 0:
+        if contexts and len(contexts) > 0:
             print()
             for context in contexts:
                 print(f"In context: {context.get()['name']}")
             print()
-
-        # get the labels
-        user_label = self.session.get_label('user')
-        response_label = self.session.get_label('response')
 
         # Get the users input
         question = input(f"{user_label} ")
@@ -45,19 +41,19 @@ class AskMode(InteractionMode):
 
         print(f"{response_label} ", end='', flush=True)
         # if we are in stream mode, iterate through the stream of events
-        if self.conf['parms']['stream'] is True:
-            response = self.provider.stream_chat(self.conf['loadctx'])
+        if self.params['stream'] is True:
+            response = self.session.get_provider().stream_chat()
             # iterate through the stream of events, add in a delay to simulate a more natural conversation
             if response:
                 for i, event in enumerate(response):
                     print(event, end='', flush=True)
-                    if 'stream_delay' in self.conf['parms']:
-                        time.sleep(float(self.conf['parms']['stream_delay']))
+                    if 'stream_delay' in self.params:
+                        time.sleep(float(self.params['stream_delay']))
             print()
 
         # else just print the response
         else:
-            print(self.provider.chat(self.conf['loadctx']))
+            print(self.session.get_provider().chat())
 
         print()
         # activity = self.provider.get_usage()

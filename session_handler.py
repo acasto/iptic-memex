@@ -16,11 +16,19 @@ class APIProvider(ABC):
     """
 
     @abstractmethod
-    def chat(self, context: dict) -> Any:
+    def chat(self) -> Any:
         pass
 
     @abstractmethod
-    def stream_chat(self, context: Any) -> Generator[Any, None, None]:
+    def stream_chat(self) -> Generator[Any, None, None]:
+        pass
+
+    @abstractmethod
+    def get_messages(self) -> Any:
+        pass
+
+    @abstractmethod
+    def get_usage(self) -> Any:
         pass
 
 
@@ -71,7 +79,12 @@ class SessionHandler:
 
     def __init__(self):
         self.conf = ConfigHandler()
-        self.session = {}
+        self.session_state = {
+            "context": {},
+            "params": {},
+            "provider": None,
+        }
+        self.user_options = {}
 
     def set_option(self, key, value):
         """
@@ -79,9 +92,26 @@ class SessionHandler:
         :param key: the key to set
         :param value: the value to set
         """
-        if 'parms' not in self.session:
-            self.session['parms'] = {}
-        self.session['parms'][key] = value
+        # if we're dealing with the model, make sure it is valid and normalized to the full model name
+        if key == 'model':
+            if not self.conf.valid_model(value):
+                print(f"Invalid model: {value}")
+                quit()
+            else:
+                value = self.conf.normalize_model_name(value)
+            # save the model to the user_options dict
+            self.user_options[key] = value
+            # if a provider is already set, we need to reconfigure the session
+            if self.session_state['provider']:
+                self.configure_session()
+        else:
+            # if value is a string and looks like it should be a bool then convert it
+            if isinstance(value, str) and value.lower() in ['true', 'false']:
+                value = value.lower() == 'true'
+            # if we're not dealing with a model change then we can save it to user_options and go
+            # ahead and update the session state.
+            self.user_options[key] = value
+            self.session_state['params'][key] = value
 
     def add_context(self, context_type: str, context_data=None):
         """
@@ -91,7 +121,8 @@ class SessionHandler:
         """
         # Construct the module and class names based on the context type
         module_name = f'contexts.{context_type}_context'
-        class_name = f'{context_type.capitalize()}Context'
+        class_name = ''.join(word.capitalize() for word in context_type.split('_'))
+        class_name += 'Context'
 
         # Import the module and get the class
         try:
@@ -100,23 +131,28 @@ class SessionHandler:
         except (ImportError, AttributeError):
             raise ValueError(f"Unsupported context type: {context_type}")
 
-        # Instantiate the class and add the context to the session
-        context = context_class(self.conf, context_data)
         # Add the context to the session under self.session[context_type]
-        if 'loadctx' not in self.session:
-            self.session['loadctx'] = {}
-        if context_type not in self.session['loadctx']:
-            self.session['loadctx'][context_type] = []
-        self.session['loadctx'][context_type].append(context)
+        if context_type not in self.session_state['context']:
+            self.session_state['context'][context_type] = []
+        self.session_state['context'][context_type].append(context_class(self.conf, context_data))
 
-    def get_action(self, action: str):
+    def remove_context(self, context_type: str):
+        """
+        Remove a context object from the session
+        :param context_type: the type of context to remove
+        """
+        if context_type in self.session_state['context']:
+            self.session_state['context'].pop(context_type)
+
+    def get_action(self, action: str) -> InteractionAction:
         """
         Instantiate and return an action class
         :param action: the action to instantiate
         """
         # construct the module and class names based on the action
         module_name = f'actions.{action}_action'
-        class_name = f'{action.capitalize()}Action'
+        class_name = ''.join(word.capitalize() for word in action.split('_'))
+        class_name += 'Action'
 
         # import the module and get the class
         try:
@@ -126,58 +162,49 @@ class SessionHandler:
         except (ImportError, AttributeError):
             raise ValueError(f"Unsupported action: {action}")
 
-    def get_session_settings(self):
+    def configure_session(self):
         """
-        Build the settings for the session by reconciling user supplied options and those from ConfigHandler
+        (re)build the settings for the session by reconciling user supplied options and those from ConfigHandler
         """
-        if 'parms' not in self.session:
-            self.session['parms'] = {}
-        if 'loadctx' not in self.session:
-            self.session['loadctx'] = {}
+        # clear the params and provider
+        self.session_state['params'] = {}
+        self.session_state['provider'] = None
 
         # get the default prompt if needed
-        if 'prompt' not in self.session['loadctx']:
+        if 'prompt' not in self.session_state['context']:
             self.add_context('prompt')
 
         # if model is not set, use the default model
-        if 'model' not in self.session['parms']:
-            self.session['model'] = self.conf.get_default_model()
-        else:  # else move it up out of options since we want the full model name there
-            self.session['model'] = self.session['parms']['model']
-            del self.session['parms']['model']
-
-        # make sure model is valid since it is central
-        if not self.conf.valid_model(self.session['model']):
-            raise ValueError(f"Invalid model: {self.session['model']}")
-
-        # get the full model name and place it in parms for use with the API
-        self.session['parms']['model'] = self.conf.get_option_from_model('model_name', self.session['model'])
-
-        # get the provider from the model (mostly for the dump-session command)
-        self.session['provider'] = self.conf.get_option_from_model('provider', self.session['model'])
-
-        # go through all the options in the [<provider>] section and add them to the session if not already there
-        for option in self.conf.get_all_options_from_provider(self.session['provider']):
-            if option not in self.session['parms']:
-                self.session['parms'][option] = self.conf.get_option_from_provider(option, self.session['provider'])
-
-        return self.session
-
-    def get_provider(self, model=None) -> APIProvider:
-        """
-        Initialize and return an API provider
-        """
-        session = self.get_session_settings()
-
-        # Support for changing provider from within a mode
-        if model and self.conf.valid_model(model):
-            session['model'] = model
-            session['parms']['model'] = self.conf.get_option_from_model('model_name', model)
-            session['provider'] = self.conf.get_option_from_model('provider', model)
-            provider = session['provider']
+        if 'model' not in self.user_options:
+            self.session_state['params']['model'] = self.conf.normalize_model_name(
+                self.conf.get_option('DEFAULT', 'default_model'))
         else:
-            provider = session['provider']
+            self.session_state['params']['model'] = self.user_options['model']
+        model = self.session_state['params']['model']  # for our convenience
 
+        # get the provider for the model for our convenience
+        provider = self.conf.get_option_from_model('provider', model)
+
+        # go through all the options in the [<provider>] section and add them to the session
+        for option in self.conf.get_all_options_from_provider(provider):
+            if option not in self.session_state['params']:
+                self.session_state['params'][option] = self.conf.get_option_from_provider(option, provider)
+
+        # go through all the options in the [<model>] section and add them to the session
+        for option in self.conf.get_all_options_from_model(model):
+            if option not in self.session_state['params']:
+                self.session_state['params'][option] = self.conf.get_option_from_model(option, model)
+
+        # set the user options to the session state
+        self.session_state['params'].update(self.user_options)
+
+        # set the provider
+        self.set_provider(provider)
+
+    def set_provider(self, provider):
+        """
+        Initialize and set an API provider
+        """
         # Construct the module and class names based on the provider
         module_name = f'providers.{provider.lower()}_provider'
         class_name = f'{provider}Provider'
@@ -186,7 +213,7 @@ class SessionHandler:
         try:
             module = importlib.import_module(module_name)
             provider_class = getattr(module, class_name)
-            return provider_class(self)
+            self.session_state['provider'] = provider_class(self)
         except (ImportError, AttributeError):
             raise ValueError(f"Unsupported provider: {provider}")
 
@@ -195,10 +222,14 @@ class SessionHandler:
         Start an interaction with the user
         :param mode: the interaction to start
         """
+        # Make sure the session is configured
+        if not self.session_state['provider']:
+            self.configure_session()
 
         # Construct the module and class names based on the context type
         module_name = f'modes.{mode}_mode'
-        class_name = f'{mode.capitalize()}Mode'
+        class_name = ''.join(word.capitalize() for word in mode.split('_'))
+        class_name += 'Mode'
 
         # Import the module and get the class
         try:
@@ -211,21 +242,38 @@ class SessionHandler:
         interaction = mode_class(self)
         interaction.start()
 
-    ############################################################################################################
-    # Some methods for common functionality
-    ############################################################################################################
+    def get_session_state(self):
+        """
+        Get the current session state
+        """
+        return self.session_state
 
-    def get_label(self, label=None):
+    def get_provider(self):
         """
-        Get the labels from the session
+        Get the provider from the session
         """
-        labels = self.conf.get_labels(self.session['model'])
-        if label == 'user':
-            return labels['user_label']
-        if label == 'response':
-            return labels['response_label']
-        else:
-            return labels
+        return self.session_state['provider']
+
+    def get_params(self):
+        """
+        Get the parameters from the session
+        """
+        return self.session_state['params']
+
+    def get_context(self, context_type=None):
+        """
+        Get the context from the session
+        """
+        if context_type and context_type in self.session_state['context']:
+            if context_type == 'prompt':
+                return self.session_state['context']['prompt'][0]
+            if context_type == 'chat':
+                return self.session_state['context']['chat'][0]
+            else:
+                return self.session_state['context'][context_type]
+
+        if context_type is None:
+            return self.session_state['context']
 
     ############################################################################################################
     # Passthrough methods for CLI interaction

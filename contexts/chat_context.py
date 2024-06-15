@@ -1,6 +1,5 @@
 from session_handler import InteractionContext
 from datetime import datetime
-from helpers import resolve_file_path
 
 
 class ChatContext(InteractionContext):
@@ -42,16 +41,5 @@ class ChatContext(InteractionContext):
     def get(self):
         return self.conversation
 
-    # def load_session(self, session):
-    #     """
-    #     Process a file from either a path or stdin
-    #     """
-    #     if session is not None:
-    #         # if session is a file in chats_directory check and make sure it exists and return it
-    #         chats_directory = self.conf.get_setting('DEFAULT', 'chats_directory')
-    #         chats_extension = self.conf.get_setting('DEFAULT', 'chats_extension')
-    #         session_file = resolve_file_path(session, chats_directory, chats_extension)
-    #         if session_file is not None:
-    #             with open(session_file, 'r') as f:
-    #                 self.session = f.read()
-    #                 return
+    def clear(self):
+        self.conversation = []

@@ -10,12 +10,16 @@ class OpenAIProvider(APIProvider):
     """
 
     def __init__(self, session: SessionHandler):
-        self.usage = None
-        self.conf = session.get_session_settings()
-        if 'api_key' in self.conf['parms']:
-            self.api_key = self.conf['parms']['api_key']
+        self.session = session
+        self.params = session.get_params()
+        if 'api_key' in self.params and self.params['api_key'] is not None:
+            self.api_key = self.params['api_key']
         else:
-            self.api_key = os.environ['OPENAI_API_KEY']
+            try:
+                self.api_key = os.environ['OPENAI_API_KEY']
+            except KeyError:
+                print("No API key found in the environment or the session parameters")
+                quit()
         self.client = OpenAI(api_key=self.api_key)
 
         # List of parameters that can be passed to the OpenAI API that we want to handle automatically
@@ -40,21 +44,23 @@ class OpenAIProvider(APIProvider):
             'user',
         ]
 
-    def chat(self, context: dict):
+        # place to store usage data
+        self.usage = None
+
+    def chat(self):
         """
         Creates a chat completion request to the OpenAI API
-        :param context:
         :return: response (str)
         """
         try:
             # Assemble the message from the context
-            messages = self.assemble_message(context)
+            messages = self.assemble_message()
 
             # Loop through the parameters and add them to the list if they are available
             api_parms = {}
             for parameter in self.parameters:
-                if parameter in self.conf['parms'] and self.conf['parms'][parameter] is not None:
-                    api_parms[parameter] = self.conf['parms'][parameter]
+                if parameter in self.params and self.params[parameter] is not None:
+                    api_parms[parameter] = self.params[parameter]
 
             # Add the messages to the API parameters
             api_parms['messages'] = messages
@@ -86,40 +92,32 @@ class OpenAIProvider(APIProvider):
             print(e.status_code)
             print(e.response)
 
-    def stream_chat(self, context):
+    def stream_chat(self):
         """
         Use generator chaining to keep the response provider-agnostic
-        :param context:
         :return:
         """
-        response = self.chat(context)
-        for event in response:
-            if event.choices and len(event.choices) > 0:
-                if event.choices[0].finish_reason != 'stop':
-                    yield event.choices[0].delta.content  # return the content delta
-            if event.usage is not None:
-                self.usage = event.usage
+        response = self.chat()
+        for chunk in response:
+            if chunk.choices and len(chunk.choices) > 0:
+                if chunk.choices[0].finish_reason != 'stop' and chunk.choices[0].delta.content is not None:
+                    yield chunk.choices[0].delta.content  # return the content delta
+            if chunk.usage is not None:
+                self.usage = chunk.usage
 
-    @staticmethod
-    def assemble_message(context) -> list:
+    def assemble_message(self) -> list:
         """
         Assemble the message from the context
-        :param context:
         :return: message (str)
         """
-        prompt = ''
-        chat = None
-        if 'prompt' in context:
-            for p in context['prompt']:  # there could be multiple prompts
-                prompt += p.get()['content']
-        if 'chat' in context:
-            chat = context['chat'][0]  # there should only be one chat in context
         message = []
-        if prompt:
-            message.append({'role': 'system', 'content': prompt})
+        if self.session.get_context('prompt'):
+            message.append({'role': 'system', 'content': self.session.get_context('prompt').get()['content']})
+
+        chat = self.session.get_context('chat')
         if chat is not None:
-            turn_context = ''
             for turn in chat.get():  # go through each turn in the conversation
+                turn_context = ''
                 # if context is in turn and not an empty list
                 # todo: eventually we might want to differentiate between different types of context objects
                 if 'context' in turn and turn['context']:
@@ -133,6 +131,9 @@ class OpenAIProvider(APIProvider):
 
                 message.append({'role': turn['role'], 'content': turn_context + "\n" + turn['message']})
         return message
+
+    def get_messages(self):
+        return self.assemble_message()
 
     def get_usage(self):
         if self.usage is not None:

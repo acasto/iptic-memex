@@ -29,7 +29,7 @@ class PromptContext(InteractionContext):
                 return
 
             # if prompt is a file in prompt_directory check and make sure it exists and return it
-            prompt_directory = self.conf.get_setting('DEFAULT', 'prompt_directory')
+            prompt_directory = self.conf.get_option('DEFAULT', 'prompt_directory')
             prompt_file = resolve_file_path(prompt, prompt_directory, '.txt')
             if prompt_file is not None:
                 with open(prompt_file, 'r') as f:
