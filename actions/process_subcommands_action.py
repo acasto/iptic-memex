@@ -8,41 +8,61 @@ class ProcessSubcommandsAction(InteractionAction):
         self.session = session
         self.tc = session.get_action('tab_completion')
         self.chat = session.get_context('chat')
+        self.commands = {
+            "quit": [],
+            "exit": [],
+            "load": ["file"],
+            "save": [],
+            "show": ["models", "messages", "session", "usage", "tokens"],
+            "set": ["model", "option"],
+            "clear": [],
+            "help": [],
+            "?": [],
+        }
 
-    def run(self, user_input=None):
+    def run(self, user_input: str = None) -> bool | None:
         """
         Process subcommands from the chat mode
+        user_input: str - the user input to process
+        bool | None - True if we should continue, None if we should keep going with the response
         """
         if user_input is None:
-            return self.get_commands()
+            return
 
-        command = user_input.strip().lower()
-        handler_method = getattr(self, f"handle_{command.replace(' ', '_')}", None)
+        words = user_input.strip().lower().split()
+        if len(words) > 4:  # Ignore inputs with more than 4 words
+            return
 
-        if handler_method:
-            return handler_method()
-        else:
-            print(f"Unknown command: {user_input}")
+        command, *rest = words
+        if command not in self.commands:  # If first word isn't a command, return
+            return
 
-    def get_commands(self):
-        return [
-            "test",
-            "quit",
-            "exit",
-            "save",
-            "load chat",
-            "load file",
-            "list models",
-            "set model",
-            "set option",
-            "clear",
-            "show messages",
-            "show session",
-            "show usage",
-            "count tokens",
-            "help",
-            "?"
-        ]
+        if not self.commands[command]:  # No subcommands, call handler directly (e.g. quit, help, etc.)
+            handler_method = getattr(self, f"handle_{command}")
+            handler_method()
+            print()
+            return True
+
+        if len(words) == 2:  # If two words, check if the second word is a subcommand, else assume it's an arg
+            subcommand = words[1]
+            if subcommand in self.commands[command]:
+                handler_method = getattr(self, f"handle_{command.replace(' ', '_')}_{subcommand.replace(' ', '_')}")
+                handler_method()
+            else:
+                getattr(self, f"handle_{command}")(rest)
+            print()
+            return True
+
+        if len(words) > 2:  # More than two words, assume they're args for the subcommand
+            getattr(self, f"handle_{command}_{words[1]}")(words[2:])
+            print()
+            return True
+
+        return False
+
+    def get_commands(self) -> list[str]:
+        # flatten the commands dict but omit the keys with values (e.g. "load model", "set option")
+        return [f"{k} {v}" if values else k for k, values in self.commands.items() for v in (values if values else [None])]
 
     def handle_quit(self):
         user_input = input("Hit Ctrl-C or enter 'y' to quit: ")
@@ -62,50 +82,50 @@ class ProcessSubcommandsAction(InteractionAction):
     def handle_load_chat(self):
         print("Not implemented yet")
 
-    def handle_load_file(self):
-        self.tc.run('path')
-        while True:
-            filename = input(f"Enter filename (or q to exit): ")
-            if filename == 'q':
-                self.tc.run('chat')
-                break
-            if os.path.isfile(filename):
-                self.session.add_context('file', filename)
-                self.tc.run('chat')  # set the completion back to chat mode
-                break
-            else:
-                print(f"File {filename} not found.")
+    def handle_load_file(self, args=None):
+        if not args:
+            print("Usage: load file <filename>")
+            return
 
-    def handle_list_models(self):
+        filename = ' '.join(args)
+        if os.path.isfile(filename):
+            self.session.add_context('file', filename)
+            self.tc.run('chat')  # set the completion back to chat mode
+        else:
+            print(f"File {filename} not found.")
+
+    def handle_show_models(self):
         for section, options in self.session.list_models().items():
             print(section)
 
-    def handle_set_model(self):
-        self.tc.run('model')
-        while True:
-            model = input(f"Enter model name (or q to exit): ")
-            if model == 'q':
-                self.tc.run('chat')  # set the completion back to chat mode
-                break
-            if model in self.session.list_models():
-                self.session.set_option('model', model)
-                self.tc.run('chat')
-                break
+    def handle_set_model(self, args=None):
+        if not args:
+            print("Usage: load model <model_name>")
+            return
 
-    def handle_set_option(self):
-        self.tc.run('option')
-        while True:
-            option = input(f"Enter option name (or q to exit): ")
-            if option == 'q':
-                self.tc.run('chat')
-                break
-            if option in self.session.get_params():
-                value = input(f"Enter value for {option}: ")
-                self.session.set_option(option, value)
-                self.tc.run('chat')
-                break
-            else:
-                print(f"Option {option} not found.")
+        model_name = ' '.join(args)
+        if model_name in self.session.list_models():
+            self.session.set_option('model', model_name)
+            self.tc.run('chat')  # set the completion back to chat mode
+        else:
+            print(f"Model {model_name} not found.")
+
+    def handle_set_option(self, args=None):
+        if args is None:
+            print("Usage: set option <option_name> [value]")
+            return
+
+        if len(args) == 1:  # No value provided
+            print(f"Usage: set option {args[0]} <value>")
+            return
+
+        option, *value = args
+        if option in self.session.get_params():
+            value = ' '.join(value) if value else ''  # Join remaining args into a single value
+            self.session.set_option(option, value)
+            print(f"Option {option} set to {value}")
+        else:
+            print(f"Option {option} not found.")
 
     def handle_clear(self):
         self.chat.clear()
@@ -119,7 +139,7 @@ class ProcessSubcommandsAction(InteractionAction):
     def handle_show_usage(self):
         print(self.session.get_provider().get_usage())
 
-    def handle_count_tokens(self):
+    def handle_show_tokens(self):
         print(self.session.get_action('count_tokens').run())
 
     def handle_help(self):

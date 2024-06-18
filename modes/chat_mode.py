@@ -17,12 +17,11 @@ class ChatMode(InteractionMode):
     def start(self):
         # Setup some core actions
         tc = self.session.get_action('tab_completion')
-        # sc = self.session.get_action('process_subcommands')
         sc = self.session.get_action('process_subcommands')
         response = self.session.get_action('print_response')
 
         # Start the chat session loop
-        tc.run('chat')
+        tc.run('new_chat')
         while True:
 
             # Get contexts that have been loaded into the session
@@ -42,10 +41,8 @@ class ChatMode(InteractionMode):
                 user_input = input(f"{self.params['user_label']} ")
                 print()
 
-                # Process any subcommands
-                if user_input in sc.run():
-                    sc.run(user_input)
-                    print()
+                # Process any subcommands (will return True if no subcommands are found)
+                if sc.run(user_input):
                     continue
 
             except (KeyboardInterrupt, EOFError):
