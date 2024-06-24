@@ -185,15 +185,15 @@ class SessionHandler:
         # get the provider for the model for our convenience
         provider = self.conf.get_option_from_model('provider', model)
 
-        # go through all the options in the [<provider>] section and add them to the session
-        for option in self.conf.get_all_options_from_provider(provider):
-            if option not in self.session_state['params']:
-                self.session_state['params'][option] = self.conf.get_option_from_provider(option, provider)
-
         # go through all the options in the [<model>] section and add them to the session
         for option in self.conf.get_all_options_from_model(model):
             if option not in self.session_state['params']:
                 self.session_state['params'][option] = self.conf.get_option_from_model(option, model)
+
+        # go through all the options in the [<provider>] section and add them to the session
+        for option in self.conf.get_all_options_from_provider(provider):
+            if option not in self.session_state['params']:
+                self.session_state['params'][option] = self.conf.get_option_from_provider(option, provider)
 
         # set the user options to the session state
         self.session_state['params'].update(self.user_options)

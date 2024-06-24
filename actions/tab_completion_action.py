@@ -36,34 +36,6 @@ class TabCompletionAction(InteractionAction):
         except IndexError:
             return None
 
-    def new_chat_completer(self, text, state):
-        options = self.session.get_action('process_subcommands').get_commands()
-
-        # once an option in options is complete we need to continue on below, selecting the next completer,
-        # passing the text minus the option to it, but returning the option + the result of the next completer
-        # as the completion for this instance
-        for option in options:
-            if text.strip().lower().startswith(option):
-                # remove the option from text
-                text = text[len(option):].strip()
-                # convert rest to a string
-                rest = "".join(text)
-
-                # Determine the completion mode based on the subcommand
-                # if option == "load" and subcommand == "file":
-                #     return self.path_completer(text, state)
-                # elif option == "set" and subcommand == "option":
-                #     return self.option_completer(text, state)
-                if option == "set model":
-                    print(state)
-                    print(f"{option} {self.model_completer(rest, state)}")
-
-
-        try:
-            return [x for x in options if x.startswith(text)][state]
-        except IndexError:
-            return None
-
     @staticmethod
     def path_completer(text, state):
         """
@@ -81,7 +53,6 @@ class TabCompletionAction(InteractionAction):
 
         # return the option at the current state
         try:
-            # print(f"Text: {text!r}, State: {state}, Options: {options!r}")
             return options[state]
         except IndexError:
             return None

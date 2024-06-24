@@ -15,10 +15,13 @@ class CountTokensAction(InteractionAction):
         Count the tokens in the chat context
         """
         params = self.session.get_params()
-        if params['tokenizer'] == 'tiktoken':
-            messages = self.session.get_provider().get_messages()
-            num_tokens = self.count_tiktoken(messages)
-            print(f"Number of tokens: {num_tokens}")
+        if 'tokenizer' in params and params['tokenizer'] is not None:
+            if params['tokenizer'] == 'tiktoken':
+                messages = self.session.get_provider().get_messages()
+                num_tokens = self.count_tiktoken(messages)
+                print(f"Number of tokens: {num_tokens}")
+        else:
+            print("No tokenizer specified.")
 
     @staticmethod
     def count_tiktoken(messages, model="gpt-4o"):

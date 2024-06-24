@@ -18,23 +18,25 @@ class ChatMode(InteractionMode):
         # Setup some core actions
         tc = self.session.get_action('tab_completion')
         sc = self.session.get_action('process_subcommands')
+        pc = self.session.get_action('process_contexts')
         response = self.session.get_action('print_response')
 
         # Start the chat session loop
-        tc.run('new_chat')
+        tc.run('chat')
         while True:
 
             # Get contexts that have been loaded into the session
-            contexts = []  # Note: we do it this way to account for more than just files (e.g. web scrapings)
-
-            if self.session.get_context('file'):  # todo: we'll need to revisit this with additional contexts
-                contexts.extend(self.session.get_context('file'))
-
-            # Let the user know what context(s) we are working with
-            if len(contexts) > 0:
-                for context in contexts:
-                    print(f"In context: {context.get()['name']}")
-                print()
+            # contexts = []  # Note: we do it this way to account for more than just files (e.g. web scrapings)
+            #
+            # if self.session.get_context('file'):  # todo: we'll need to revisit this with additional contexts
+            #     contexts.extend(self.session.get_context('file'))
+            #
+            # # Let the user know what context(s) we are working with
+            # if len(contexts) > 0:
+            #     for context in contexts:
+            #         print(f"In context: {context.get()['name']}")
+            #     print()
+            contexts = pc.run()
 
             try:
                 # Get the users input

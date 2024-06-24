@@ -235,5 +235,9 @@ class ConfigHandler:
             return True
         if value.lower() in ['false', 'no', '0']:
             return False
+        # if the value looks like a dict convert it to a dict, pass values back through to file bools
+        if value.startswith('{') and value.endswith('}'):
+            return {item.split(':')[0]: ConfigHandler.fix_values(item.split(':')[1]) for item in
+                    value.strip('{}').split(',')}
         # strip quotes from the value
         return value.strip('"')

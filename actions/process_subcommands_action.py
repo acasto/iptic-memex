@@ -13,10 +13,11 @@ class ProcessSubcommandsAction(InteractionAction):
             "exit": [],
             "load": ["file"],
             "save": [],
-            "show": ["models", "messages", "session", "usage", "tokens"],
+            "show": ["models", "messages", "settings", "usage"],
             "set": ["model", "option"],
             "clear": [],
             "help": [],
+            "run": ["count_tokens"],
             "?": [],
         }
 
@@ -30,7 +31,7 @@ class ProcessSubcommandsAction(InteractionAction):
             return
 
         words = user_input.strip().lower().split()
-        if len(words) > 4:  # Ignore inputs with more than 4 words
+        if len(words) > 4 or len(words) == 0 :  # Ignore inputs with more than 4 words or no words
             return
 
         command, *rest = words
@@ -84,7 +85,18 @@ class ProcessSubcommandsAction(InteractionAction):
 
     def handle_load_file(self, args=None):
         if not args:
-            print("Usage: load file <filename>")
+            self.tc.run('path')
+            while True:
+                filename = input(f"Enter filename (or q to exit): ")
+                if filename == 'q':
+                    self.tc.run('chat')
+                    break
+                if os.path.isfile(filename):
+                    self.session.add_context('file', filename)
+                    self.tc.run('chat')  # set the completion back to chat mode
+                    break
+                else:
+                    print(f"File {filename} not found.")
             return
 
         filename = ' '.join(args)
@@ -100,7 +112,16 @@ class ProcessSubcommandsAction(InteractionAction):
 
     def handle_set_model(self, args=None):
         if not args:
-            print("Usage: load model <model_name>")
+            self.tc.run('model')
+            while True:
+                model = input(f"Enter model name (or q to exit): ")
+                if model == 'q':
+                    self.tc.run('chat')  # set the completion back to chat mode
+                    break
+                if model in self.session.list_models():
+                    self.session.set_option('model', model)
+                    self.tc.run('chat')
+                    break
             return
 
         model_name = ' '.join(args)
@@ -112,7 +133,19 @@ class ProcessSubcommandsAction(InteractionAction):
 
     def handle_set_option(self, args=None):
         if args is None:
-            print("Usage: set option <option_name> [value]")
+            self.tc.run('option')
+            while True:
+                option = input(f"Enter option name (or q to exit): ")
+                if option == 'q':
+                    self.tc.run('chat')
+                    break
+                if option in self.session.get_params():
+                    value = input(f"Enter value for {option}: ")
+                    self.session.set_option(option, value)
+                    self.tc.run('chat')
+                    break
+                else:
+                    print(f"Option {option} not found.")
             return
 
         if len(args) == 1:  # No value provided
@@ -133,14 +166,14 @@ class ProcessSubcommandsAction(InteractionAction):
     def handle_show_messages(self):
         print(self.session.get_provider().get_messages())
 
-    def handle_show_session(self):
+    def handle_show_settings(self):
         print(self.session.get_session_state())
 
     def handle_show_usage(self):
         print(self.session.get_provider().get_usage())
 
-    def handle_show_tokens(self):
-        print(self.session.get_action('count_tokens').run())
+    def handle_run_count_tokens(self):
+        self.session.get_action('count_tokens').run()
 
     def handle_help(self):
         self.print_help()

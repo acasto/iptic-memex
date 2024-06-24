@@ -45,6 +45,12 @@ class PromptContext(InteractionContext):
                     self.prompt['content'] = f.read()
                     return
 
+            # if prompt is a string but "none" or "false" return
+            if prompt.lower() in ['none', 'false']:
+                self.prompt['name'] = 'none'
+                self.prompt['content'] = ''
+                return
+
             # if it seems like the user meant to specify a file, but it doesn't exist, raise an error
             if prompt.endswith('.txt') or ' ' not in prompt:
                 raise FileNotFoundError(f'Could not find the prompt file at {prompt}')
