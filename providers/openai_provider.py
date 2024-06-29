@@ -12,15 +12,22 @@ class OpenAIProvider(APIProvider):
     def __init__(self, session: SessionHandler):
         self.session = session
         self.params = session.get_params()
+
+        # set the options for the OpenAI API client
+        options = {}
         if 'api_key' in self.params and self.params['api_key'] is not None:
-            self.api_key = self.params['api_key']
+            options['api_key'] = self.params['api_key']
+        elif 'OPENAI_API_KEY' in os.environ:
+            options['api_key'] = os.environ['OPENAI_API_KEY']
         else:
-            try:
-                self.api_key = os.environ['OPENAI_API_KEY']
-            except KeyError:
-                print("No API key found in the environment or the session parameters")
-                quit()
-        self.client = OpenAI(api_key=self.api_key)
+            options[
+                'api_key'] = 'none'  # in case we're using the library for something else but still need something set
+
+        if 'base_url' in self.params and self.params['base_url'] is not None:
+            options['base_url'] = self.params['base_url']
+
+        # Initialize the OpenAI client
+        self.client = OpenAI(**options)
 
         # List of parameters that can be passed to the OpenAI API that we want to handle automatically
         self.parameters = [
@@ -42,6 +49,7 @@ class OpenAIProvider(APIProvider):
             'tools',
             'tool_choice',
             'user',
+            'extra_body'
         ]
 
         # place to store usage data
@@ -62,14 +70,15 @@ class OpenAIProvider(APIProvider):
                 if parameter in self.params and self.params[parameter] is not None:
                     api_parms[parameter] = self.params[parameter]
 
-            # Add the messages to the API parameters
-            api_parms['messages'] = messages
-
-            # If streaming set stream_options
+            # If streaming set stream_options - we could set this in the config, but since it's dependent
+            # on stream and enables and internal feature, we'll set it here
             if 'stream' in api_parms and api_parms['stream'] is True:
                 api_parms['stream_options'] = {
                     'include_usage': True,
                 }
+
+            # Add the messages to the API parameters
+            api_parms['messages'] = messages
 
             # Call the OpenAI API
             response = self.client.chat.completions.create(**api_parms)
@@ -98,10 +107,13 @@ class OpenAIProvider(APIProvider):
         :return:
         """
         response = self.chat()
-        for chunk in response:
+        for i, chunk in enumerate(response):
             if chunk.choices and len(chunk.choices) > 0:
                 if chunk.choices[0].finish_reason != 'stop' and chunk.choices[0].delta.content is not None:
-                    yield chunk.choices[0].delta.content  # return the content delta
+                    content = chunk.choices[0].delta.content
+                    if i < 2:  # Only process the first two chunks
+                        content = content.lstrip('\n')  # Remove leading newlines only
+                    yield content
             if chunk.usage is not None:
                 self.usage = chunk.usage
 

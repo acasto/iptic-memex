@@ -1,4 +1,5 @@
 import os
+import re
 from configparser import ConfigParser
 from helpers import resolve_file_path, resolve_directory_path
 
@@ -230,14 +231,44 @@ class ConfigHandler:
         """
         Fix some of the values due to how they are stored and retrieved with ConfigParser
         """
-        # if the value is a boolean, return it as a boolean
-        if value.lower() in ['true', 'yes', '1']:
-            return True
-        if value.lower() in ['false', 'no', '0']:
-            return False
-        # if the value looks like a dict convert it to a dict, pass values back through to file bools
+        value = value.strip()
+
+        # Handle dict-like strings
         if value.startswith('{') and value.endswith('}'):
-            return {item.split(':')[0]: ConfigHandler.fix_values(item.split(':')[1]) for item in
-                    value.strip('{}').split(',')}
-        # strip quotes from the value
-        return value.strip('"')
+            pairs = re.findall(r'(\w+)\s*:\s*(\[.*?]|[^,]+)(?=\s*(?:,|$))', value[1:-1])
+            return {k.strip(): ConfigHandler.fix_values(v.strip()) for k, v in pairs}
+
+        # Handle list-like strings
+        if value.startswith('[') and value.endswith(']'):
+            return [ConfigHandler.fix_values(item.strip()) for item in re.findall(r'<[^>]+>|[^,\s]+', value[1:-1])]
+
+        # Handle boolean values
+        lower_value = value.lower()
+        if lower_value in ('true', 'yes', '1'):
+            return True
+        if lower_value in ('false', 'no', '0'):
+            return False
+
+        # Remove quotes if present
+        if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+            return value[1:-1]
+
+        # Return as is for other cases
+        return value
+
+    # @staticmethod
+    # def fix_values(value):
+    #     """
+    #     Fix some of the values due to how they are stored and retrieved with ConfigParser
+    #     """
+    #     # if the value is a boolean, return it as a boolean
+    #     if value.lower() in ['true', 'yes', '1']:
+    #         return True
+    #     if value.lower() in ['false', 'no', '0']:
+    #         return False
+    #     # if the value looks like a dict convert it to a dict, pass values back through to file bools
+    #     if value.startswith('{') and value.endswith('}'):
+    #         return {item.split(':')[0]: ConfigHandler.fix_values(item.split(':')[1]) for item in
+    #                 value.strip('{}').split(',')}
+    #     # strip quotes from the value
+    #     return value.strip('"')

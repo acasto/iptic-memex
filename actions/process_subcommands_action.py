@@ -17,7 +17,7 @@ class ProcessSubcommandsAction(InteractionAction):
             "set": ["model", "option"],
             "clear": [],
             "help": [],
-            "run": ["count_tokens"],
+            "run": ["count_tokens", "brave_search"],
             "?": [],
         }
 
@@ -31,7 +31,7 @@ class ProcessSubcommandsAction(InteractionAction):
             return
 
         words = user_input.strip().lower().split()
-        if len(words) > 4 or len(words) == 0 :  # Ignore inputs with more than 4 words or no words
+        if len(words) > 4 or len(words) == 0:  # Ignore inputs with more than 4 words or no words
             return
 
         command, *rest = words
@@ -63,7 +63,20 @@ class ProcessSubcommandsAction(InteractionAction):
 
     def get_commands(self) -> list[str]:
         # flatten the commands dict but omit the keys with values (e.g. "load model", "set option")
-        return [f"{k} {v}" if values else k for k, values in self.commands.items() for v in (values if values else [None])]
+        return [f"{k} {v}" if values else k for k, values in self.commands.items() for v in
+                (values if values else [None])]
+
+    def print_help(self):
+        print("Commands:")
+        print("save - save the chat history to a file")
+        print("load chat - load a chat history from a file")
+        print("load file - load a file into the context")
+        print("list models - list available models")
+        print("load model - switch to a different model")
+        print("clear - clear the context and start over")
+        print("show messages - dump session messages")
+        print("show tokens - show number of tokens in session")
+        print("quit - quit the chat")
 
     def handle_quit(self):
         user_input = input("Hit Ctrl-C or enter 'y' to quit: ")
@@ -76,6 +89,27 @@ class ProcessSubcommandsAction(InteractionAction):
 
     def handle_exit(self):
         return self.handle_quit()
+
+    def handle_clear(self):
+        self.chat.clear()
+
+    def handle_show_messages(self):
+        print(self.session.get_provider().get_messages())
+
+    def handle_show_settings(self):
+        print(self.session.get_session_state())
+
+    def handle_show_usage(self):
+        print(self.session.get_provider().get_usage())
+
+    def handle_run_count_tokens(self):
+        self.session.get_action('count_tokens').run()
+
+    def handle_help(self):
+        self.print_help()
+
+    def handle_question_mark(self):
+        self.print_help()
 
     def handle_save(self):
         print("Not implemented yet")
@@ -160,35 +194,5 @@ class ProcessSubcommandsAction(InteractionAction):
         else:
             print(f"Option {option} not found.")
 
-    def handle_clear(self):
-        self.chat.clear()
-
-    def handle_show_messages(self):
-        print(self.session.get_provider().get_messages())
-
-    def handle_show_settings(self):
-        print(self.session.get_session_state())
-
-    def handle_show_usage(self):
-        print(self.session.get_provider().get_usage())
-
-    def handle_run_count_tokens(self):
-        self.session.get_action('count_tokens').run()
-
-    def handle_help(self):
-        self.print_help()
-
-    def handle_question_mark(self):
-        self.print_help()
-
-    def print_help(self):
-        print("Commands:")
-        print("save - save the chat history to a file")
-        print("load chat - load a chat history from a file")
-        print("load file - load a file into the context")
-        print("list models - list available models")
-        print("load model - switch to a different model")
-        print("clear - clear the context and start over")
-        print("show messages - dump session messages")
-        print("show tokens - show number of tokens in session")
-        print("quit - quit the chat")
+    def handle_run_brave_search(self):
+        self.session.get_action('web_search_brave').run()

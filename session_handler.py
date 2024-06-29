@@ -205,6 +205,11 @@ class SessionHandler:
         """
         Initialize and set an API provider
         """
+        # See if the provider is an alias
+        alias = self.conf.get_option_from_provider('alias', provider)
+        if alias:
+            provider = alias
+
         # Construct the module and class names based on the provider
         module_name = f'providers.{provider.lower()}_provider'
         class_name = f'{provider}Provider'

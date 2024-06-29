@@ -1,5 +1,6 @@
 from session_handler import InteractionAction
 
+
 class ListChatsAction(InteractionAction):
 
     def __init__(self, conf):
