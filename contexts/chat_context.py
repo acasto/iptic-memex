@@ -13,6 +13,7 @@ class ChatContext(InteractionContext):
         :param session: the data to process
         """
         self.conf = conf  # ConfigHandler object
+        self.session = session
         self.conversation = []  # list to hold the file name and content
         # session might be used for loading a previous conversation
         # if session is not None:
@@ -25,7 +26,7 @@ class ChatContext(InteractionContext):
         :param role: the role of the message (user or assistant)
         :param context: any context objects to add
         """
-        if message is None: # if no message make sure we have a str and not None
+        if message is None:  # if no message make sure we have a str and not None
             message = ''
         # let's create a turn object to hold the timestamp, role, message, and any other context objects (e.g. files)
         turn = {

@@ -1,5 +1,6 @@
 import tiktoken
 from session_handler import InteractionAction
+import json
 
 
 class CountTokensAction(InteractionAction):
@@ -24,7 +25,7 @@ class CountTokensAction(InteractionAction):
             print("No tokenizer specified.")
 
     @staticmethod
-    def count_tiktoken(messages, model="gpt-4o"):
+    def count_tiktoken(messages, model="gpt-4"):
         """Returns the number of tokens used"""
         try:
             encoding = tiktoken.encoding_for_model(model)
@@ -36,15 +37,27 @@ class CountTokensAction(InteractionAction):
         tokens_per_name = 1
 
         num_tokens = 0
-        # if we're given a str for a completion prompt, convert it to a list
-        if not isinstance(messages, list):
-            messages = [messages]
-        # process list of messages
-        for message in messages:
-            num_tokens += tokens_per_message
-            for key, value in message.items():
-                num_tokens += len(encoding.encode(value))
-                if key == "role":
-                    num_tokens += tokens_per_name
-        num_tokens += 3  # every reply is primed with <|start|>assistant<|message|>
+
+        if isinstance(messages, str):
+            # If messages is a string, simply encode and count
+            num_tokens = len(encoding.encode(messages))
+        elif isinstance(messages, dict):
+            # If messages is a dictionary, convert it to a string and count
+            messages_str = json.dumps(messages)
+            num_tokens = len(encoding.encode(messages_str))
+        elif isinstance(messages, list):
+            # If messages is a list, process each message
+            for message in messages:
+                num_tokens += tokens_per_message
+                for key, value in message.items():
+                    if isinstance(value, dict):
+                        # If the value is a dictionary, convert it to a string
+                        value = json.dumps(value)
+                    num_tokens += len(encoding.encode(str(value)))
+                    if key == "role":
+                        num_tokens += tokens_per_name
+            num_tokens += 3  # every reply is primed with <|start|>assistant<|message|>
+        else:
+            raise ValueError("Input must be a string, a dictionary, or a list of message dictionaries")
+
         return num_tokens

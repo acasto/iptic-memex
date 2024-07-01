@@ -6,7 +6,7 @@ class ProcessSubcommandsAction(InteractionAction):
 
     def __init__(self, session):
         self.session = session
-        self.tc = session.get_action('tab_completion')
+        self.tc = session.get_action('tab_completion', 'core_actions')
         self.chat = session.get_context('chat')
         self.commands = {
             "quit": [],
@@ -17,7 +17,7 @@ class ProcessSubcommandsAction(InteractionAction):
             "set": ["model", "option"],
             "clear": [],
             "help": [],
-            "run": ["count_tokens", "brave_search"],
+            "run": ["count_tokens", "brave_search", "web_fetch"],
             "?": [],
         }
 
@@ -50,7 +50,11 @@ class ProcessSubcommandsAction(InteractionAction):
                 handler_method = getattr(self, f"handle_{command.replace(' ', '_')}_{subcommand.replace(' ', '_')}")
                 handler_method()
             else:
-                getattr(self, f"handle_{command}")(rest)
+                try:
+                    getattr(self, f"handle_{command}")(rest)
+                except AttributeError:
+                    print(f"Command {command} not found.")
+                    return True
             print()
             return True
 
@@ -195,4 +199,7 @@ class ProcessSubcommandsAction(InteractionAction):
             print(f"Option {option} not found.")
 
     def handle_run_brave_search(self):
-        self.session.get_action('web_search_brave').run()
+        self.session.get_action('brave_search_summary').run()
+
+    def handle_run_web_fetch(self):
+        self.session.get_action('fetch_from_web').run()

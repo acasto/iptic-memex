@@ -162,7 +162,7 @@ class ConfigHandler:
         Get an option from the respective config section based on the provider
         :param option: the option to get
         :param provider: the provider name
-        :return: the provider name
+        :return: the option value
         """
         # should make sure it exists before returning
         if self.conf.has_option(provider, option):
@@ -172,7 +172,7 @@ class ConfigHandler:
         """
         Get all the options from the respective config section of provider
         :param provider: the provider name
-        :return: the provider name
+        :return: the options for the provider
         """
         # should make sure it exists before returning
         return {option: self.fix_values(self.conf.get(provider, option)) for option in self.conf.options(provider)}

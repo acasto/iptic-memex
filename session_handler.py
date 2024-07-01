@@ -136,7 +136,7 @@ class SessionHandler:
             self.session_state['context'][context_type] = []
         self.session_state['context'][context_type].append(context_class(self.conf, context_data))
 
-    def remove_context(self, context_type: str):
+    def remove_context_type(self, context_type: str):
         """
         Remove a context object from the session
         :param context_type: the type of context to remove
@@ -144,13 +144,24 @@ class SessionHandler:
         if context_type in self.session_state['context']:
             self.session_state['context'].pop(context_type)
 
-    def get_action(self, action: str) -> InteractionAction:
+    def remove_context_item(self, context_type: str, index: int):
+        """
+        Remove a context object from the session
+        :param context_type: the type of context to remove
+        :param index: the index of the context to remove
+        """
+        if context_type in self.session_state['context']:
+            if index < len(self.session_state['context'][context_type]):
+                self.session_state['context'][context_type].pop(index)
+
+    def get_action(self, action: str, action_folder: str = "actions") -> InteractionAction:
         """
         Instantiate and return an action class
         :param action: the action to instantiate
+        :param action_folder: the folder where the action is located
         """
         # construct the module and class names based on the action
-        module_name = f'actions.{action}_action'
+        module_name = f'{action_folder}.{action}_action'
         class_name = ''.join(word.capitalize() for word in action.split('_'))
         class_name += 'Action'
 

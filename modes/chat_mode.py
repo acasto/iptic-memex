@@ -16,26 +16,16 @@ class ChatMode(InteractionMode):
 
     def start(self):
         # Setup some core actions
-        tc = self.session.get_action('tab_completion')
-        sc = self.session.get_action('process_subcommands')
-        pc = self.session.get_action('process_contexts')
-        response = self.session.get_action('print_response')
+        tc = self.session.get_action('tab_completion', 'core_actions')
+        sc = self.session.get_action('process_subcommands', 'core_actions')
+        pc = self.session.get_action('process_contexts', 'core_actions')
+        response = self.session.get_action('print_response', 'core_actions')
 
         # Start the chat session loop
         tc.run('chat')
         while True:
 
-            # Get contexts that have been loaded into the session
-            # contexts = []  # Note: we do it this way to account for more than just files (e.g. web scrapings)
-            #
-            # if self.session.get_context('file'):  # todo: we'll need to revisit this with additional contexts
-            #     contexts.extend(self.session.get_context('file'))
-            #
-            # # Let the user know what context(s) we are working with
-            # if len(contexts) > 0:
-            #     for context in contexts:
-            #         print(f"In context: {context.get()['name']}")
-            #     print()
+            # process the contexts first
             contexts = pc.run()
 
             try:
@@ -56,7 +46,9 @@ class ChatMode(InteractionMode):
 
             # Add the question to the chat context
             self.chat.add(user_input, 'user', contexts)
-            self.session.remove_context('file')  # remove the file from the SessionHandler
+            for context in list(self.session.get_context().keys()):
+                if context != 'prompt' and context != 'chat':  # Ignore the prompt and chat contexts
+                    self.session.remove_context_type(context)   # remove the context for this turn
             del contexts  # clear contexts now that we have saved them to the chat context
 
             # Start the response

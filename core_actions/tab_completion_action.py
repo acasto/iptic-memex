@@ -30,7 +30,7 @@ class TabCompletionAction(InteractionAction):
             readline.parse_and_bind('tab: self-insert')
 
     def chat_completer(self, text, state):
-        options = self.session.get_action('process_subcommands').get_commands()
+        options = self.session.get_action('process_subcommands', 'core_actions').get_commands()
         try:
             return [x for x in options if x.startswith(text)][state]
         except IndexError:

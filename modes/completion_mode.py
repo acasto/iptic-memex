@@ -16,7 +16,7 @@ class CompletionMode(InteractionMode):
         # Since in this interaction we want the file contents to serve as the prompt we'll remove the default
         # prompt and initialize a chat context object and add the file contents to it
         #
-        session.remove_context('prompt')  # get rid of the default prompt
+        session.remove_context_type('prompt')  # get rid of the default prompt
         session.add_context('chat')  # initialize a chat context object
         self.chat = self.session.get_context('chat')  # get the chat context object
         self.chat.add(session.get_context('file')[0].get()['content'])  # add the file contents as the user input
