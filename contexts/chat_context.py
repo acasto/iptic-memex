@@ -29,8 +29,8 @@ class ChatContext(InteractionContext):
             return self.conversation
 
         context_sent = self.params.get('context_sent', 'all')
-        if context_sent == 'none':
-            return []
+        if context_sent == 'none' or context_sent == 'last_1':
+            return self.conversation[-1:] if self.conversation else []
         elif context_sent == 'all':
             return self.conversation
         else:
@@ -104,3 +104,4 @@ class ChatContext(InteractionContext):
             label = user_label if turn['role'] == 'user' else response_label
             formatted += f"{label} {turn['message']}\n\n"
         return formatted
+    

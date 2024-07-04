@@ -30,7 +30,10 @@ class ShowAction(InteractionAction):
             print()
 
         if args[0] == 'messages':
-            messages = self.session.get_provider().get_messages()
+            if len(args) > 1 and args[1] == 'all':
+                messages = self.session.get_context('chat').get('all')
+            else:
+                messages = self.session.get_provider().get_messages()
             for message in messages:
                 print(message)
                 print()
