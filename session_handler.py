@@ -154,7 +154,7 @@ class SessionHandler:
             if index < len(self.session_state['context'][context_type]):
                 self.session_state['context'][context_type].pop(index)
 
-    def get_action(self, action: str, action_folder: str = "actions") -> InteractionAction:
+    def get_action(self, action: str, action_folder: str = "actions"):
         """
         Instantiate and return an action class
         :param action: the action to instantiate
@@ -171,7 +171,8 @@ class SessionHandler:
             action_class = getattr(module, class_name)
             return action_class(self)
         except (ImportError, AttributeError):
-            raise ValueError(f"Unsupported action: {action}")
+            # raise ValueError(f"Unsupported action: {action}")
+            return None
 
     def configure_session(self):
         """
@@ -181,10 +182,6 @@ class SessionHandler:
         self.session_state['params'] = {}
         self.session_state['provider'] = None
 
-        # get the default prompt if needed
-        if 'prompt' not in self.session_state['context']:
-            self.add_context('prompt')
-
         # if model is not set, use the default model
         if 'model' not in self.user_options:
             self.session_state['params']['model'] = self.conf.normalize_model_name(
@@ -192,6 +189,15 @@ class SessionHandler:
         else:
             self.session_state['params']['model'] = self.user_options['model']
         model = self.session_state['params']['model']  # for our convenience
+
+        # get the default prompt if needed
+        if 'prompt' not in self.session_state['context']:
+            # does model have a prompt defined?
+            if self.conf.get_option_from_model('prompt', model):
+                self.add_context('prompt', self.conf.get_option_from_model('prompt', model))
+            else:
+                # use the default prompt
+                self.add_context('prompt')
 
         # get the provider for the model for our convenience
         provider = self.conf.get_option_from_model('provider', model)
@@ -279,7 +285,11 @@ class SessionHandler:
     def get_context(self, context_type=None):
         """
         Get the context from the session
+        :param context_type: the type of context to get
         """
+        # if context_type is prompt or chat return the object
+        # if context_type is something else returns a list of objects
+        # if context type is None return the whole context dict
         if context_type and context_type in self.session_state['context']:
             if context_type == 'prompt':
                 return self.session_state['context']['prompt'][0]

@@ -16,10 +16,10 @@ class ChatMode(InteractionMode):
 
     def start(self):
         # Setup some core actions
-        tc = self.session.get_action('tab_completion', 'core_actions')
-        sc = self.session.get_action('process_subcommands', 'core_actions')
-        pc = self.session.get_action('process_contexts', 'core_actions')
-        response = self.session.get_action('print_response', 'core_actions')
+        tc = self.session.get_action('tab_completion')
+        sc = self.session.get_action('process_subcommands')
+        pc = self.session.get_action('process_contexts')
+        response = self.session.get_action('print_response')
 
         # Start the chat session loop
         tc.run('chat')

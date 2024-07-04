@@ -13,6 +13,8 @@ class PrintResponseAction(InteractionAction):
         """
         Print the response to the user
         """
+        # Refresh the params
+        self.params = self.session.get_params()
         # Start the response
         print(f"{self.params['response_label']} ", end='', flush=True)
         # if we are in stream mode, iterate through the stream of events

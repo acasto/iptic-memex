@@ -2,7 +2,7 @@ import requests
 from session_handler import InteractionAction
 
 
-class BraveSearchSummaryAction(InteractionAction):
+class BraveSummaryAction(InteractionAction):
     """
     Class for performing web searches using the Brave Search API
     """
@@ -102,7 +102,7 @@ class BraveSearchSummaryAction(InteractionAction):
         if 'summary' in summary_result:
             if 'data' in summary_result['summary'][0]:
                 concise_summary += "Summary:\n"
-                concise_summary += f"Token: {summary_result['summary'][0]['data']}\n"
+                concise_summary += f"{summary_result['summary'][0]['data']}\n"
             else:
                 concise_summary += "Summary not available.\n"
             concise_summary += "\n"

@@ -155,7 +155,8 @@ class ConfigHandler:
         # check against both the keys and value of 'model_name' in the output of list_models
         for key, value in self.list_models().items():
             if model == key or model == value['model_name']:
-                return self.fix_values(value[option])
+                if option in value:
+                    return self.fix_values(value[option])
 
     def get_option_from_provider(self, option, provider):
         """
@@ -256,19 +257,3 @@ class ConfigHandler:
         # Return as is for other cases
         return value
 
-    # @staticmethod
-    # def fix_values(value):
-    #     """
-    #     Fix some of the values due to how they are stored and retrieved with ConfigParser
-    #     """
-    #     # if the value is a boolean, return it as a boolean
-    #     if value.lower() in ['true', 'yes', '1']:
-    #         return True
-    #     if value.lower() in ['false', 'no', '0']:
-    #         return False
-    #     # if the value looks like a dict convert it to a dict, pass values back through to file bools
-    #     if value.startswith('{') and value.endswith('}'):
-    #         return {item.split(':')[0]: ConfigHandler.fix_values(item.split(':')[1]) for item in
-    #                 value.strip('{}').split(',')}
-    #     # strip quotes from the value
-    #     return value.strip('"')

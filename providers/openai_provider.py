@@ -131,13 +131,12 @@ class OpenAIProvider(APIProvider):
             for turn in chat.get():  # go through each turn in the conversation
                 turn_context = ''
                 # if context is in turn and not an empty list
-                # todo: eventually we might want to differentiate between different types of context objects
                 if 'context' in turn and turn['context']:
                     turn_context += "<|project_context|>"
                     # go through each object and place the contents in tags in the format:
                     # <|project_context|><|file:file_name|>{file content}<|end_file|><|end_project_context|>
                     for f in turn['context']:
-                        file = f.get()
+                        file = f['context'].get()
                         turn_context += f"<|file:{file['name']}|>{file['content']}<|end_file|>"
                     turn_context += "<|end_project_context|>"
 

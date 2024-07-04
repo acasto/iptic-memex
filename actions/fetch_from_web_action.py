@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 from session_handler import InteractionAction
 import re
 
+
 class FetchFromWebAction(InteractionAction):
     """
     Class for fetching content from web pages with token counting
@@ -32,6 +33,7 @@ class FetchFromWebAction(InteractionAction):
                     continue
 
                 content = None
+                token_count = 0  # Initialize token_count here
                 while True:
                     print("\nOptions:")
                     print("1. Fetch entire page")
