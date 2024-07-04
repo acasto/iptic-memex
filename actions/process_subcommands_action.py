@@ -44,6 +44,10 @@ class ProcessSubcommandsAction(InteractionAction):
                 "description": "Remove the last message (optional number of messages)",
                 "function": {"type": "action", "name": "clear_chat", "args": "last"},
             },
+            "clear first": {
+                "description": "Remove the first message (optional number of messages)",
+                "function": {"type": "action", "name": "clear_chat", "args": "first"},
+            },
             "clear screen": {
                 "description": "Clear the screen",
                 "function": {"type": "action", "name": "clear_chat", "args": "screen"},
