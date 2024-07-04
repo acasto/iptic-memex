@@ -20,8 +20,7 @@ class OpenAIProvider(APIProvider):
         elif 'OPENAI_API_KEY' in os.environ:
             options['api_key'] = os.environ['OPENAI_API_KEY']
         else:
-            options[
-                'api_key'] = 'none'  # in case we're using the library for something else but still need something set
+            options['api_key'] = 'none'  # in case we're using the library for something else but still need something set
 
         if 'base_url' in self.params and self.params['base_url'] is not None:
             options['base_url'] = self.params['base_url']

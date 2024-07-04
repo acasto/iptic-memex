@@ -75,7 +75,23 @@ class ProcessSubcommandsAction(InteractionAction):
             "set option": {
                 "description": "Set an option",
                 "function": {"type": "action", "name": "set_option"},
-            }
+            },
+            "save chat": {
+                "description": "Save the current chat",
+                "function": {"type": "action", "name": "manage_chats", "args": "save"},
+            },
+            "load chat": {
+                "description": "Load a saved chat",
+                "function": {"type": "action", "name": "manage_chats", "args": "load"},
+            },
+            "list chats": {
+                "description": "List saved chats",
+                "function": {"type": "action", "name": "manage_chats", "args": "list"},
+            },
+            "export chat": {
+                "description": "Export the current chat",
+                "function": {"type": "action", "name": "manage_chats", "args": "export"},
+            },
         }
 
     def run(self, user_input: str = None) -> bool | None:

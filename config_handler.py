@@ -243,6 +243,10 @@ class ConfigHandler:
         if value.startswith('[') and value.endswith(']'):
             return [ConfigHandler.fix_values(item.strip()) for item in re.findall(r'<[^>]+>|[^,\s]+', value[1:-1])]
 
+        # Check for integer values
+        if value.isdigit():
+            return int(value)
+
         # Handle boolean values
         lower_value = value.lower()
         if lower_value in ('true', 'yes', '1'):

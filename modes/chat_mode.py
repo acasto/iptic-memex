@@ -42,6 +42,7 @@ class ChatMode(InteractionMode):
                 print()
                 input("Hit Ctrl-C again to quit or Enter to continue.")
                 print()
+                tc.run('chat')  # in case tab completion was modified before the interrupt
                 continue
 
             # Add the question to the chat context

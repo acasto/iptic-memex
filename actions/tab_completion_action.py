@@ -36,22 +36,28 @@ class TabCompletionAction(InteractionAction):
         except IndexError:
             return None
 
-    @staticmethod
-    def path_completer(text, state):
+    def chat_path_completer(self, text, state):
         """
         Enables tab completion for file paths
         """
         if text.startswith('~'):  # if text begins with '~' expand it
             text = os.path.expanduser(text)
-        if os.path.isdir(os.path.dirname(text)):
-            files_and_dirs = [str(Path(os.path.dirname(text)) / x) for x in os.listdir(os.path.dirname(text))]
-        else:  # will catch CWD and empty inputs
-            files_and_dirs = os.listdir(os.getcwd())
 
-        # find the options that match
-        options = [x for x in files_and_dirs if x.startswith(text)]
+        # Get the chats directory
+        chats_directory = self.session.get_params().get('chats_directory', 'chats')
+        chats_directory = os.path.expanduser(chats_directory)
 
-        # return the option at the current state
+        # If the input is empty or just a directory, list files in the chats directory
+        if not text or os.path.isdir(text):
+            directory = chats_directory if not text else text
+            files_and_dirs = [os.path.join(directory, x) for x in os.listdir(directory)]
+        else:
+            directory = os.path.dirname(text) or chats_directory
+            files_and_dirs = [os.path.join(directory, x) for x in os.listdir(directory) if x.startswith(os.path.basename(text))]
+
+        # Filter for chat files (md, txt, pdf)
+        options = [x for x in files_and_dirs if x.endswith(('.md', '.txt', '.pdf')) or os.path.isdir(x)]
+
         try:
             return options[state]
         except IndexError:
@@ -59,7 +65,7 @@ class TabCompletionAction(InteractionAction):
 
     def model_completer(self, text, state):
         """
-        Enables tab completion for active modles
+        Enables tab completion for active models
         """
         # build a list from the keys in list_models()
         options = [x for x in self.session.list_models().keys()]
@@ -78,6 +84,27 @@ class TabCompletionAction(InteractionAction):
         # if an element in options starts with text, return it
         try:
             return [x for x in options if x.startswith(text)][state]
+        except IndexError:
+            return None
+
+    @staticmethod
+    def file_path_completer(text, state):
+        """
+        Enables tab completion for file paths
+        """
+        if text.startswith('~'):  # if text begins with '~' expand it
+            text = os.path.expanduser(text)
+        if os.path.isdir(os.path.dirname(text)):
+            files_and_dirs = [str(Path(os.path.dirname(text)) / x) for x in os.listdir(os.path.dirname(text))]
+        else:  # will catch CWD and empty inputs
+            files_and_dirs = os.listdir(os.getcwd())
+
+        # find the options that match
+        options = [x for x in files_and_dirs if x.startswith(text)]
+
+        # return the option at the current state
+        try:
+            return options[state]
         except IndexError:
             return None
 

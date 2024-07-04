@@ -10,7 +10,7 @@ class LoadFileAction(InteractionAction):
 
     def run(self, args: list = None):
         if not args:
-            self.tc.run('path')
+            self.tc.run('file_path')
             while True:
                 filename = input(f"Enter filename (or q to exit): ")
                 if filename == 'q':

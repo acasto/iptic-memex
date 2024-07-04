@@ -1,6 +1,6 @@
 import os
-import anthropic
-from session_handler import APIProvider
+from anthropic import Anthropic
+from session_handler import APIProvider, SessionHandler
 
 
 class AnthropicProvider(APIProvider):
@@ -8,73 +8,134 @@ class AnthropicProvider(APIProvider):
     OpenAI API handler
     """
 
-    def __init__(self, conf):
-        self.conf = conf
-        if 'api_key' in conf:
-            self.api_key = conf['api_key']
-        else:
-            self.api_key = os.environ['ANTHROPIC_API_KEY']
-        self.client = anthropic.Anthropic(api_key=self.api_key)
+    def __init__(self, session: SessionHandler):
+        self.session = session
+        self.params = session.get_params()
 
-    def chat(self, messages):
+        # set the options for the OpenAI API client
+        options = {}
+        if 'api_key' in self.params and self.params['api_key'] is not None:
+            options['api_key'] = self.params['api_key']
+        elif 'ANTHROPIC_API_KEY' in os.environ:
+            options['api_key'] = os.environ['ANTHROPIC_API_KEY']
+        else:
+            options['api_key'] = 'none'  # in case we're using the library for something else but still need something set
+
+        if 'base_url' in self.params and self.params['base_url'] is not None:
+            options['base_url'] = self.params['base_url']
+
+        # Initialize the OpenAI client
+        self.client = Anthropic(**options)
+
+        # List of parameters that can be passed to the OpenAI API that we want to handle automatically
+        self.parameters = [
+            'model',
+            'system',
+            'messages',
+            'max_tokens',
+            'stop_sequences',
+            'metadata',
+            'stream',
+            'temperature',
+            'top_k',
+            'top_p',
+            'tools',
+            'tool_choice',
+
+        ]
+
+        # place to store usage data
+        self.usage = {}
+
+    def chat(self):
         """
         Creates a chat completion request to the OpenAI API
-        :param messages: the message to complete from an interaction handler
         :return: response (str)
         """
         try:
-            response = self.client.messages.create(
-                model=self.conf['model'],
-                system=messages[0]['content'],
-                messages=self.merge_consecutive_users(messages[1:]),
-                temperature=float(self.conf['temperature']),
-                max_tokens=int(self.conf['max_tokens']),
-                stream=bool(self.conf['stream']),
-            )
-            # if in stream mode chain the generator
-            if self.conf['stream']:
+            # Assemble the message from the context
+            messages = self.assemble_message()
+
+            # Loop through the parameters and add them to the list if they are available
+            api_parms = {}
+            for parameter in self.parameters:
+                if parameter in self.params and self.params[parameter] is not None:
+                    api_parms[parameter] = self.params[parameter]
+
+            # Anthropic takes the system prompt as a top level parameter
+            if self.session.get_context('prompt'):
+                # if prompt content is not empty, add it to the API parameters
+                if self.session.get_context('prompt').get()['content']:
+                    api_parms['system'] = self.session.get_context('prompt').get()['content']
+
+            # Add the messages to the API parameters
+            api_parms['messages'] = messages
+
+            # Call the Anthropic API
+            response = self.client.messages.create(**api_parms)
+
+            # if in stream mode chain the generator, else return the text response
+            if 'stream' in api_parms and api_parms['stream'] is True:
                 return response
             else:
-                # return response.content as a string
+                if response.usage is not None:
+                    self.usage['in'] = response.useage.input_tokens
+                    self.usage['out'] = response.usage.output_tokens
                 return response.content[0].text
 
-        # except openai.APIConnectionError as e:
-        #     print("The server could not be reached")
-        #     print(e.__cause__)  # an underlying Exception, likely raised within httpx.
-        # except openai.RateLimitError:
-        #     print("A 429 status code was received; we should back off a bit.")
-        # except openai.APIStatusError as e:
-        #     print("Another non-200-range status code was received")
-        #     print(e.status_code)
-        #     print(e.response)
         finally:
             pass
 
-    def stream_chat(self, messages):
+    def stream_chat(self):
         """
         Use generator chaining to keep the response provider-agnostic
-        :param messages:
         :return:
         """
-        response = self.chat(messages)
+        response = self.chat()
         for event in response:
             if event.type == "content_block_delta":
                 yield event.delta.text
+            if event.type == "message_start":
+                if event.message.usage is not None:
+                    self.usage['in'] = event.message.usage.input_tokens
+                    self.usage['out'] = event.message.usage.output_tokens
+            if event.type == "message_delta":
+                if event.usage is not None:
+                    self.usage['out'] = self.usage['out'] + event.usage.output_tokens
 
-    @staticmethod
-    def merge_consecutive_users(messages):
-        merged_messages = []
-        i = 0
-        while i < len(messages):
-            if messages[i]['role'] == 'user':
-                # Start merging content
-                merged_content = messages[i]['content']
-                i += 1
-                while i < len(messages) and messages[i]['role'] == 'user':
-                    merged_content += ' ' + messages[i]['content']
-                    i += 1
-                merged_messages.append({'role': 'user', 'content': merged_content})
-            else:
-                merged_messages.append(messages[i])
-                i += 1
-        return merged_messages
+    def assemble_message(self) -> list:
+        """
+        Assemble the message from the context
+        :return: message (str)
+        """
+        message = []
+
+        chat = self.session.get_context('chat')
+        if chat is not None:
+            for turn in chat.get():  # go through each turn in the conversation
+                turn_context = ''
+                # if context is in turn and not an empty list
+                if 'context' in turn and turn['context']:
+                    turn_context += "<|project_context|>"
+                    # go through each object and place the contents in tags in the format:
+                    # <|project_context|><|file:file_name|>{file content}<|end_file|><|end_project_context|>
+                    for f in turn['context']:
+                        file = f['context'].get()
+                        turn_context += f"<|file:{file['name']}|>{file['content']}<|end_file|>"
+                    turn_context += "<|end_project_context|>"
+
+                message.append({'role': turn['role'], 'content': turn_context + "\n" + turn['message']})
+        return message
+
+    def get_messages(self):
+        return self.assemble_message()
+
+    def get_usage(self):
+        if self.usage is not None:
+            return {
+                'in': self.usage['in'],
+                'out': self.usage['out'],
+                'total': self.usage['in'] + self.usage['out']
+            }
+        else:
+            return "No usage data available"
