@@ -8,12 +8,12 @@ class FileContext(InteractionContext):
     Class for handling files that go into context
     """
 
-    def __init__(self, conf, file=None):
+    def __init__(self, session, file=None):
         """
         Initialize the file context
-        :param file: the data to process
+        :param file:
         """
-        self.conf = conf  # ConfigHandler object
+        self.session = session
         self.file = {}  # dictionary to hold the file name and content
         self.proces_file(file)
 

@@ -134,7 +134,7 @@ class SessionHandler:
         # Add the context to the session under self.session[context_type]
         if context_type not in self.session_state['context']:
             self.session_state['context'][context_type] = []
-        self.session_state['context'][context_type].append(context_class(self.conf, context_data))
+        self.session_state['context'][context_type].append(context_class(self, context_data))
 
     def remove_context_type(self, context_type: str):
         """

@@ -256,4 +256,3 @@ class ConfigHandler:
 
         # Return as is for other cases
         return value
-

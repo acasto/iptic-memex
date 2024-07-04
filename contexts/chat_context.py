@@ -3,10 +3,11 @@ from datetime import datetime
 
 
 class ChatContext(InteractionContext):
-    def __init__(self, conf, session=None):
-        self.conf = conf  # ConfigHandler object
+    def __init__(self, session, context_data=None):
+        self.context_data = context_data
         self.session = session
         self.conversation = []  # list to hold the file name and content
+        self.params = session.get_params()
 
     def add(self, message, role='user', context=None):
         if message is None:
@@ -23,7 +24,25 @@ class ChatContext(InteractionContext):
                 turn['context'] = [context]
         self.conversation.append(turn)
 
-    def get(self):
+    def get(self, mode=None):
+        if mode == "all":
+            return self.conversation
+
+        context_sent = self.params.get('context_sent', 'all')
+        if context_sent == 'none':
+            return []
+        elif context_sent == 'all':
+            return self.conversation
+        else:
+            parts = context_sent.split('_')
+            if len(parts) == 2 and parts[1].isdigit():
+                n = int(parts[1])
+                if parts[0] == 'first':
+                    return self.conversation[:n]
+                elif parts[0] == 'last':
+                    return self.conversation[-n:]
+
+        # Default to returning all if the option is not recognized
         return self.conversation
 
     def clear(self):
@@ -81,7 +100,7 @@ class ChatContext(InteractionContext):
         :return: formatted conversation string
         """
         formatted = ""
-        for turn in self.conversation:
+        for turn in self.get():
             label = user_label if turn['role'] == 'user' else response_label
             formatted += f"{label} {turn['message']}\n\n"
         return formatted
