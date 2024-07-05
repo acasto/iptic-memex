@@ -31,6 +31,10 @@ class APIProvider(ABC):
     def get_usage(self) -> Any:
         pass
 
+    @abstractmethod
+    def reset_usage(self) -> Any:
+        pass
+
 
 # The InteractionMode class is an abstract class that defines the methods that interactions modes
 # like chat, ask, and completion must implement to work.

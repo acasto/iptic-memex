@@ -139,3 +139,6 @@ class AnthropicProvider(APIProvider):
             }
         else:
             return "No usage data available"
+
+    def reset_usage(self):
+        self.usage = {}

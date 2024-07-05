@@ -38,7 +38,7 @@ class TabCompletionAction(InteractionAction):
 
     def chat_path_completer(self, text, state):
         """
-        Enables tab completion for file paths
+        Enables tab completion for chat session file paths
         """
         if text.startswith('~'):  # if text begins with '~' expand it
             text = os.path.expanduser(text)

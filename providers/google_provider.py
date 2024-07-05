@@ -48,7 +48,6 @@ class GoogleProvider(APIProvider):
             else:
                 params['max_tokens'] = 150
 
-
             # Call the Google generative chat API
             response = self.gchat.send_message(
                 messages[-1]['content'],
@@ -106,9 +105,7 @@ class GoogleProvider(APIProvider):
         return self.assemble_message()
 
     def get_usage(self):
-        if self.usage is not None:
-            return {
-                'in': self.usage.prompt_tokens,
-                'out': self.usage.completion_tokens,
-                'total': self.usage.total_tokens
-            }
+        pass
+
+    def reset_usage(self):
+        pass

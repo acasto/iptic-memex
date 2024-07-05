@@ -194,6 +194,8 @@ class ManageChatsAction(InteractionAction):
             try:
                 self._load_chat_from_file(full_path)
                 print(f"Chat loaded from {full_path}")
+                self.session.get_action('ui').reprint_conversation()
+
             except Exception as e:
                 print(f"Error loading chat: {str(e)}")
         else:

@@ -24,9 +24,17 @@ class ProcessSubcommandsAction(InteractionAction):
                 "description": "Load a file into the context",
                 "function": {"type": "action", "name": "load_file"},
             },
+            "load code": {
+                "description": "Load code into the context",
+                "function": {"type": "action", "name": "fetch_code_snippet"},
+            },
             "load web": {
                 "description": "Load a web page into the context",
                 "function": {"type": "action", "name": "fetch_from_web"},
+            },
+            "load soup": {
+                "description": "Fetch content from web with BeautifulSoup",
+                "function": {"type": "action", "name": "fetch_from_soup"},
             },
             "load search": {
                 "description": "Search the web",
@@ -48,13 +56,13 @@ class ProcessSubcommandsAction(InteractionAction):
                 "description": "Remove the first message (optional number of messages)",
                 "function": {"type": "action", "name": "clear_chat", "args": "first"},
             },
-            "clear screen": {
+            "clear": {
                 "description": "Clear the screen",
                 "function": {"type": "action", "name": "clear_chat", "args": "screen"},
             },
-            "cls": {
-                "description": "Clear the screen",
-                "function": {"type": "action", "name": "clear_chat", "args": "screen"},
+            "reprint": {
+                "description": "Reprint the conversation",
+                "function": {"type": "action", "name": "ui", "args": "reprint"},
             },
             "show settings": {
                 "description": "List all settings",
@@ -91,7 +99,7 @@ class ProcessSubcommandsAction(InteractionAction):
             "export chat": {
                 "description": "Export the current chat",
                 "function": {"type": "action", "name": "manage_chats", "args": "export"},
-            },
+            }
         }
 
     def run(self, user_input: str = None) -> bool | None:
@@ -127,8 +135,15 @@ class ProcessSubcommandsAction(InteractionAction):
 
     def handle_help(self):
         print("Commands:")
-        for command, details in self.commands.items():
-            print(f"{command} - {details['description']}")
+        # Find the longest command to determine column width
+        max_command_length = max(len(command) for command in self.commands)
+
+        # Sort commands alphabetically
+        sorted_commands = sorted(self.commands.items())
+
+        for command, details in sorted_commands:
+            # Use f-string with padding to align columns
+            print(f"{command:<{max_command_length + 2}} - {details['description']}")
         print()
 
     def handle_quit(self):

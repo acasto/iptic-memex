@@ -9,3 +9,5 @@ bs4
 beautifulsoup4
 tiktoken
 reportlab
+trafilatura
+

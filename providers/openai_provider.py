@@ -152,3 +152,6 @@ class OpenAIProvider(APIProvider):
                 'out': self.usage.completion_tokens,
                 'total': self.usage.total_tokens
             }
+
+    def reset_usage(self):
+        self.usage = None
