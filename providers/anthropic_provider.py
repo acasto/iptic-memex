@@ -45,7 +45,7 @@ class AnthropicProvider(APIProvider):
         ]
 
         # place to store usage data
-        self.usage = {}
+        self.usage = None
 
     def chat(self):
         """
