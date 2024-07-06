@@ -42,4 +42,3 @@ class ShowAction(InteractionAction):
             usage = self.session.get_provider().get_usage()
             print(usage)
             print()
-

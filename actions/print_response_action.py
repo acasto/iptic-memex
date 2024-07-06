@@ -8,6 +8,7 @@ class PrintResponseAction(InteractionAction):
         self.session = session
         self.params = session.get_params()
         self.chat = session.get_context('chat')
+        self.ui = session.get_action('ui')
 
     def run(self):
         """
@@ -16,7 +17,8 @@ class PrintResponseAction(InteractionAction):
         # Refresh the params
         self.params = self.session.get_params()
         # Start the response
-        print(f"{self.params['response_label']} ", end='', flush=True)
+        response_label = self.ui.color_wrap(self.params['response_label'], self.params['response_label_color'])
+        print(f"{response_label} ", end='', flush=True)
         # if we are in stream mode, iterate through the stream of events
         if self.params['stream'] is True:
             accumulator = ''

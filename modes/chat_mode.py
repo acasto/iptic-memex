@@ -19,6 +19,7 @@ class ChatMode(InteractionMode):
         tc = self.session.get_action('tab_completion')
         sc = self.session.get_action('process_subcommands')
         pc = self.session.get_action('process_contexts')
+        ui = self.session.get_action('ui')
         response = self.session.get_action('print_response')
 
         # Start the chat session loop
@@ -30,7 +31,8 @@ class ChatMode(InteractionMode):
 
             try:
                 # Get the users input
-                user_input = input(f"{self.params['user_label']} ")
+                user_label = ui.color_wrap(self.params['user_label'], self.params['user_label_color'])
+                user_input = input(f"{user_label} ")
                 print()
 
                 # Process any subcommands (will return True if no subcommands are found)
@@ -40,7 +42,7 @@ class ChatMode(InteractionMode):
             except (KeyboardInterrupt, EOFError):
                 # make sure user really wants to quit
                 print()
-                input("Hit Ctrl-C again to quit or Enter to continue.")
+                input(ui.color_wrap("Hit Ctrl-C again to quit or Enter to continue.", 'red'))
                 print()
                 tc.run('chat')  # in case tab completion was modified before the interrupt
                 continue

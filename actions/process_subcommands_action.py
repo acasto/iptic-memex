@@ -28,6 +28,10 @@ class ProcessSubcommandsAction(InteractionAction):
                 "description": "Load code into the context",
                 "function": {"type": "action", "name": "fetch_code_snippet"},
             },
+            "load multiline": {
+                "description": "Load multiple lines of text into the context",
+                "function": {"type": "action", "name": "load_multiline"},
+            },
             "load web": {
                 "description": "Load a web page into the context",
                 "function": {"type": "action", "name": "fetch_from_web"},
@@ -147,7 +151,8 @@ class ProcessSubcommandsAction(InteractionAction):
         print()
 
     def handle_quit(self):
-        user_input = input("Hit Ctrl-C or enter 'y' to quit: ")
+        ui = self.session.get_action('ui')
+        user_input = input(ui.color_wrap("Hit Ctrl-C or enter 'y' to quit: ", "red"))
         if user_input.lower() == 'y':
             print()
             quit()

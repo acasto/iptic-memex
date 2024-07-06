@@ -27,7 +27,7 @@ class AnthropicProvider(APIProvider):
         # Initialize the OpenAI client
         self.client = Anthropic(**options)
 
-        # List of parameters that can be passed to the OpenAI API that we want to handle automatically
+        # List of parameters that can be passed to the API that we want to handle automatically
         self.parameters = [
             'model',
             'system',
@@ -45,7 +45,7 @@ class AnthropicProvider(APIProvider):
         ]
 
         # place to store usage data
-        self.usage = None
+        self.usage = {}
 
     def chat(self):
         """
