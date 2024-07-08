@@ -2,6 +2,11 @@ from session_handler import InteractionAction
 import os
 import sys
 import time
+import re
+from pygments import highlight
+from pygments.lexers import get_lexer_by_name, guess_lexer
+from pygments.formatters import TerminalFormatter
+from pygments.util import ClassNotFound
 
 
 class UiAction(InteractionAction):
@@ -40,7 +45,10 @@ class UiAction(InteractionAction):
             params['user_label'],
             params['response_label']
         )
-        print(formatted_conversation)
+        if self.session.get_params()['highlighting']:
+            print(self.format_code_block(formatted_conversation))
+        else:
+            print(formatted_conversation)
 
     @staticmethod
     def clear_screen():
@@ -150,3 +158,34 @@ class UiAction(InteractionAction):
         """
         colored_text = UiAction.return_color(format_string, *args, **kwargs)
         print(colored_text, end=end)
+
+    @staticmethod
+    def format_code_block(text):
+        def highlight_block(block):
+            match = re.match(r"^```(\w+)?\n(.*?)\n?```$", block, re.DOTALL)
+            if match:
+                language = match.group(1)
+                code_content = match.group(2)
+            else:
+                return block  # Not a code block, return as is
+
+            try:
+                if language:
+                    lexer = get_lexer_by_name(language, startinline=(language.lower() == "php"))
+                else:
+                    lexer = guess_lexer(code_content)
+            except ClassNotFound:
+                lexer = get_lexer_by_name("text", stripall=True)
+
+            formatter = TerminalFormatter()
+            highlighted_code = highlight(code_content, lexer, formatter)
+            return f"```{language or ''}\n{highlighted_code}```"
+
+        # Split the text into code blocks and non-code blocks
+        parts = re.split(r'(```[\s\S]*?```)', text)
+
+        # Process each part
+        formatted_parts = [highlight_block(part) if part.startswith('```') else part for part in parts]
+
+        # Join the parts back together
+        return ''.join(formatted_parts)
