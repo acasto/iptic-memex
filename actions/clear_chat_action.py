@@ -44,7 +44,7 @@ class ClearChatAction(InteractionAction):
         chat_context = self.session.get_context('chat')
         if chat_context.remove_last_message():
             print(f"Last message removed.\n")
-            self.ui.reprint_conversation()
+            self.session.get_action('reprint_conversation').run()
         else:
             print(f"No messages to remove.\n")
 
@@ -56,7 +56,7 @@ class ClearChatAction(InteractionAction):
         removed = chat_context.remove_messages(n)
         if removed > 0:
             print(f"Last {removed} message(s) removed.\n")
-            self.ui.reprint_conversation()
+            self.session.get_action('reprint_conversation').run()
         else:
             print(f"No messages to remove.\n")
 
@@ -67,7 +67,7 @@ class ClearChatAction(InteractionAction):
         chat_context = self.session.get_context('chat')
         if chat_context.remove_first_message():
             print(f"First message removed.\n")
-            self.ui.reprint_conversation()
+            self.session.get_action('reprint_conversation').run()
         else:
             print(f"No messages to remove.\n")
 
@@ -79,6 +79,6 @@ class ClearChatAction(InteractionAction):
         removed = chat_context.remove_first_messages(n)
         if removed > 0:
             print(f"First {removed} message(s) removed.\n")
-            self.ui.reprint_conversation()
+            self.session.get_action('reprint_conversation').run()
         else:
             print(f"No messages to remove.\n")

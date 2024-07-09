@@ -31,24 +31,6 @@ class UiAction(InteractionAction):
     def run(self, args=None):
         if args is None:
             args = []
-        if len(args) > 0 and args[0] == 'reprint':
-            self.reprint_conversation()
-
-    def reprint_conversation(self):
-        """
-        Clear the screen and reprint the conversation
-        """
-        self.clear_screen()
-        chat_context = self.session.get_context('chat')
-        params = self.session.get_params()
-        formatted_conversation = chat_context.get_formatted_conversation(
-            params['user_label'],
-            params['response_label']
-        )
-        if self.session.get_params()['highlighting']:
-            print(self.format_code_block(formatted_conversation))
-        else:
-            print(formatted_conversation)
 
     @staticmethod
     def clear_screen():

@@ -54,4 +54,4 @@ class PrintResponseAction(InteractionAction):
 
         # Reprint conversation if code block is detected
         if code_block_detected and self.params['highlighting'] is True:
-            self.ui.reprint_conversation()
+            self.session.get_action('reprint_chat').run()

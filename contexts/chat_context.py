@@ -92,16 +92,4 @@ class ChatContext(InteractionContext):
             return removed
         return 0
 
-    def get_formatted_conversation(self, user_label, response_label):
-        """
-        Return a formatted string of the conversation.
-        :param user_label: label for user messages
-        :param response_label: label for assistant messages
-        :return: formatted conversation string
-        """
-        formatted = ""
-        for turn in self.get():
-            label = user_label if turn['role'] == 'user' else response_label
-            formatted += f"{label} {turn['message']}\n\n"
-        return formatted
     

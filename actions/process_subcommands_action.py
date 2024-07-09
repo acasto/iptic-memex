@@ -66,7 +66,7 @@ class ProcessSubcommandsAction(InteractionAction):
             },
             "reprint": {
                 "description": "Reprint the conversation",
-                "function": {"type": "action", "name": "ui", "args": "reprint"},
+                "function": {"type": "action", "name": "reprint_chat"},
             },
             "show settings": {
                 "description": "List all settings",
