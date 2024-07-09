@@ -24,8 +24,9 @@ class ChatContext(InteractionContext):
                 turn['context'] = [context]
         self.conversation.append(turn)
 
-    def get(self, mode=None):
-        if mode == "all":
+    def get(self, args=None):
+        # Return the entire conversation
+        if args == "all":
             return self.conversation
 
         context_sent = self.params.get('context_sent', 'all')

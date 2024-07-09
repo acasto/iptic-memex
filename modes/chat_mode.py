@@ -27,8 +27,7 @@ class ChatMode(InteractionMode):
         while True:
 
             # process the contexts first
-            contexts = pc.run()
-
+            contexts = pc.process_contexts_for_user()
             try:
                 # Get the users input
                 user_label = ui.color_wrap(self.params['user_label'], self.params['user_label_color'])

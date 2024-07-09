@@ -20,6 +20,10 @@ class ProcessSubcommandsAction(InteractionAction):
                 "description": "Quit the chat",
                 "function": {"type": "method", "name": "handle_quit"}
             },
+            "load project": {
+                "description": "Load a project",
+                "function": {"type": "action", "name": "load_project"}
+            },
             "load file": {
                 "description": "Load a file into the context",
                 "function": {"type": "action", "name": "load_file"},
