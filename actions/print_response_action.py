@@ -9,6 +9,7 @@ class PrintResponseAction(InteractionAction):
         self.params = session.get_params()
         self.chat = session.get_context('chat')
         self.ui = session.get_action('ui')
+        self.sc = session.get_action('assistant_subcommands')
 
     def run(self):
         """
@@ -20,7 +21,7 @@ class PrintResponseAction(InteractionAction):
         response_label = self.ui.color_wrap(self.params['response_label'], self.params['response_label_color'])
         print(f"{response_label} ", end='', flush=True)
 
-        code_block_detected = False
+        response = ''
         accumulator = ''
 
         # if we are in stream mode, iterate through the stream of events
@@ -31,27 +32,24 @@ class PrintResponseAction(InteractionAction):
                     for event in response:
                         print(event, end='', flush=True)
                         accumulator += event
-                        if '```' in event:
-                            code_block_detected = True
                         if 'stream_delay' in self.params:
                             time.sleep(float(self.params['stream_delay']))
             except (KeyboardInterrupt, EOFError):
                 pass
             print()
-            self.chat.add(accumulator, 'assistant')
+            response = accumulator
 
         # else just print the response
         else:
             try:
                 response = self.session.get_provider().chat()
                 print(response)
-                accumulator = response
-                self.chat.add(response, 'assistant')
-                if '```' in response:
-                    code_block_detected = True
+                # if '```' in response:
+                #     code_block_detected = True
+
             except (KeyboardInterrupt, EOFError):
                 print()
 
-        # Reprint conversation if code block is detected
-        if code_block_detected and self.params['highlighting'] is True:
-            self.session.get_action('reprint_chat').run()
+        # Add the response to the chat and process for subcommands
+        self.chat.add(response, 'assistant')
+        self.sc.run(response)

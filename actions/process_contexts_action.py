@@ -45,7 +45,7 @@ class ProcessContextsAction(InteractionAction):
             else:
                 is_project = True
                 project = f['context'].get()
-                turn_context += (f"<|project_notes|>\nProject Name: {project['name']}\nProject Notes: {project['content']}\n<|end_project_notes|>")
+                turn_context += f"<|project_notes|>\nProject Name: {project['name']}\nProject Notes: {project['content']}\n<|end_project_notes|>"
 
         if is_project:
             turn_context = "<|project_context>" + turn_context + "<|end_project_context|>"
@@ -66,5 +66,4 @@ class ProcessContextsAction(InteractionAction):
             if context_type != 'prompt' and context_type != 'chat':  # Ignore the prompt and chat contexts
                 for idx, context in enumerate(session.get_context(context_type)):
                     contexts.append({'type': context_type, 'idx': idx, 'context': context})
-                # contexts.extend(session.get_context(context))  # build one big context list for chat turn
         return contexts
