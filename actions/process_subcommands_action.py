@@ -96,9 +96,21 @@ class ProcessSubcommandsAction(InteractionAction):
                 "description": "Save the current chat",
                 "function": {"type": "action", "name": "manage_chats", "args": "save"},
             },
+            "save last": {
+                "description": "Save the last message",
+                "function": {"type": "action", "name": "manage_chats", "args": ["save", False, "last"]},
+            },
+            "save full": {
+                "description": "Save the full conversation and context",
+                "function": {"type": "action", "name": "manage_chats", "args": ["save", "full"]},
+            },
             "load chat": {
                 "description": "Load a saved chat",
                 "function": {"type": "action", "name": "manage_chats", "args": "load"},
+            },
+            "save code": {
+                "description": "Save a code snippet",
+                "function": {"type": "action", "name": "save_code"},
             },
             "list chats": {
                 "description": "List saved chats",

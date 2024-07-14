@@ -41,11 +41,11 @@ class ProcessContextsAction(InteractionAction):
         for f in contexts:
             if f['type'] != 'project':
                 file = f['context'].get()
-                turn_context += f"<|file:{file['name']}|>{file['content']}<|end_file|>"
+                turn_context += f"<|file:{file['name']}|>\n{file['content']}\n<|end_file|>\n"
             else:
                 is_project = True
                 project = f['context'].get()
-                turn_context += f"<|project_notes|>\nProject Name: {project['name']}\nProject Notes: {project['content']}\n<|end_project_notes|>"
+                turn_context += f"<|project_notes|>\nProject Name: {project['name']}\nProject Notes: {project['content']}\n<|end_project_notes|>\n"
 
         if is_project:
             turn_context = "<|project_context>" + turn_context + "<|end_project_context|>"

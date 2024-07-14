@@ -1,6 +1,7 @@
 from session_handler import InteractionAction
 
 
+# noinspection RegExpDuplicateCharacterInClass
 class AssistantSubcommandsAction(InteractionAction):
 
     def __init__(self, session):
@@ -10,7 +11,9 @@ class AssistantSubcommandsAction(InteractionAction):
         if '```' in response:
             self.session.get_action('reprint_chat').run()
         if '###DATETIME###' in response:
-            # add the date and time to the assistant context
-            from datetime import datetime
-            timestamp = "Current date and time: " + datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
-            self.session.add_context('assistant', {'name': 'assistant_context', 'content': timestamp})
+            import re
+            if not re.search(r"['\"'`]###DATETIME###['\"'`]", response):
+                # add the date and time to the assistant context
+                from datetime import datetime
+                timestamp = "Current date and time: " + datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
+                self.session.add_context('assistant', {'name': 'assistant_context', 'content': timestamp})

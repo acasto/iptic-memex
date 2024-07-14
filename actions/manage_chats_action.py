@@ -21,7 +21,9 @@ class ManageChatsAction(InteractionAction):
 
         command = args[0]
         if command == "save":
-            self.save_chat()
+            include_context = args[1] == "full" if len(args) > 1 else False
+            turns = args[2] if len(args) > 2 else None
+            self.save_chat(include_context, turns)
         elif command == "load":
             self.load_chat()
         elif command == "list":
@@ -32,7 +34,7 @@ class ManageChatsAction(InteractionAction):
         else:
             print(f"Unknown command: {command}")
 
-    def save_chat(self):
+    def save_chat(self, include_context=False, turns=None):
         self.tc.run("chat_path")
         chat_format = self.params.get('chat_format', 'md')
         default_filename = f"chat_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.{chat_format}"
@@ -72,7 +74,7 @@ class ManageChatsAction(InteractionAction):
 
         if full_path:
             try:
-                self._save_chat_to_file(full_path)
+                self._save_chat_to_file(full_path, include_context, turns)
                 print(f"Chat saved to {full_path}")
             except Exception as e:
                 print(f"Error saving chat: {str(e)}")
@@ -125,9 +127,9 @@ class ManageChatsAction(InteractionAction):
 
         self.tc.run("chat")  # Reset tab completion
 
-    def _save_chat_to_file(self, filename):
+    def _save_chat_to_file(self, filename, include_context=False, turns=None):
         chat_format = os.path.splitext(filename)[1][1:]
-        content = self._format_chat_content(chat_format)
+        content = self._format_chat_content(chat_format, include_context, turns)
 
         if chat_format in ['md', 'txt']:
             with open(filename, "w", encoding="utf-8") as f:
@@ -135,21 +137,36 @@ class ManageChatsAction(InteractionAction):
         elif chat_format == 'pdf':
             self._save_as_pdf(filename, content)
 
-    def _format_chat_content(self, chat_format):
+    def _format_chat_content(self, chat_format, include_context=False, turns=None):
         content = ""
+        if turns == "last" or turns == "1":
+            conversation = self.chat.get()[-1:]
+        else:
+            conversation = self.chat.get()
+
         if chat_format in ['md', 'txt', 'pdf']:
             content += "Chat Session\n\n"
             content += f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
             content += f"Model: {self.params.get('model', 'Unknown')}\n\n"
             content += "---\n\n"
 
-            for turn in self.chat.get():
+            for turn in conversation:
                 role = turn['role'].capitalize()
                 message = turn['message']
+                turn_context = None
+                if include_context and 'context' in turn and turn['context']:
+                    turn_context = self.session.get_action('process_contexts').process_contexts_for_assistant(turn['context'])
+                    # message = turn_context + "\n\n\n" + message
                 if chat_format == 'md':
-                    content += f"## {role}\n\n{message}\n\n"
+                    if turn_context:
+                        content += f"## {role}\n\n```\n{turn_context}\n```\n\n\n{message}\n\n"
+                    else:
+                        content += f"## {role}\n\n{message}\n\n"
                 else:
-                    content += f"{role}:\n{message}\n\n"
+                    if turn_context:
+                        content += f"{role}:\n\n--------\n{turn_context}\n\n--------\n\n\n{message}\n\n"
+                    else:
+                        content += f"{role}:\n{message}\n\n"
 
         return content
 
@@ -194,7 +211,7 @@ class ManageChatsAction(InteractionAction):
             try:
                 self._load_chat_from_file(full_path)
                 print(f"Chat loaded from {full_path}")
-                self.session.get_action('reprint_conversation').run()
+                self.session.get_action('reprint_chat').run()
 
             except Exception as e:
                 print(f"Error loading chat: {str(e)}")
@@ -217,15 +234,19 @@ class ManageChatsAction(InteractionAction):
         else:
             print(f"Unsupported format for loading: {chat_format}")
 
+    # noinspection PyTypeChecker
     def _parse_chat_content(self, content, chat_format):
         messages = []
         if chat_format == 'md':
-            sections = re.split(r'\n##\s', content)
-            for section in sections[1:]:  # Skip the header section
-                role, message = section.split('\n', 1)
-                messages.append({'role': role.strip().lower(), 'content': message.strip()})
+            sections = re.split(r'\n(?=## (?:User|Assistant))', content)
+            for section in sections:
+                if section.strip():
+                    match = re.match(r'## (User|Assistant)\n(.*)', section, re.DOTALL)
+                    if match:
+                        role, message = match.groups()
+                        messages.append({'role': role.lower(), 'content': message.strip()})
         else:  # txt format
-            pattern = re.compile(r'^(User|Assistant):\n(.*?)\n\n', re.DOTALL | re.MULTILINE)
+            pattern = re.compile(r'^(User|Assistant):\n(.*?)(?=\n(?:User|Assistant):|$)', re.DOTALL | re.MULTILINE)
             for match in pattern.finditer(content):
                 role, message = match.groups()
                 messages.append({'role': role.lower(), 'content': message.strip()})
