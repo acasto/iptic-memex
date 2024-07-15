@@ -145,6 +145,8 @@ The `load multiline` command allows you to add multiple lines of text to the con
 
 Now that LLMs are getting better at producing functional code, the ability to save a code block instead of just copying it out is useful. The `save code` command will extract code blocks from the most recent assistant reponse and provide a file save dialog. (`save code <n>` can be used to parse the last-n responses). If multiple code blocks are present you will be presented with a choice of which to save.
 
+![Imgur Image](https://i.imgur.com/U8Tzg4Y.png)
+
 ### Projects
 
 The project context (`load project`) causes the other contexts (e.g. file, web, multiline, etc.) to be wrapped in a common project context tags with a project name and project notes. You can add these other contexts from the `load project` dialog.
