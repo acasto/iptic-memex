@@ -19,13 +19,19 @@ envisioned a device that would compress and store all of their knowledge. https:
 - **Context Management**:
   - [x] Load files into context in chat and ask modes
   - [x] Fetch and include content from the web
-  - [x] Search the web and load results into context (using Brave Search API)
+  - [x] Search the web and load results into context
   - [x] Easily add multi-line content
   - [x] Select and import parts of Python files
   - [x] Add a project context for encapsulating other contexts
 
 - **Provider Flexibility**:
-  - [x] Supports multiple LLM providers (OpenAI, Anthropic, Google, etc.)
+  - [x] Supports multiple LLM providers. Currently:
+      - OpenAI
+      - Anthropic
+      - Google Gemini
+      - OpenRouter
+      - Llama.cpp via API
+  - [x] OpenAI compatibile providers can be added through conigs, no code changes needed
   - [x] Easy configuration of providers and models through config files
   - [x] Switch between providers and models on the fly
   - [x] Providers can be aliased in the config file for per provider or model settings
@@ -141,7 +147,7 @@ Now that LLMs are getting better at producing functional code, the ability to sa
 
 ### Projects
 
-The project context (`load project`) causes the other contexts (e.g. file, web, multiline, etc) to be wrapped in a common project context tags with a project name and project notes. You can add these other contexts from the `load project` dialog.
+The project context (`load project`) causes the other contexts (e.g. file, web, multiline, etc.) to be wrapped in a common project context tags with a project name and project notes. You can add these other contexts from the `load project` dialog.
 
 **Note:** 
 - Attaching large files can quickly exceed the token limit of your chosen model. Often it can be useful to copy the 

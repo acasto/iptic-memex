@@ -30,8 +30,10 @@ class PromptContext(InteractionContext):
                 return
 
             # if prompt is a file in prompt_directory check and make sure it exists and return it
-            # prompt_directory = self.conf.get_option('DEFAULT', 'prompt_directory')
-            prompt_directory = params.get('prompt_directory')
+            if 'prompt_directory' not in params:
+                prompt_directory = self.session.conf.get_option('DEFAULT', 'prompt_directory')
+            else:
+                prompt_directory = params.get('prompt_directory')
             prompt_file = resolve_file_path(prompt, prompt_directory, '.txt')
             if prompt_file is not None:
                 with open(prompt_file, 'r') as f:
@@ -55,7 +57,6 @@ class PromptContext(InteractionContext):
 
             # if it seems like the user meant to specify a file, but it doesn't exist, raise an error
             if prompt.endswith('.txt') or ' ' not in prompt:
-                # raise FileNotFoundError(f'Could not find the prompt file at {prompt}')
                 print(f"\nCould not find the prompt file: {prompt}\n")
                 sys.exit(1)
 

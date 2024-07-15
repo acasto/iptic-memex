@@ -74,9 +74,6 @@ def ask(ctx, file):
         for f in file:
             session.add_context('file', f)
 
-    if len(url) > 0:
-        pass
-
     # call the completion handler since we're in ask mode
     session.start_mode("ask")
     return
@@ -84,11 +81,8 @@ def ask(ctx, file):
 
 @cli.command()
 @click.pass_context
-@click.option('-s', '--session', 'load_chat', default='', type=click.Path(), help="Load a saved chat session from a file")
 @click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
-@click.option('--id', 'css_id', help='CSS ID selector of text to scrape from URL')
-@click.option('--class', 'css_class', help='CSS class selector of text to scrape from URL')
-def chat(ctx, load_chat, file, css_id, css_class):
+def chat(ctx, file):
     session = ctx.obj['SESSION']
 
     # if we have files to read in, do that now
@@ -96,9 +90,6 @@ def chat(ctx, load_chat, file, css_id, css_class):
         # loop through the files and read them in appending the content to the message
         for f in file:
             session.add_context('file', f)
-
-    if load_chat:
-        pass
 
     session.start_mode("chat")
     return
