@@ -66,10 +66,7 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file
 @cli.command()
 @click.pass_context
 @click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
-@click.option('-u', '--url', multiple=True, help='URL to include in prompt (ask questions about URL)')
-@click.option('--id', 'css_id', help='CSS ID selector of text to scrape from URL')
-@click.option('--class', 'css_class', help='CSS class selector of text to scrape from URL')
-def ask(ctx, file, url, css_id, css_class):
+def ask(ctx, file):
     session = ctx.obj['SESSION']
     # if we have files to read in, do that now
     if len(file) > 0:
@@ -89,19 +86,16 @@ def ask(ctx, file, url, css_id, css_class):
 @click.pass_context
 @click.option('-s', '--session', 'load_chat', default='', type=click.Path(), help="Load a saved chat session from a file")
 @click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
-@click.option('-u', '--url', multiple=True, help='URL to include in prompt (ask questions about URL)')
 @click.option('--id', 'css_id', help='CSS ID selector of text to scrape from URL')
 @click.option('--class', 'css_class', help='CSS class selector of text to scrape from URL')
-def chat(ctx, load_chat, file, url, css_id, css_class):
+def chat(ctx, load_chat, file, css_id, css_class):
     session = ctx.obj['SESSION']
+
     # if we have files to read in, do that now
     if len(file) > 0:
         # loop through the files and read them in appending the content to the message
         for f in file:
             session.add_context('file', f)
-
-    if len(url) > 0:
-        pass
 
     if load_chat:
         pass
