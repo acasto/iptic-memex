@@ -31,7 +31,7 @@ envisioned a device that would compress and store all of their knowledge. https:
       - Google Gemini
       - OpenRouter
       - Llama.cpp via API
-  - [x] OpenAI compatibile providers can be added through conigs, no code changes needed
+  - [x] OpenAI compatibile providers can be added through configs, no code changes needed
   - [x] Easy configuration of providers and models through config files
   - [x] Switch between providers and models on the fly
   - [x] Providers can be aliased in the config file for per provider or model settings
@@ -119,6 +119,24 @@ These commands provide extensive control over the chat environment, allowing you
 - `config.ini`: Main configuration file
 - `models.ini`: Detailed model information and settings
 - User-specific configurations can be added in `~/.config/iptic-memex/config.ini` and `~/.config/iptic-memex/models.ini`
+
+## Add an OpenAI compatible provider
+
+To add a new OpenAI compatible provider, just add a section to config.ini in the following format along with any other settings you may want to override. 
+```
+[provider_name]
+alias = OpenAI
+base_url = <the provider's base URL>
+```
+Then you just need to add the models to models.ini like so:
+```
+[model short name]
+provider = <the provider you setup>
+model_name = <the full official model name>
+context_size = 4096
+response_label = "> My Model: "
+```
+
 
 ### Chat about a file or URL
 
