@@ -1,7 +1,6 @@
 # Description
 
-Iptic Memex is a Python program that offers a straight-forward CLI interface for interacting with LLM providers through
-their APIs. Currently tested with OpenAI, Anthropic, and Google Gemini. Input can be piped in from the command line or entered interactively through 'ask' and 'chat' modes. Chat mode features the ability to save conversations in a human-readable conversation format with a configurable extension for use with external applications such as Obsidian.
+Iptic Memex is a Python program that offers a straight-forward CLI interface for interacting with LLM providers through their APIs. Currently tested with OpenAI, Anthropic, Google Gemini, OpenRouter, and llama.cpp server. Input can be piped in from the command line or entered interactively through 'ask' and 'chat' modes. Chat mode features the ability to save conversations in a human-readable conversation format with a configurable extension for use with external applications such as Obsidian.
 
 The name is a reference to the Memex, a device described by Vannevar Bush in his 1945 essay "As We May Think" which he
 envisioned a device that would compress and store all of their knowledge. https://en.wikipedia.org/wiki/Memex
@@ -56,6 +55,8 @@ envisioned a device that would compress and store all of their knowledge. https:
 # Installation & Usage
 
 ## Basic Usage
+
+*The program is still in development and may have bugs or issues. Please report any problems you encounter.*
 
 - Clone the repository
 `git clone https://github.com/acasto/iptic-memex.git`
@@ -168,14 +169,6 @@ Now that LLMs are getting better at producing functional code, the ability to sa
 ### Projects
 
 The project context (`load project`) causes the other contexts (e.g. file, web, multiline, etc.) to be wrapped in a common project context tags with a project name and project notes. You can add these other contexts from the `load project` dialog.
-
-**Note:** 
-- Attaching large files can quickly exceed the token limit of your chosen model. Often it can be useful to copy the 
-relevant parts into a new file and chat about that instead. For example, a particular function or method. 
-
-- The token count of the attached context is displayed before the first request is sent to the API, giving you a chance to 
-exit before incurring a cost.
-
 
 # Changelog
 
