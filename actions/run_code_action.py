@@ -38,7 +38,9 @@ class RunCodeAction(InteractionAction):
             selected_block = code_blocks[0]
 
         if selected_block:
-            self.run_code_block(selected_block)
+            output = self.run_code_block(selected_block)
+            if output:
+                self.offer_to_save_output(output)
 
     def extract_code_blocks(self, turns):
         code_blocks = []
@@ -79,7 +81,7 @@ class RunCodeAction(InteractionAction):
     def run_code_block(self, code_block):
         if code_block is None:
             print("Code execution cancelled.")
-            return
+            return None
 
         language, code = code_block
         if not language:
@@ -87,7 +89,7 @@ class RunCodeAction(InteractionAction):
 
         if language not in self.supported_languages:
             print(f"Unsupported language: {language}")
-            return
+            return None
 
         print(f"Language: {language}")
         print("Code to be executed:")
@@ -95,7 +97,7 @@ class RunCodeAction(InteractionAction):
         confirm = input("Do you want to run this code? (y/n): ")
         if confirm.lower() != 'y':
             print("Code execution cancelled.")
-            return
+            return None
 
         lang_info = self.supported_languages[language]
         with tempfile.NamedTemporaryFile(mode='w', suffix=lang_info['extension'], delete=False) as temp_file:
@@ -110,12 +112,25 @@ class RunCodeAction(InteractionAction):
             if result.stderr:
                 print("Errors:")
                 print(result.stderr)
+            return f"Stdout:\n{result.stdout}\n\nStderr:\n{result.stderr}"
         except subprocess.TimeoutExpired:
             print("Execution timed out after 30 seconds.")
         except Exception as e:
             print(f"An error occurred: {str(e)}")
         finally:
             os.unlink(temp_file_path)
+
+        return None
+
+    def offer_to_save_output(self, output):
+        save_output = input("Do you want to save this output to context? (y/n): ")
+        if save_output.lower() == 'y':
+            context_name = input("Enter a name for this output context (default: 'Code Output'): ") or "Code Output"
+            self.session.add_context('multiline_input', {
+                'name': context_name,
+                'content': output
+            })
+            print(f"Output saved to context as '{context_name}'")
 
     def guess_language(self, code):
         # Simple language guessing based on common patterns
