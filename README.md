@@ -155,7 +155,7 @@ Note: `load web` uses the trafilatura library to retrieve a more simplified vers
 
 ### Search the web
 
-The `load search` action is currently based on the Breave Search API summarization endpoint and gets added to the context the same as others (e.g. chatting with a file). The API key is set the same as other providers. Support will eventually be added for other search providers and configurations. 
+The `load search` action is currently based on the Breave Search API **summarization** endpoint and gets added to the context the same as others (e.g. chatting with a file). The API key is set the same as other providers. Support will eventually be added for other search providers and configurations. 
 
 ### Multiline Input
 The `load multiline` command allows you to add multiple lines of text to the context. This can be useful for adding code snippets, error messages, or other multi-line content.

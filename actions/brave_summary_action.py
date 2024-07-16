@@ -11,7 +11,11 @@ class BraveSummaryAction(InteractionAction):
         self.session = session
         self.brave = session.conf.get_all_options_from_provider("Brave")
 
+
     def run(self, message=None):
+        if 'api_key' not in self.brave:
+            print(f"API key not found for Brave provider in configuration.\n")
+            return
         while True:
             search = input("Search query (or q to exit): ")
             if search.lower() == "q":
