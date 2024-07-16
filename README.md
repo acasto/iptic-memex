@@ -181,7 +181,14 @@ The project context (`load project`) causes the other contexts (e.g. file, web, 
 
 # Changelog
 
-### 2.0.0 (Current)
+### 2.0.2 (07/16/2024) Current
+- Added the `run code` command with the ability to capture the output for iterative troubleshooting
+ 
+### 2.0.1 (07/15/2024)
+- Minor bug fixes and improvements in error handling
+- Updated README with new features and examples
+
+### 2.0.0 (07/15/2024)
 - Implemented a more extensible architecture with a revamped provider system
 - Introduced modular actions and contexts for easier functionality extension
 - Enhanced support for multiple LLM providers (OpenAI, Anthropic, Google)
