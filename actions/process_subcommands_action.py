@@ -119,7 +119,11 @@ class ProcessSubcommandsAction(InteractionAction):
             "export chat": {
                 "description": "Export the current chat",
                 "function": {"type": "action", "name": "manage_chats", "args": "export"},
-            }
+            },
+            "run code": {
+                "description": "Run code from the chat",
+                "function": {"type": "action", "name": "run_code"},
+            },
         }
 
     def run(self, user_input: str = None) -> bool | None:
