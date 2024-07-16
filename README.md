@@ -169,7 +169,7 @@ Now that LLMs are getting better at producing functional code, the ability to sa
 
 ### Running code blocks
 
-~BE CAREFUL WITH THIS COMMAND~
+⚠️ BE CAREFUL WITH THIS COMMAND
 
 The `run code` command will extract code blocks from the most recent assistant response and run them in the current Python environment. It currently supports Python or Bash code blocks and will ask for confirmation before running.(`run code <n>` can be used to parse the last-n responses). If multiple code blocks are present you will be presented with a choice of which to run.
 
