@@ -109,6 +109,7 @@ While in chat mode, you can use the following commands:
 - `save last`: Save only the last message of the chat
 - `save full`: Save the full conversation including context
 - `save code`: Extract and save code blocks from the conversation
+- `run code`: Extract and run code blocks from the conversation
 - `load chat`: Load a previously saved chat session
 - `list chats`: Display a list of all saved chat sessions
 - `export chat`: Export the current chat in a specified format
@@ -165,6 +166,12 @@ The `load multiline` command allows you to add multiple lines of text to the con
 Now that LLMs are getting better at producing functional code, the ability to save a code block instead of just copying it out is useful. The `save code` command will extract code blocks from the most recent assistant reponse and provide a file save dialog. (`save code <n>` can be used to parse the last-n responses). If multiple code blocks are present you will be presented with a choice of which to save.
 
 ![Imgur Image](https://i.imgur.com/U8Tzg4Y.png)
+
+### Running code blocks
+
+~BE CAREFUL WITH THIS COMMAND~
+
+The `run code` command will extract code blocks from the most recent assistant response and run them in the current Python environment. It currently supports Python or Bash code blocks and will ask for confirmation before running.(`run code <n>` can be used to parse the last-n responses). If multiple code blocks are present you will be presented with a choice of which to run.
 
 ### Projects
 
