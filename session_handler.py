@@ -186,6 +186,11 @@ class SessionHandler:
         self.session_state['params'] = {}
         self.session_state['provider'] = None
 
+        # let the user no if no providers are available
+        if not self.conf.list_providers():
+            print(f"\nNo active providers available. Check the config file.\n")
+            quit()
+
         # if model is not set, use the default model
         if 'model' not in self.user_options:
             self.session_state['params']['model'] = self.conf.normalize_model_name(
