@@ -173,6 +173,8 @@ Now that LLMs are getting better at producing functional code, the ability to sa
 
 The `run code` command will extract code blocks from the most recent assistant response and run them in the current Python environment. It currently supports Python or Bash code blocks and will ask for confirmation before running.(`run code <n>` can be used to parse the last-n responses). If multiple code blocks are present you will be presented with a choice of which to run.
 
+After running the command you will have the option to capture the output to a multiline context to feed back to the model for iterative troubleshooting. 
+
 ### Projects
 
 The project context (`load project`) causes the other contexts (e.g. file, web, multiline, etc.) to be wrapped in a common project context tags with a project name and project notes. You can add these other contexts from the `load project` dialog.
