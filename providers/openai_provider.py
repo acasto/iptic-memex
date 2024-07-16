@@ -22,6 +22,14 @@ class OpenAIProvider(APIProvider):
         else:
             options['api_key'] = 'none'  # in case we're using the library for something else but still need something set
 
+        # Quick hack to provide a simple and clear message if someone clones the repo and forgets to set the API key
+        # since OpenAI will probably be the most common provider. Will still error out on other providers that require
+        # an API key though until we figure out a better way to handle  this (issue is above where we set it to none
+        # so that it still works with local providers that don't require an API key)
+        if self.params['provider'].lower() == 'openai' and options['api_key'] == 'none':
+            print(f"\nOpenAI API Key is required\n")
+            quit()
+
         if 'base_url' in self.params and self.params['base_url'] is not None:
             options['base_url'] = self.params['base_url']
 
