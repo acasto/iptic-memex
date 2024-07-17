@@ -19,7 +19,6 @@ class ReprintChatAction(InteractionAction):
 
         formatted = ""
         for turn in chat.get():
-            # label = params['user_label'] if turn['role'] == 'user' else params['response_label']
             if turn['role'] == 'user':
                 label = ui.color_wrap(params['user_label'], params['user_label_color'])
             else:

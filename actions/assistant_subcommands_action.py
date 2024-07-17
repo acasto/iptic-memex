@@ -6,10 +6,12 @@ class AssistantSubcommandsAction(InteractionAction):
 
     def __init__(self, session):
         self.session = session
+        self.params = session.get_params()
 
     def run(self, response: str = None):
         if '```' in response:
-            self.session.get_action('reprint_chat').run()
+            if 'highlighting' in self.params and self.params['highlighting'] is True:
+                self.session.get_action('reprint_chat').run()
         if '###DATETIME###' in response:
             import re
             if not re.search(r"['\"'`]###DATETIME###['\"'`]", response):
