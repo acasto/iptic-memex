@@ -124,6 +124,10 @@ class ProcessSubcommandsAction(InteractionAction):
                 "description": "Run code from the chat",
                 "function": {"type": "action", "name": "run_code"},
             },
+            "run command": {
+                "description": "Run a command",
+                "function": {"type": "action", "name": "run_command"},
+            },
         }
 
     def run(self, user_input: str = None) -> bool | None:

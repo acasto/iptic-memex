@@ -47,6 +47,8 @@ envisioned a device that would compress and store all of their knowledge. https:
   - [x] Syntax highlighting for code blocks in chat
   - [x] Token usage tracking and context management
   - [x] Tab completion for file paths, commands, and settings
+  - [x] Run code blocks from responses and capture the output
+  - [x] Run your own shell commands and capture the output
 
 - **Extensibility**:
   - [x] Modular action system for easy feature additions
@@ -110,6 +112,7 @@ While in chat mode, you can use the following commands:
 - `save full`: Save the full conversation including context
 - `save code`: Extract and save code blocks from the conversation
 - `run code`: Extract and run code blocks from the conversation
+- `run command`: Run a shell command and optionally capture the output
 - `load chat`: Load a previously saved chat session
 - `list chats`: Display a list of all saved chat sessions
 - `export chat`: Export the current chat in a specified format
@@ -171,9 +174,13 @@ Now that LLMs are getting better at producing functional code, the ability to sa
 
 ⚠️ BE CAREFUL WITH THIS COMMAND
 
-The `run code` command will extract code blocks from the most recent assistant response and run them in the current Python environment. It currently supports Python or Bash code blocks and will ask for confirmation before running.(`run code <n>` can be used to parse the last-n responses). If multiple code blocks are present you will be presented with a choice of which to run.
+The `run code` command will extract code blocks from the most recent assistant response and run them in the current Python environment. It currently supports Python or Bash code blocks and will ask for confirmation before running. (`run code <n>` can be used to parse the last-n responses). If multiple code blocks are present you will be presented with a choice of which to run.
 
 After running the command you will have the option to capture the output to a multiline context to feed back to the model for iterative troubleshooting. 
+
+### Running commands
+
+The `run command` command lets you run shell commands from within the chat mode and capture the output into the context for use in the conversaton. This can be useful for running scripts or referencing system information.
 
 ### Projects
 
