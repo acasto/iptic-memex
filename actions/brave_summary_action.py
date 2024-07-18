@@ -11,7 +11,6 @@ class BraveSummaryAction(InteractionAction):
         self.session = session
         self.brave = session.conf.get_all_options_from_provider("Brave")
 
-
     def run(self, message=None):
         if 'api_key' not in self.brave:
             print(f"API key not found for Brave provider in configuration.\n")
@@ -32,6 +31,7 @@ class BraveSummaryAction(InteractionAction):
                     else:
                         self.session.add_context('search_results', concise_summary)
                         break
+        self.session.get_action('reprint_chat').run()
 
     def simple_search_and_summarize(self, query):
         """
