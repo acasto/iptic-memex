@@ -10,4 +10,4 @@ beautifulsoup4
 tiktoken
 reportlab
 trafilatura
-
+cohere

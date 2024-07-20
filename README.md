@@ -1,6 +1,6 @@
 # Description
 
-Iptic Memex is a Python program that offers a straight-forward CLI interface for interacting with LLM providers through their APIs. Currently tested with OpenAI, Anthropic, Google Gemini, OpenRouter, and llama.cpp server. Input can be piped in from the command line or entered interactively through 'ask' and 'chat' modes. Chat mode features the ability to save conversations in a human-readable conversation format with a configurable extension for use with external applications such as Obsidian.
+Iptic Memex is a Python program that offers a straight-forward CLI interface for interacting with LLM providers through their APIs. Input can be piped in from the command line or entered interactively through 'ask' and 'chat' modes. Chat mode features the ability to save conversations in a human-readable conversation format with a configurable extension for use with external applications such as Obsidian.
 
 The name is a reference to the Memex, a device described by Vannevar Bush in his 1945 essay "As We May Think" which he
 envisioned a device that would compress and store all of their knowledge. https://en.wikipedia.org/wiki/Memex
@@ -29,6 +29,11 @@ envisioned a device that would compress and store all of their knowledge. https:
       - Anthropic
       - Google Gemini
       - OpenRouter
+      - Perplexity
+      - Groq
+      - Mistral 
+      - DeepSeek
+      - Cohere
       - Llama.cpp via API
   - [x] OpenAI compatibile providers can be added through configs, no code changes needed
   - [x] Easy configuration of providers and models through config files
@@ -188,7 +193,13 @@ The project context (`load project`) causes the other contexts (e.g. file, web, 
 
 # Changelog
 
-### 2.0.2 (07/16/2024) Current
+### 2.0.3 (07/20/2024) Current
+- Added the `run command` command to run shell commands and capture the output
+- Added a provider class for Cohere
+- Added entires in config.ini and models.ini to support Perplexity, Groq, Mistral, DeepSeek, and Cohere
+- Adjusted the OpenAI provider so that stream usage can be disabled at the provider level (was breaking Mistral)
+
+### 2.0.2 (07/16/2024)
 - Added the `run code` command with the ability to capture the output for iterative troubleshooting
  
 ### 2.0.1 (07/15/2024)

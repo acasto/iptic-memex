@@ -246,7 +246,8 @@ class SessionHandler:
             provider_class = getattr(module, class_name)
             self.session_state['provider'] = provider_class(self)
         except (ImportError, AttributeError):
-            raise ValueError(f"Unsupported provider: {provider}")
+            print(f"\nUnsupported provider: {provider}\n")
+            quit()
 
     def start_mode(self, mode: str):
         """

@@ -12,6 +12,7 @@ class OpenAIProvider(APIProvider):
     def __init__(self, session: SessionHandler):
         self.session = session
         self.params = session.get_params()
+        self.last_api_param = None
 
         # set the options for the OpenAI API client
         options = {}
@@ -37,6 +38,7 @@ class OpenAIProvider(APIProvider):
         self.client = OpenAI(**options)
 
         # List of parameters that can be passed to the OpenAI API that we want to handle automatically
+        # todo: add list of items for include/exclude to the providers config
         self.parameters = [
             'model',
             'messages',
@@ -80,12 +82,16 @@ class OpenAIProvider(APIProvider):
             # If streaming set stream_options - we could set this in the config, but since it's dependent
             # on stream and enables and internal feature, we'll set it here
             if 'stream' in api_parms and api_parms['stream'] is True:
-                api_parms['stream_options'] = {
-                    'include_usage': True,
-                }
+                if 'stream_options' not in self.params or self.params['stream_options'] is not False:
+                    api_parms['stream_options'] = {
+                        'include_usage': True,
+                    }
 
             # Add the messages to the API parameters
             api_parms['messages'] = messages
+
+            # Save the params for debugging
+            self.last_api_param = api_parms
 
             # Call the OpenAI API
             response = self.client.chat.completions.create(**api_parms)
@@ -98,37 +104,44 @@ class OpenAIProvider(APIProvider):
                     self.usage = response.usage
                 return response.choices[0].message.content
 
-        except openai.APIConnectionError as e:
-            print("The server could not be reached")
-            print(e.__cause__)  # an underlying Exception, likely raised within httpx.
-        except openai.RateLimitError:
-            print("A 429 status code was received; we should back off a bit.")
-        except openai.APIStatusError as e:
-            print("Another non-200-range status code was received")
-            print(e.status_code)
-            print(e.response)
-        except Exception as e:
-            print(f"An error occurred: {e}")
+        except (openai.APIConnectionError, openai.RateLimitError, openai.APIStatusError, Exception) as e:
+            print("An exception occurred:")
+            if isinstance(e, openai.APIConnectionError):
+                print("The server could not be reached")
+                print(e.__cause__)  # an underlying Exception, likely raised within httpx.
+            elif isinstance(e, openai.RateLimitError):
+                print("A 429 status code was received; we should back off a bit.")
+            elif isinstance(e, openai.APIStatusError):
+                print("Another non-200-range status code was received")
+                print("Status code: " + str(e.status_code))
+                print("Response: " + str(e.response))
+            else:
+                print(f"An unexpected error occurred: {e}")
+            # the last_api_param is set then print them nicely
+            if self.last_api_param is not None:
+                print("Last API call parameters:")
+                for key, value in self.last_api_param.items():
+                    print(f"\t{key}: {value}")
 
     def stream_chat(self):
         """
         Use generator chaining to keep the response provider-agnostic
         :return:
         """
-        try:
-            response = self.chat()
+        response = self.chat()
 
-            for i, chunk in enumerate(response):
-                if chunk.choices and len(chunk.choices) > 0:
-                    if chunk.choices[0].finish_reason != 'stop' and chunk.choices[0].delta.content is not None:
-                        content = chunk.choices[0].delta.content
-                        if i < 2:  # Only process the first two chunks
-                            content = content.lstrip('\n')  # Remove leading newlines only
-                        yield content
-                if chunk.usage is not None:
-                    self.usage = chunk.usage
-        except Exception as e:
-            print(f"An error occurred: {e}")
+        if response is None:
+            return
+
+        for i, chunk in enumerate(response):
+            if chunk.choices and len(chunk.choices) > 0:
+                if chunk.choices[0].finish_reason != 'stop' and chunk.choices[0].delta.content is not None:
+                    content = chunk.choices[0].delta.content
+                    if i < 2:  # Only process the first two chunks
+                        content = content.lstrip('\n')  # Remove leading newlines only
+                    yield content
+            if chunk.usage is not None:
+                self.usage = chunk.usage
 
     def assemble_message(self) -> list:
         """
