@@ -107,6 +107,8 @@ class OpenAIProvider(APIProvider):
             print("Another non-200-range status code was received")
             print(e.status_code)
             print(e.response)
+        except Exception as e:
+            print(f"An error occurred: {e}")
 
     def stream_chat(self):
         """
