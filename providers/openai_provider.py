@@ -115,16 +115,20 @@ class OpenAIProvider(APIProvider):
         Use generator chaining to keep the response provider-agnostic
         :return:
         """
-        response = self.chat()
-        for i, chunk in enumerate(response):
-            if chunk.choices and len(chunk.choices) > 0:
-                if chunk.choices[0].finish_reason != 'stop' and chunk.choices[0].delta.content is not None:
-                    content = chunk.choices[0].delta.content
-                    if i < 2:  # Only process the first two chunks
-                        content = content.lstrip('\n')  # Remove leading newlines only
-                    yield content
-            if chunk.usage is not None:
-                self.usage = chunk.usage
+        try:
+            response = self.chat()
+
+            for i, chunk in enumerate(response):
+                if chunk.choices and len(chunk.choices) > 0:
+                    if chunk.choices[0].finish_reason != 'stop' and chunk.choices[0].delta.content is not None:
+                        content = chunk.choices[0].delta.content
+                        if i < 2:  # Only process the first two chunks
+                            content = content.lstrip('\n')  # Remove leading newlines only
+                        yield content
+                if chunk.usage is not None:
+                    self.usage = chunk.usage
+        except Exception as e:
+            print(f"An error occurred: {e}")
 
     def assemble_message(self) -> list:
         """
