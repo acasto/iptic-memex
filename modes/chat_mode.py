@@ -30,8 +30,22 @@ class ChatMode(InteractionMode):
             contexts = pc.process_contexts_for_user()
             try:
                 # Get the users input
-                user_label = ui.color_wrap(self.params['user_label'], self.params['user_label_color'])
-                user_input = input(f"{user_label} ")
+                first_line = True
+                user_input = []
+                while True:
+                    prompt = f"{ui.color_wrap(self.params['user_label'], self.params['user_label_color'])} " if first_line else ""
+                    line = input(prompt)
+                    first_line = False
+                    if line.rstrip() == r"\\":
+                        user_input.append(line[:-1])
+                    elif line.endswith("\\"):
+                        user_input.append(line[:-1])  # Strip trailing backslash
+                    else:
+                        user_input.append(line)
+                        break
+                full_input = " ".join(user_input).rstrip()  # Reconstruct input, removing trailing spaces
+                user_input = full_input
+                # user_input = input(f"{user_label} ")
                 print()
 
                 # Process any subcommands (will return True if no subcommands are found)
