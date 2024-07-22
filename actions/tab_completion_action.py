@@ -102,6 +102,9 @@ class TabCompletionAction(InteractionAction):
         # find the options that match
         options = [x for x in files_and_dirs if x.startswith(text)]
 
+        # Add a slash to directories
+        options = [f"{x}/" if os.path.isdir(x) else x for x in options]
+
         # return the option at the current state
         try:
             return options[state]
