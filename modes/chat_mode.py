@@ -37,13 +37,14 @@ class ChatMode(InteractionMode):
                     line = input(prompt)
                     first_line = False
                     if line.rstrip() == r"\\":
-                        user_input.append(line[:-1])
+                        break
                     elif line.endswith("\\"):
-                        user_input.append(line[:-1])  # Strip trailing backslash
+                        user_input.append(line[:-1] + "\n")  # Add newline instead of stripping backslash
                     else:
                         user_input.append(line)
-                        break
-                full_input = " ".join(user_input).rstrip()  # Reconstruct input, removing trailing spaces
+                        break  # Exit loop on a line without trailing backslash
+
+                full_input = "".join(user_input).rstrip()  # Join without spaces and remove trailing newline
                 user_input = full_input
                 # user_input = input(f"{user_label} ")
                 print()
