@@ -1,4 +1,5 @@
 import os
+import glob
 from session_handler import InteractionAction
 
 
@@ -16,12 +17,15 @@ class LoadFileAction(InteractionAction):
                 if filename == 'q':
                     self.tc.run('chat')
                     break
-                if os.path.isfile(filename):
-                    self.session.add_context('file', filename)
+                files = glob.glob(filename)
+                if files:
+                    for file in files:
+                        if os.path.isfile(file):
+                            self.session.add_context('file', file)
                     self.tc.run('chat')  # set the completion back to chat mode
                     break
                 else:
-                    print(f"File {filename} not found.")
+                    print(f"No files found matching {filename}")
             return
 
         filename = ' '.join(args)
