@@ -34,6 +34,8 @@ envisioned a device that would compress and store all of their knowledge. https:
       - Mistral 
       - DeepSeek
       - Cohere
+      - Fireworks AI
+      - Together AI
       - Llama.cpp via API
   - [x] OpenAI compatibile providers can be added through configs, no code changes needed
   - [x] Easy configuration of providers and models through config files
@@ -146,7 +148,20 @@ model_name = <the full official model name>
 context_size = 4096
 response_label = "> My Model: "
 ```
+### Extra body parameters
 
+You can add additional parameters to the body of the quest by using the `extra_body` setting with a provider in config.ini or a model in models.ini. 
+
+Examples:
+
+Set a preferred order of provider when using OpenRouter:
+```
+extra_body = {provider: { order: [Together, Lepton] } }
+```
+Turn on prompt caching and set stop tokens via llama.cpp API:
+```
+extra_body = {cache_prompt:true, stop:[<|im_end|>,<|im_start|>,<end_of_turn>,<|end|>]}
+```
 
 ### Chat about a file or URL
 
