@@ -34,6 +34,9 @@ class OpenAIProvider(APIProvider):
         if 'base_url' in self.params and self.params['base_url'] is not None:
             options['base_url'] = self.params['base_url']
 
+        if 'timeout' in self.params and self.params['timeout'] is not None:
+            options['timeout'] = self.params['timeout']
+
         # Initialize the OpenAI client
         self.client = OpenAI(**options)
 
