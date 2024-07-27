@@ -43,9 +43,9 @@ class PrintResponseAction(InteractionAction):
         else:
             try:
                 response = self.session.get_provider().chat()
+                if response is None:
+                    return
                 print(response)
-                # if '```' in response:
-                #     code_block_detected = True
 
             except (KeyboardInterrupt, EOFError):
                 print()

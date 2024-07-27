@@ -42,7 +42,12 @@ class ClearContextAction(InteractionAction):
                     tokens = self.token_counter.count_tiktoken(context['context'].get()['content'])
                     print(f"In context: [{idx}] {context['context'].get()['name']} ({tokens} tokens)")
                 print()
-            item = int(input("Enter the index of the context to remove: ").strip())
+            user_input = input("Enter the index of the context to remove: ").strip()
+            if user_input:  # Check if input is not empty
+                item = int(user_input)
+            else:
+                print("No context index provided. Returning.")
+                return True
         else:
             item = args[0]
 

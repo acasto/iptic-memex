@@ -34,8 +34,6 @@ class LoadProjectAction(InteractionAction):
                 self.session.get_action('fetch_code_snippet').run()
             elif selection == '6':
                 self.session.get_action("clear_context").run()
-            # elif selection.lower() in ['Done', 'done', '7']:
-            #     break
             elif selection.lower() in ['q', 'quit', 'exit']:
                 if len(self.session.get_action("process_contexts").get_contexts(self.session)) > 0:
                     print("Do you want to save the project before exiting? (Y/n)")
