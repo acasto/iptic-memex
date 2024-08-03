@@ -39,9 +39,13 @@ class ProcessContextsAction(InteractionAction):
         is_project = False
         # go through each object and place the contents in tags in the format:
         for f in contexts:
-            if f['type'] != 'project':
+            if f['type'] == 'raw':
                 file = f['context'].get()
-                turn_context += f"<|file:{file['name']}|>\n{file['content']}\n<|end_file|>\n"
+                turn_context += file['content']
+                continue
+            elif f['type'] != 'project':
+                file = f['context'].get()
+                turn_context += f"<|file:{file['name']}|>\n{file['content']}\n<|end_file:{file['name']}|>\n"
             else:
                 is_project = True
                 project = f['context'].get()

@@ -28,6 +28,10 @@ class ProcessSubcommandsAction(InteractionAction):
                 "description": "Load a file into the context",
                 "function": {"type": "action", "name": "load_file"},
             },
+            "load raw": {
+                "description": "Load raw text into the context",
+                "function": {"type": "action", "name": "load_raw"},
+            },
             "load code": {
                 "description": "Load code into the context",
                 "function": {"type": "action", "name": "fetch_code_snippet"},
@@ -40,14 +44,14 @@ class ProcessSubcommandsAction(InteractionAction):
                 "description": "Load a web page into the context",
                 "function": {"type": "action", "name": "fetch_from_web"},
             },
-            "load soup": {
-                "description": "Fetch content from web with BeautifulSoup",
-                "function": {"type": "action", "name": "fetch_from_soup"},
-            },
             "load search": {
                 "description": "Search the web",
                 "function": {"type": "action", "name": "brave_summary"},
             },
+            # "load summary": {
+            #     "description": "Load a summary from the web",
+            #     "function": {"type": "action", "name": "brave_summary"},
+            # },
             "clear context": {
                 "description": "Clear item from context",
                 "function": {"type": "action", "name": "clear_context"},

@@ -1,2 +1,1 @@
-You are a skilled AI programming assistant. Respond with  no other commentary or explanation. \
-The code should include any leading or trailing whitespace needed to make it syntactically correct.
+You are a skilled AI programming assistant. Respond with no other commentary or explanation.

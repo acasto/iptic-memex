@@ -1,3 +1,5 @@
+import requests
+from bs4 import BeautifulSoup
 import trafilatura
 from trafilatura.settings import use_config
 from session_handler import InteractionAction
@@ -8,7 +10,8 @@ class FetchFromWebAction(InteractionAction):
         self.session = session
         self.token_counter = self.session.get_action('count_tokens')
         self.config = use_config()
-        self.config.set("DEFAULT", "EXTRACTION_TIMEOUT", "30")
+        self.trafilatura_config = use_config()
+        self.trafilatura_config.set("DEFAULT", "EXTRACTION_TIMEOUT", "30")
 
     def run(self, message=None):
         while True:
@@ -20,23 +23,26 @@ class FetchFromWebAction(InteractionAction):
                 url = 'https://' + url
 
             try:
-                downloaded = trafilatura.fetch_url(url)
-                if downloaded is None:
-                    print("Failed to download the web page.")
-                    continue
+                response = requests.get(url)
+                response.raise_for_status()
+                soup = BeautifulSoup(response.text, 'html.parser')
+                downloaded = response.text  # Store the downloaded content
 
-                print("\nOptions:")
-                print("1. Fetch main content (text only)")
-                print("2. Fetch main content with HTML")
-                print("3. Try another URL")
-                choice = input("Enter your choice (1-3): ")
+                print("\nChoose the desired output format:")
+                print("1. Text Only (Cleaned)")
+                print("2. Text with Structure (Main Content)")
+                print("3. Full HTML")
+                print("4. Fetch by CSS Selector (Advanced)")
+                choice = input("Enter your choice (1-4): ")
 
                 if choice == '1':
-                    content = trafilatura.extract(downloaded, config=self.config, include_links=False, include_images=False, output_format='text')
+                    content, token_count = self.fetch_text_only(downloaded)
                 elif choice == '2':
-                    content = trafilatura.extract(downloaded, config=self.config, include_links=True, include_images=True, output_format='html')
+                    content, token_count = self.fetch_text_with_structure(downloaded)
                 elif choice == '3':
-                    continue
+                    content, token_count = self.fetch_full_html(soup)
+                elif choice == '4':
+                    content, token_count = self.fetch_by_css_selector(soup)
                 else:
                     print("Invalid choice. Please try again.")
                     continue
@@ -69,25 +75,51 @@ class FetchFromWebAction(InteractionAction):
                 else:
                     print("No main content could be extracted from this URL.")
 
-            except Exception as e:
+            except requests.RequestException as e:
                 print(f"Error fetching the URL: {e}")
 
-    def simple_fetch(self, url):
-        if not url.startswith(('http://', 'https://')):
-            url = 'https://' + url
+    def fetch_text_only(self, downloaded):
+        content = trafilatura.extract(downloaded,
+                                      config=self.trafilatura_config,
+                                      include_links=False,
+                                      include_images=False,
+                                      output_format='text')
+        if content:
+            content_str = str(content)
+            token_count = self.token_counter.count_tiktoken(content_str)
+            return content_str, token_count
+        else:
+            return None, None
 
-        try:
-            downloaded = trafilatura.fetch_url(url)
-            if downloaded is None:
-                return "Failed to download the web page.", 0
+    def fetch_text_with_structure(self, downloaded_content):
+        content = trafilatura.extract(downloaded_content,
+                                      config=self.trafilatura_config,
+                                      include_links=True,
+                                      include_images=False,
+                                      include_tables=True,
+                                      include_formatting=True,
+                                      output_format='xml',
+                                      with_metadata=True,
+                                      favor_recall=True
+                                      )
+        if content:
+            content_str = str(content)
+            token_count = self.token_counter.count_tiktoken(content_str)
+            return content_str, token_count
+        else:
+            return None, None
 
-            content = trafilatura.extract(downloaded, config=self.config, include_links=False, include_images=False, output_format='text')
-            if content:
-                content_str = str(content)
-                token_count = self.token_counter.count_tiktoken(content_str)
-                return content_str, token_count
-            else:
-                return "No main content could be extracted from this URL.", 0
+    def fetch_full_html(self, soup):
+        content = str(soup)
+        token_count = self.token_counter.count_tiktoken(content)
+        return content, token_count
 
-        except Exception as e:
-            return f"Error fetching the URL: {e}", 0
+    def fetch_by_css_selector(self, soup):
+        selector = input("Enter CSS selector: ")
+        elements = soup.select(selector)
+        if elements:
+            content = '\n'.join(str(el) for el in elements)
+            token_count = self.token_counter.count_tiktoken(content)
+            return content, token_count
+        else:
+            return None, None
