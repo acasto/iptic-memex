@@ -28,6 +28,18 @@ class ProcessSubcommandsAction(InteractionAction):
                 "description": "Load a file into the context",
                 "function": {"type": "action", "name": "load_file"},
             },
+            "load pdf": {
+                "description": "Load a pdf into the context",
+                "function": {"type": "action", "name": "load_pdf"},
+            },
+            "load sheet": {
+                "description": "Load an xlsx file into the context",
+                "function": {"type": "action", "name": "load_sheet"},
+            },
+            "load doc": {
+                "description": "Load a docx fie into the context",
+                "function": {"type": "action", "name": "load_doc"},
+            },
             "load raw": {
                 "description": "Load raw text into the context",
                 "function": {"type": "action", "name": "load_raw"},

@@ -12,11 +12,14 @@ class LoadProjectAction(InteractionAction):
             self.session.get_action('process_contexts').process_contexts_for_user()
 
             print("1. Add a file")
-            print("2. Add multiline input")
-            print("3. Add web content (Trafilatura)")
-            print("4. Add web content (BeautifulSoup)")
-            print("5. Add code snippet (Python)")
-            print("6. Remove context item")
+            print("2. Add a pdf")
+            print("3. Add a sheet")
+            print("4. Add a doc")
+            print("5. Add multiline input")
+            print("6. Add web content (Trafilatura)")
+            print("7. Add web content (BeautifulSoup)")
+            print("8. Add code snippet (Python)")
+            print("9. Remove context item")
             # print("7. Done (save project)")
             print()
 
@@ -24,15 +27,21 @@ class LoadProjectAction(InteractionAction):
 
             if selection == '1':
                 self.session.get_action('load_file').run()
-            elif selection == '2':
-                self.session.get_action('load_multiline').run()
-            elif selection == '3':
-                self.session.get_action('fetch_from_web').run()
-            elif selection == '4':
-                self.session.get_action('fetch_from_soup').run()
+            if selection == '2':
+                self.session.get_action('load_pdf').run()
+            if selection == '3':
+                self.session.get_action('load_sheet').run()
+            if selection == '4':
+                self.session.get_action('load_doc').run()
             elif selection == '5':
-                self.session.get_action('fetch_code_snippet').run()
+                self.session.get_action('load_multiline').run()
             elif selection == '6':
+                self.session.get_action('fetch_from_web').run()
+            elif selection == '7':
+                self.session.get_action('fetch_from_soup').run()
+            elif selection == '8':
+                self.session.get_action('fetch_code_snippet').run()
+            elif selection == '9':
                 self.session.get_action("clear_context").run()
             elif selection.lower() in ['q', 'quit', 'exit']:
                 if len(self.session.get_action("process_contexts").get_contexts(self.session)) > 0:
@@ -42,6 +51,8 @@ class LoadProjectAction(InteractionAction):
                         return
                     else:
                         break
+                else:
+                    return
 
         project_name = input("Project Name: ")
         project_description = input("Description: ")
