@@ -16,7 +16,8 @@ envisioned a device that would compress and store all of their knowledge. https:
   - [x] Completion mode for processing files or stdin
 
 - **Context Management**:
-  - [x] Load files into context in chat and ask modes
+  - [x] Load text files into context in chat and ask modes
+  - [x] Load PDF/XLSX/DOCX files into context in chat mode
   - [x] Fetch and include content from the web
   - [x] Search the web and load results into context
   - [x] Easily add multi-line content
@@ -47,7 +48,7 @@ envisioned a device that would compress and store all of their knowledge. https:
   - [x] Export conversations to various formats (markdown, txt, pdf)
   - [x] Context management for optimizing token usage
   - [x] Token usage tracking and management where applicable
-  - [x] Easily save code blocks from repsonses to files
+  - [x] Easily save code blocks from responses to files
 
 - **Enhanced User Experience**:
   - [x] Streaming support for real-time responses
@@ -98,6 +99,9 @@ While in chat mode, you can use the following commands:
 - `quit` or `exit`: Exit the chat mode
 - `load project`: Load a project into the context
 - `load file`: Load a file into the context
+- 'load pdf': Load a PDF file into the context
+- 'load doc': Load a DOCX file into the context
+- 'load sheet': Load an XLSX file into the context
 - `load code`: Load code snippets into the context
 - `load multiline`: Load multiple lines of text into the context
 - `load web`: Load content from a web page into the context
@@ -207,6 +211,15 @@ The `run command` command lets you run shell commands from within the chat mode 
 The project context (`load project`) causes the other contexts (e.g. file, web, multiline, etc.) to be wrapped in a common project context tags with a project name and project notes. You can add these other contexts from the `load project` dialog.
 
 # Changelog
+
+### 2.0.4 (09/03/2024)
+- Added models/providers to models.ini
+- Added trailing slash multiline to main chat
+- Added wildcard support to 'load file'
+- Added timeout setting for OpenAI provider
+- Added a 'load raw' context for unwrapped context
+- Added 'load sheet', 'load doc', and 'load pdf'
+- Fixed minor bugs 
 
 ### 2.0.3 (07/20/2024) Current
 - Added the `run command` command to run shell commands and capture the output
