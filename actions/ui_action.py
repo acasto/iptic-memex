@@ -142,6 +142,13 @@ class UiAction(InteractionAction):
         print(colored_text, end=end)
 
     @staticmethod
+    def print(text=""):
+        """
+        Simple text printing function
+        """
+        print(text)
+
+    @staticmethod
     def format_code_block(text):
         def highlight_block(block):
             match = re.match(r"^```(\w+)?\n(.*?)\n?```$", block, re.DOTALL)

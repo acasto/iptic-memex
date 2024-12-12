@@ -42,7 +42,12 @@ class CohereProvider(APIProvider):
         ]
 
         # place to store usage data
-        self.usage = None
+        self.turn_usage = None
+        self.running_usage = {
+            'total_in': 0,
+            'total_out': 0,
+            'total_time': 0.0
+        }
 
     def process_api_params(self):
         chat_history, message = self.assemble_message()
@@ -120,12 +125,26 @@ class CohereProvider(APIProvider):
         return self.assemble_message()
 
     def get_usage(self):
-        if self.usage is not None:
-            return {
-                'in': self.usage.prompt_tokens,
-                'out': self.usage.completion_tokens,
-                'total': self.usage.total_tokens
-            }
+        stats = {
+            'total_in': self.running_usage['total_in'],
+            'total_out': self.running_usage['total_out'],
+            'total_tokens': self.running_usage['total_in'] + self.running_usage['total_out'],
+            'total_time': self.running_usage['total_time']
+        }
+
+        if self.turn_usage:  # Add current turn stats if available
+            stats.update({
+                'turn_in': self.turn_usage.prompt_tokens,
+                'turn_out': self.turn_usage.completion_tokens,
+                'turn_total': self.turn_usage.total_tokens
+            })
+
+        return stats
 
     def reset_usage(self):
-        self.usage = None
+        self.turn_usage = None
+        self.running_usage = {
+            'total_in': 0,
+            'total_out': 0,
+            'total_time': 0.0
+        }

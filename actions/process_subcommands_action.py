@@ -144,6 +144,10 @@ class ProcessSubcommandsAction(InteractionAction):
                 "description": "Run a command",
                 "function": {"type": "action", "name": "run_command"},
             },
+            "run persist": {
+                "description": "Run a persist command",
+                "function": {"type": "action", "name": "persist"},
+            },
         }
 
     def run(self, user_input: str = None) -> bool | None:
@@ -195,6 +199,7 @@ class ProcessSubcommandsAction(InteractionAction):
         user_input = input(ui.color_wrap("Hit Ctrl-C or enter 'y' to quit: ", "red"))
         if user_input.lower() == 'y':
             print()
+            self.session.get_action('persist_stats').run()
             quit()
         else:
             print()

@@ -1,4 +1,5 @@
 import os
+from time import time
 from anthropic import Anthropic
 from session_handler import APIProvider, SessionHandler
 
@@ -45,13 +46,19 @@ class AnthropicProvider(APIProvider):
         ]
 
         # place to store usage data
-        self.usage = {}
+        self.turn_usage = {}
+        self.running_usage = {
+            'total_in': 0,
+            'total_out': 0,
+            'total_time': 0.0
+        }
 
     def chat(self):
         """
         Creates a chat completion request to the OpenAI API
         :return: response (str)
         """
+        start_time = time()  # Start the timer for the API call
         try:
             # Assemble the message from the context
             messages = self.assemble_message()
@@ -79,12 +86,16 @@ class AnthropicProvider(APIProvider):
                 return response
             else:
                 if response.usage is not None:
-                    self.usage['in'] = response.useage.input_tokens
-                    self.usage['out'] = response.usage.output_tokens
+                    self.turn_usage['in'] = response.usage.input_tokens
+                    self.turn_usage['out'] = response.usage.output_tokens
+                if self.turn_usage:
+                    self.running_usage['total_in'] += self.turn_usage['in']
+                    self.running_usage['total_out'] += self.turn_usage['out']
                 return response.content[0].text
 
         finally:
-            pass
+            # calculate the total time for the API call
+            self.running_usage['total_time'] += time() - start_time
 
     def stream_chat(self):
         """
@@ -92,16 +103,23 @@ class AnthropicProvider(APIProvider):
         :return:
         """
         response = self.chat()
+        start_time = time()  # Start the timer for the streaming
         for event in response:
             if event.type == "content_block_delta":
                 yield event.delta.text
             if event.type == "message_start":
                 if event.message.usage is not None:
-                    self.usage['in'] = event.message.usage.input_tokens
-                    self.usage['out'] = event.message.usage.output_tokens
+                    self.turn_usage['in'] = event.message.usage.input_tokens
+                    self.turn_usage['out'] = event.message.usage.output_tokens
             if event.type == "message_delta":
                 if event.usage is not None:
-                    self.usage['out'] = self.usage['out'] + event.usage.output_tokens
+                    self.turn_usage['out'] = self.turn_usage['out'] + event.usage.output_tokens
+
+        # Update running totals once after streaming is complete
+        self.running_usage['total_time'] += time() - start_time
+        if self.turn_usage:
+            self.running_usage['total_in'] += self.turn_usage['in']
+            self.running_usage['total_out'] += self.turn_usage['out']
 
     def assemble_message(self) -> list:
         """
@@ -131,14 +149,26 @@ class AnthropicProvider(APIProvider):
         return self.assemble_message()
 
     def get_usage(self):
-        if self.usage is not None:
-            return {
-                'in': self.usage['in'],
-                'out': self.usage['out'],
-                'total': self.usage['in'] + self.usage['out']
-            }
-        else:
-            return "No usage data available"
+        stats = {
+            'total_in': self.running_usage['total_in'],
+            'total_out': self.running_usage['total_out'],
+            'total_tokens': self.running_usage['total_in'] + self.running_usage['total_out'],
+            'total_time': self.running_usage['total_time']
+        }
+
+        if self.turn_usage:  # Add current turn stats if available
+            stats.update({
+                'turn_in': self.turn_usage['in'],
+                'turn_out': self.turn_usage['out'],
+                'turn_total': self.turn_usage['in'] + self.turn_usage['out']
+            })
+
+        return stats
 
     def reset_usage(self):
-        self.usage = {}
+        self.turn_usage = {}
+        self.running_usage = {
+            'total_in': 0,
+            'total_out': 0,
+            'total_time': 0.0
+        }

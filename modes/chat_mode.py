@@ -47,19 +47,23 @@ class ChatMode(InteractionMode):
                 full_input = "".join(user_input).rstrip()  # Join without spaces and remove trailing newline
                 user_input = full_input
                 # user_input = input(f"{user_label} ")
-                print()
+                ui.print()
 
                 # Process any subcommands (will return True if no subcommands are found)
                 if sc.run(user_input):
                     continue
 
             except (KeyboardInterrupt, EOFError):
-                # make sure user really wants to quit
-                print()
-                input(ui.color_wrap("Hit Ctrl-C again to quit or Enter to continue.", 'red'))
-                print()
-                tc.run('chat')  # in case tab completion was modified before the interrupt
-                continue
+                ui.print()
+                try:
+                    input(ui.color_wrap("Hit Ctrl-C again to quit or Enter to continue.", 'red'))
+                    ui.print()
+                    tc.run('chat')  # They hit enter to continue
+                    continue
+                except (KeyboardInterrupt, EOFError):  # They hit Ctrl-C again
+                    ui.print()
+                    self.session.get_action('persist_stats').run()
+                    raise  # Re-raise to exit
 
             # Add the question to the chat context
             self.chat.add(user_input, 'user', contexts)
@@ -71,4 +75,4 @@ class ChatMode(InteractionMode):
             # Start the response
             response.run()
 
-            print()
+            ui.print()

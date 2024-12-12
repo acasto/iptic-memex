@@ -1,4 +1,5 @@
 import os
+from time import time
 import openai
 from openai import OpenAI
 from session_handler import APIProvider, SessionHandler
@@ -65,13 +66,19 @@ class OpenAIProvider(APIProvider):
         ]
 
         # place to store usage data
-        self.usage = None
+        self.turn_usage = None
+        self.running_usage = {
+            'total_in': 0,
+            'total_out': 0,
+            'total_time': 0.0
+        }
 
     def chat(self):
         """
         Creates a chat completion request to the OpenAI API
         :return: response (str)
         """
+        start_time = time()
         try:
             # Assemble the message from the context
             messages = self.assemble_message()
@@ -83,7 +90,7 @@ class OpenAIProvider(APIProvider):
                     api_parms[parameter] = self.params[parameter]
 
             # If streaming set stream_options - we could set this in the config, but since it's dependent
-            # on stream and enables and internal feature, we'll set it here
+            # on stream and enables internal feature, we'll set it here
             if 'stream' in api_parms and api_parms['stream'] is True:
                 if 'stream_options' not in self.params or self.params['stream_options'] is not False:
                     api_parms['stream_options'] = {
@@ -104,7 +111,10 @@ class OpenAIProvider(APIProvider):
                 return response
             else:
                 if response.usage is not None:
-                    self.usage = response.usage
+                    self.turn_usage = response.usage
+                if self.turn_usage:
+                    self.running_usage['total_in'] += self.turn_usage.prompt_tokens
+                    self.running_usage['total_out'] += self.turn_usage.completion_tokens
                 return response.choices[0].message.content
 
         except (openai.APIConnectionError, openai.RateLimitError, openai.APIStatusError, Exception) as e:
@@ -125,6 +135,9 @@ class OpenAIProvider(APIProvider):
                 print("Last API call parameters:")
                 for key, value in self.last_api_param.items():
                     print(f"\t{key}: {value}")
+        finally:
+            # calculate the total time for the API call
+            self.running_usage['total_time'] += time() - start_time
 
     def stream_chat(self):
         """
@@ -132,7 +145,7 @@ class OpenAIProvider(APIProvider):
         :return:
         """
         response = self.chat()
-
+        start_time = time()  # Start the timer for the streaming
         if response is None:
             return
 
@@ -144,7 +157,13 @@ class OpenAIProvider(APIProvider):
                         content = content.lstrip('\n')  # Remove leading newlines only
                     yield content
             if chunk.usage is not None:
-                self.usage = chunk.usage
+                self.turn_usage = chunk.usage
+
+        # Update running totals once after streaming is complete
+        self.running_usage['total_time'] += time() - start_time
+        if self.turn_usage:
+            self.running_usage['total_in'] += self.turn_usage.prompt_tokens
+            self.running_usage['total_out'] += self.turn_usage.completion_tokens
 
     def assemble_message(self) -> list:
         """
@@ -171,12 +190,26 @@ class OpenAIProvider(APIProvider):
         return self.assemble_message()
 
     def get_usage(self):
-        if self.usage is not None:
-            return {
-                'in': self.usage.prompt_tokens,
-                'out': self.usage.completion_tokens,
-                'total': self.usage.total_tokens
-            }
+        stats = {
+            'total_in': self.running_usage['total_in'],
+            'total_out': self.running_usage['total_out'],
+            'total_tokens': self.running_usage['total_in'] + self.running_usage['total_out'],
+            'total_time': self.running_usage['total_time']
+        }
+
+        if self.turn_usage:  # Add current turn stats if available
+            stats.update({
+                'turn_in': self.turn_usage.prompt_tokens,
+                'turn_out': self.turn_usage.completion_tokens,
+                'turn_total': self.turn_usage.total_tokens
+            })
+
+        return stats
 
     def reset_usage(self):
-        self.usage = None
+        self.turn_usage = None
+        self.running_usage = {
+            'total_in': 0,
+            'total_out': 0,
+            'total_time': 0.0
+        }
