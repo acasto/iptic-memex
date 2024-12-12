@@ -93,6 +93,22 @@ class AnthropicProvider(APIProvider):
                     self.running_usage['total_out'] += self.turn_usage['out']
                 return response.content[0].text
 
+        except (Exception) as e:
+            print(f"An error occurred: {str(e)}")
+        # except (anthropic.APIStatusError, Exception) as e:
+        #     print("An exception occurred:")
+        #     if isinstance(e, anthropic.APIConnectionError):
+        #         print("The server could not be reached")
+        #         print(e.__cause__)  # an underlying Exception, likely raised within httpx.
+        #     elif isinstance(e, anthropic.RateLimitError):
+        #         print("A 429 status code was received; we should back off a bit.")
+        #     elif isinstance(e, anthropic.APIStatusError):
+        #         print("Another non-200-range status code was received")
+        #         print("Status code: " + str(e.status_code))
+        #         print("Response: " + str(e.response))
+        #     else:
+        #         print(f"An unexpected error occurred: {e}")
+
         finally:
             # calculate the total time for the API call
             self.running_usage['total_time'] += time() - start_time

@@ -23,8 +23,9 @@ class SaveCodeAction(InteractionAction):
             except ValueError:
                 print("Invalid arguments. Using defaults.")
 
-        recent_turns = self.chat.get()[-n:]
-        code_blocks = self.extract_code_blocks(recent_turns)
+        #turns = self.chat.get()[-n:]
+        turns = self.chat.get()
+        code_blocks = self.extract_code_blocks(turns)
 
         if not code_blocks:
             print("No code blocks found in the recent messages.")
@@ -39,16 +40,50 @@ class SaveCodeAction(InteractionAction):
             self.save_code_block(selected_block)
 
     def extract_code_blocks(self, turns):
-        code_blocks = []
+        # Combine all assistant messages into one text to handle multi-turn code blocks
+        assistant_messages = []
         for turn in turns:
             if turn['role'] == 'assistant':
-                # Extract code blocks using regex
-                blocks = re.findall(r'```(?:\w+)?\n(.*?)```', turn['message'], re.DOTALL)
-                code_blocks.extend(blocks)
+                assistant_messages.append(turn['message'])
+        combined_text = "\n".join(assistant_messages)
+
+        # We'll parse line-by-line to correctly handle code fences
+        # We consider a code fence to be a line that consists of:
+        #   ``` or ```<language>
+        # and nothing else on that line (ignoring whitespace).
+        # This helps avoid confusion with triple backticks appearing inside the code.
+        lines = combined_text.split('\n')
+        code_blocks = []
+        inside_code = False
+        code_language = ''
+        code_content = []
+
+        fence_pattern = re.compile(r'^\s*```(\w+)?\s*$')
+
+        for line in lines:
+            fence_match = fence_pattern.match(line)
+            if fence_match:
+                if not inside_code:
+                    # Starting a code block
+                    inside_code = True
+                    code_language = fence_match.group(1) if fence_match.group(1) else ''
+                    code_content = []
+                else:
+                    # Ending a code block
+                    inside_code = False
+                    code_blocks.append((code_language, "\n".join(code_content)))
+                    code_language = ''
+                    code_content = []
+            else:
+                if inside_code:
+                    code_content.append(line)
+
+        # If for some reason we ended while still inside a code block (unlikely but possible),
+        # we won't add it as it's incomplete.
         return code_blocks
 
     def create_preview(self, block):
-        lines = block.split('\n')
+        lines = str(block).split('\n')
         preview_lines = lines[:self.preview_lines]
         preview = '\n'.join('    ' + (line[:self.preview_chars] + '...' if len(line) > self.preview_chars else line) for line in preview_lines)
         if len(lines) > self.preview_lines:
