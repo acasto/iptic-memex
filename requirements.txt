@@ -14,3 +14,4 @@ cohere
 PyPDF2
 python-docx
 openpyxl
+llama-cpp-python
