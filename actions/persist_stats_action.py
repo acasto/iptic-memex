@@ -8,7 +8,6 @@ class PersistStatsAction(InteractionAction):
     """
     def __init__(self, session):
         self.session = session
-        self.persist = session.get_action('persist')
         self.provider = session.get_provider()
         self.params = session.get_params()
 
@@ -74,10 +73,10 @@ class PersistStatsAction(InteractionAction):
 
                 if schema['accumulate']:
                     # Get and convert stored value
-                    stored_value = self.persist.get(db_key)
+                    stored_value = self.session.utils.storage.get(db_key)
                     stored_value = schema['type'](stored_value) if stored_value else schema['type'](0)
                     # Store updated total
-                    self.persist.set(db_key, str(stored_value + current_value))
+                    self.session.utils.storage.set(db_key, str(stored_value + current_value))
                 else:
                     # Simply store current value
-                    self.persist.set(db_key, str(current_value))
+                    self.session.utils.storage.set(db_key, str(current_value))

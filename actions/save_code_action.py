@@ -7,9 +7,10 @@ class SaveCodeAction(InteractionAction):
     def __init__(self, session):
         self.session = session
         self.chat = session.get_context('chat')
-        self.tc = session.get_action('tab_completion')
+        self.tc = session.utils.tab_completion
+        self.tc.set_session(session)
         self.preview_chars = 50  # Default number of characters per line in preview
-        self.preview_lines = 1   # Default number of lines in preview
+        self.preview_lines = 1  # Default number of lines in preview
 
     def run(self, args=None):
         n = 1  # Default to last message
@@ -23,7 +24,7 @@ class SaveCodeAction(InteractionAction):
             except ValueError:
                 print("Invalid arguments. Using defaults.")
 
-        #turns = self.chat.get()[-n:]
+        # turns = self.chat.get()[-n:]
         turns = self.chat.get()
         code_blocks = self.extract_code_blocks(turns)
 
@@ -39,7 +40,8 @@ class SaveCodeAction(InteractionAction):
         if selected_block:
             self.save_code_block(selected_block)
 
-    def extract_code_blocks(self, turns):
+    @staticmethod
+    def extract_code_blocks(turns):
         # Combine all assistant messages into one text to handle multi-turn code blocks
         assistant_messages = []
         for turn in turns:
@@ -85,7 +87,9 @@ class SaveCodeAction(InteractionAction):
     def create_preview(self, block):
         lines = str(block).split('\n')
         preview_lines = lines[:self.preview_lines]
-        preview = '\n'.join('    ' + (line[:self.preview_chars] + '...' if len(line) > self.preview_chars else line) for line in preview_lines)
+        preview = '\n'.join(
+            '    ' + (line[:self.preview_chars] + '...' if len(line) > self.preview_chars else line) for line in
+            preview_lines)
         if len(lines) > self.preview_lines:
             preview += f"\n    ... ({len(lines)} lines total)"
         return preview

@@ -7,7 +7,8 @@ from io import StringIO
 class LoadSheetAction(InteractionAction):
     def __init__(self, session):
         self.session = session
-        self.tc = session.get_action('tab_completion')
+        self.tc = session.utils.tab_completion
+        self.tc.set_session(session)
 
     def run(self, args: list = None):
         if not args:

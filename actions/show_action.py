@@ -42,3 +42,14 @@ class ShowAction(InteractionAction):
             usage = self.session.get_provider().get_usage()
             print(usage)
             print()
+
+        if args[0] == 'contexts':
+            contexts = self.session.get_action('process_contexts').get_contexts(self.session)
+            if len(contexts) == 0:
+                print(f"No contexts to clear.\n")
+                return True
+
+            for idx, context in enumerate(contexts):
+                print(f"[{idx}] {context['context'].get()['name']}")
+                print(f"Content: {context['context'].get()['content']}")
+            print()

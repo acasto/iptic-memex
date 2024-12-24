@@ -2,12 +2,13 @@ import os
 import glob
 from session_handler import InteractionAction
 from PyPDF2 import PdfReader
-from helpers import resolve_file_path
+
 
 class LoadPdfAction(InteractionAction):
     def __init__(self, session):
         self.session = session
-        self.tc = session.get_action('tab_completion')
+        self.tc = session.utils.tab_completion
+        self.tc.set_session(session)
 
     def run(self, args: list = None):
         if not args:
@@ -36,7 +37,7 @@ class LoadPdfAction(InteractionAction):
         return True  # Indicate that files were processed
 
     def resolve_glob_pattern(self, pattern):
-        resolved_path = resolve_file_path(pattern, extension='.pdf')
+        resolved_path = self.session.utils.fs.resolve_file_path(pattern, extension='.pdf')
         if resolved_path and os.path.isfile(resolved_path):
             return [resolved_path]
         
@@ -46,7 +47,8 @@ class LoadPdfAction(InteractionAction):
             glob_pattern += '*.pdf'
         return glob.glob(glob_pattern)
 
-    def process_pdf(self, file_path):
+    @staticmethod
+    def process_pdf(file_path):
         try:
             pdf = PdfReader(file_path)
             text = ""

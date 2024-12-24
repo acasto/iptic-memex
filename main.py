@@ -11,6 +11,7 @@ from session_handler import SessionHandler
 @click.option('-s', '--stream', default=False, is_flag=True, help='Stream the completion events')
 @click.option('-v', '--verbose', default=False, is_flag=True, help='Show session parameters')
 @click.option('-f', '--file', multiple=True, help='File to use for completion')
+# @click.option( '-f', '--file', multiple=True, type=click.File('r'), help='File to use for completion')
 @click.pass_context
 def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file):
     """

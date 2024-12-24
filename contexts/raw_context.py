@@ -1,6 +1,5 @@
 import sys
 from session_handler import InteractionContext
-from helpers import resolve_file_path
 
 
 class RawContext(InteractionContext):
@@ -28,7 +27,7 @@ class RawContext(InteractionContext):
             self.file['content'] = sys.stdin.read()
 
         # else try to open and read it
-        file_path = resolve_file_path(file)
+        file_path = self.session.utils.fs.resolve_file_path(file)
         if file_path is not None:
             with open(file_path, 'r') as f:
                 self.file = {'name': file, 'content': f.read()}

@@ -1,7 +1,6 @@
 import os
 import re
-from configparser import ConfigParser
-from helpers import resolve_file_path, resolve_directory_path
+from configparser import ConfigParser, NoOptionError, NoSectionError
 
 
 class ConfigHandler:
@@ -30,13 +29,13 @@ class ConfigHandler:
 
         # get the user config location from the default config file and check and read it
         if 'user_config' in config['DEFAULT']:
-            user_config = resolve_file_path(config['DEFAULT']['user_config'])
+            user_config = ConfigHandler.resolve_file_path(config['DEFAULT']['user_config'])
             if user_config is not None:
                 config.read(user_config)
 
         # if a custom config file was specified, check and read it
         if config_file is not None:
-            file = resolve_file_path(config_file)
+            file = ConfigHandler.resolve_file_path(config_file)
             if file is None:
                 raise FileNotFoundError(f'Could not find the custom config file at {config_file}')
             config.read(config_file)  # read the custom config file
@@ -45,6 +44,7 @@ class ConfigHandler:
     def read_models_files(self) -> ConfigParser:
         """
         go through the models files and return the ConfigParser object
+
         :return: ConfigParser object
         """
         # Read the 'models.ini' file
@@ -56,7 +56,7 @@ class ConfigHandler:
 
         # Get the user model definition overrides from the configuration file
         if 'user_models' in self.conf['DEFAULT']:
-            user_models = resolve_file_path(self.conf['DEFAULT']['user_models'])
+            user_models = ConfigHandler.resolve_file_path(self.conf['DEFAULT']['user_models'])
             if user_models is not None:
                 models.read(user_models)
 
@@ -87,7 +87,7 @@ class ConfigHandler:
         prompt_dir = self.conf['DEFAULT'].get('prompt_directory', None)
         if prompt_dir is None:
             return None
-        prompt_dir = resolve_directory_path(prompt_dir)
+        prompt_dir = ConfigHandler.resolve_directory_path(prompt_dir)
         if prompt_dir is None:
             return None
         return [f for f in os.listdir(prompt_dir) if os.path.isfile(os.path.join(prompt_dir, f))]
@@ -197,15 +197,15 @@ class ConfigHandler:
         try:
             # if there is a default_prompt in the config file, check and make sure it exists and return it
             if self.conf.has_option('DEFAULT', 'default_prompt'):
-                prompt_file = resolve_file_path(self.conf['DEFAULT']['default_prompt'],
-                                                self.conf['DEFAULT']['prompt_directory'], '.txt')
+                prompt_file = ConfigHandler.resolve_file_path(self.conf['DEFAULT']['default_prompt'],
+                                                              self.conf['DEFAULT']['prompt_directory'], '.txt')
                 if prompt_file is not None:
                     with open(prompt_file, 'r') as f:
                         return f.read()
 
             # if there is a prompt_directory in the config file, check and make sure it exists and return the default.txt file
             if self.conf.has_option('DEFAULT', 'prompt_directory'):
-                prompt = resolve_file_path("default.txt", self.conf['DEFAULT']['prompt_directory'])
+                prompt = ConfigHandler.resolve_file_path("default.txt", self.conf['DEFAULT']['prompt_directory'])
                 if prompt is not None:
                     with open(prompt, 'r') as f:
                         return f.read()
@@ -218,14 +218,21 @@ class ConfigHandler:
             print(f'Warning: Could not find the prompt file. Using fallback prompt.')
             return self.conf['DEFAULT'].get('fallback_prompt', None)
 
-    def get_option(self, section, option):
+    def get_option(self, section, option, fallback=None):
         """
         Get a setting from the configuration file
+
         :param section: the section to get the setting from
         :param option: the option to get
+        :param fallback: the value to return if the option is not found. Defaults to None.
         :return: the setting
         """
-        return self.fix_values(self.conf.get(section, option))
+        try:
+            return self.fix_values(self.conf.get(section, option))
+        except NoSectionError:
+            return fallback
+        except NoOptionError:
+            return fallback
 
     @staticmethod
     def fix_values(value):
@@ -260,3 +267,72 @@ class ConfigHandler:
 
         # Return as is for other cases
         return value
+
+    @staticmethod
+    def resolve_file_path(file_name: str, base_dir=None, extension=None):
+        """
+        works out the path to a file based on the filename and optional base directory and can take an optional extension
+        :param file_name: name of the file to resolve the path to
+        :param base_dir: optional base directory to resolve the path from
+        :param extension: optional extension to append to the file name
+        :return: absolute path to the file or None
+        """
+        # return if file_name is None
+        if file_name is None:
+            return None
+
+        # If base_dir is not specified, use the current working directory
+        if base_dir is None:
+            base_dir = os.getcwd()
+        # If base_dir is a relative path, convert it to an absolute path based on the main.py directory
+        elif not os.path.isabs(base_dir):
+            main_dir = os.path.dirname(os.path.abspath(__file__))
+            base_dir = os.path.abspath(os.path.join(main_dir, base_dir))
+        # Expand user's home directory if base_dir starts with a tilde
+        base_dir = os.path.expanduser(base_dir)
+
+        # Check if base_dir exists and is a directory
+        if not os.path.isdir(base_dir):
+            return None
+
+        # If the file_name is an absolute path, check if it exists
+        file_name = os.path.expanduser(file_name)
+        if os.path.isabs(file_name):
+            if os.path.isfile(file_name):
+                return file_name
+            elif extension is not None and os.path.isfile(file_name + extension):
+                return file_name + extension
+        else:
+            # If the file_name is a relative path, check if it exists
+            full_path = os.path.join(base_dir, file_name)
+            if os.path.isfile(full_path):
+                return full_path
+            elif extension is not None and os.path.isfile(full_path + extension):
+                return full_path + extension
+
+            # If the file_name is just a file name, check if it exists in the base directory
+            full_path = os.path.join(base_dir, file_name)
+            if os.path.isfile(full_path):
+                return full_path
+            elif extension is not None and os.path.isfile(full_path + extension):
+                return full_path + extension
+
+        # If none of the conditions are met, return None
+        return None
+
+    @staticmethod
+    def resolve_directory_path(dir_name: str):
+        """
+        works out the path to a directory
+        :param dir_name: name of the directory to resolve the path to
+        :return: absolute path to the directory
+        """
+        dir_name = os.path.expanduser(dir_name)
+        if not os.path.isabs(dir_name):
+            path = os.path.join(os.path.dirname(os.path.abspath(__file__)), dir_name)
+            if os.path.isdir(path):
+                return path
+        else:
+            if os.path.isdir(dir_name):
+                return dir_name
+        return None

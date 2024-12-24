@@ -16,11 +16,13 @@ class ChatMode(InteractionMode):
 
     def start(self):
         # Setup some core actions
-        tc = self.session.get_action('tab_completion')
         sc = self.session.get_action('process_subcommands')
         pc = self.session.get_action('process_contexts')
-        ui = self.session.get_action('ui')
+        ui = self.session.utils
+        tc = ui.tab_completion
+        tc.set_session(self.session)  # Set the session for tab completion for dynamic context completion
         response = self.session.get_action('print_response')
+
 
         # Start the chat session loop
         tc.run('chat')
@@ -33,8 +35,8 @@ class ChatMode(InteractionMode):
                 first_line = True
                 user_input = []
                 while True:
-                    prompt = f"{ui.color_wrap(self.params['user_label'], self.params['user_label_color'])} " if first_line else ""
-                    line = input(prompt)
+                    prompt = f"{ui.output.style_text(self.params['user_label'], fg=self.params['user_label_color'])} " if first_line else ""
+                    line = ui.input.get_input(prompt)
                     first_line = False
                     if line.rstrip() == r"\\":
                         break
@@ -46,22 +48,19 @@ class ChatMode(InteractionMode):
 
                 full_input = "".join(user_input).rstrip()  # Join without spaces and remove trailing newline
                 user_input = full_input
-                # user_input = input(f"{user_label} ")
-                ui.print()
+                ui.output.write()
 
                 # Process any subcommands (will return True if no subcommands are found)
                 if sc.run(user_input):
                     continue
 
             except (KeyboardInterrupt, EOFError):
-                ui.print()
                 try:
-                    input(ui.color_wrap("Hit Ctrl-C again to quit or Enter to continue.", 'red'))
-                    ui.print()
+                    ui.input.get_input(ui.output.style_text("Hit Ctrl-C again to quit or Enter to continue.", fg='red'), spacing=1)
                     tc.run('chat')  # They hit enter to continue
                     continue
                 except (KeyboardInterrupt, EOFError):  # They hit Ctrl-C again
-                    ui.print()
+                    ui.output.write()
                     self.session.get_action('persist_stats').run()
                     raise  # Re-raise to exit
 
@@ -75,4 +74,4 @@ class ChatMode(InteractionMode):
             # Start the response
             response.run()
 
-            ui.print()
+            ui.output.write()

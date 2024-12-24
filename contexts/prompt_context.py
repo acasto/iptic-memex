@@ -1,6 +1,5 @@
 import sys
 from session_handler import InteractionContext
-from helpers import resolve_file_path
 
 
 class PromptContext(InteractionContext):
@@ -34,7 +33,7 @@ class PromptContext(InteractionContext):
                 prompt_directory = self.session.conf.get_option('DEFAULT', 'prompt_directory')
             else:
                 prompt_directory = params.get('prompt_directory')
-            prompt_file = resolve_file_path(prompt, prompt_directory, '.txt')
+            prompt_file = self.session.utils.fs.resolve_file_path(prompt, prompt_directory, '.txt')
             if prompt_file is not None:
                 with open(prompt_file, 'r') as f:
                     self.prompt['name'] = prompt_file
@@ -42,7 +41,7 @@ class PromptContext(InteractionContext):
                     return
 
             # if prompt is a file check and make sure it exists and return it
-            prompt_file = resolve_file_path(prompt)
+            prompt_file = self.session.utils.fs.resolve_file_path(prompt)
             if prompt_file is not None:
                 with open(prompt_file, 'r') as f:
                     self.prompt['name'] = prompt_file

@@ -11,7 +11,8 @@ class ManageChatsAction(InteractionAction):
     def __init__(self, session):
         self.session = session
         self.params = session.get_params()
-        self.tc = session.get_action('tab_completion')
+        self.tc = session.get_utils().tab_completion
+        self.tc.set_session(session)
         self.chat = session.get_context('chat')
 
     def run(self, args=None):

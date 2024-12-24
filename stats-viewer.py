@@ -9,7 +9,7 @@ DB_PATH = os.path.expanduser('~/.config/iptic-memex/db.sqlite')
 MODELS_INI_PATH = 'models.ini'
 USER_MODELS_INI_PATH = os.path.expanduser('~/.config/iptic-memex/models.ini')
 # Local models and the models to compare pricing against
-LOCAL_MODELS = ['llama-3.3', 'llama-3.1']
+LOCAL_MODELS = ['llama-3.3', 'llama-3.1', 'llama-3.1-8b', 'llama-3.2-1b', 'qwq-32b-preview']
 COMPARISON_MODELS = ['gpt-4o', 'sonnet-3.5']
 
 # Load models configuration

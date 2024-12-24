@@ -5,6 +5,8 @@ from llama_cpp import Llama
 from llama_cpp.llama_speculative import LlamaPromptLookupDecoding
 import io
 from contextlib import redirect_stderr
+from providers.llamacpp_draft_model import LlamaSmallModelDraft
+from providers.llamacpp_draft_model import LlamaSmallModelDraftWithMetrics
 
 
 class LlamaCppProvider(APIProvider):
@@ -26,10 +28,21 @@ class LlamaCppProvider(APIProvider):
         verbose = self.params.get('verbose', False)
 
         # If you want to enable speculative decoding when requested:
-        draft_model = None
+        self.draft_model = None
         logits_all = False
-        if self.params.get('speculative', False):
-            draft_model = LlamaPromptLookupDecoding(
+        if self.params.get('speculative', False) == "draft":
+            print("Using draft model for speculative decoding")
+            self.draft_model = LlamaSmallModelDraftWithMetrics(
+                # model_path="/Users/adam/LLM/models/draft/Llama-3.2-3B-Instruct-Q5_K_M.gguf",
+                model_path="/Users/adam/LLM/models/draft/Llama-3.2-1B-Instruct-Q5_K_M.gguf",
+                num_draft_tokens=self.params.get('draft', 10),
+                temperature=0.2
+            )
+            logits_all = True
+        if self.params.get('speculative', False) == "prompt":
+            print("Using prompt lookup decoding")
+            self.draft_model = LlamaPromptLookupDecoding(
+                max_ngram_size=5,
                 num_pred_tokens=self.params.get('draft', 10),
             )
             logits_all = True
@@ -42,8 +55,12 @@ class LlamaCppProvider(APIProvider):
                 n_ctx=n_ctx,
                 embedding=embedding,
                 n_gpu_layers=n_gpu_layers,
-                draft_model=draft_model,
+                draft_model=self.draft_model,
                 logits_all=logits_all,
+                use_mlock=False,
+                flash_attn=True,
+                # type_k=6,
+                # type_v=6,  # not supported yet in upstream
                 verbose=verbose
             )
 
@@ -111,18 +128,16 @@ class LlamaCppProvider(APIProvider):
             # Note: create_chat_completion returns a dict like OpenAI API
             response = self.llm.create_chat_completion(**api_parms)
 
-            # If streaming is not used, return the final text
-            if not api_parms.get('stream', False):
-                if 'usage' in response:
+            # if in stream mode chain the generator, else return the text response
+            if 'stream' in api_parms and api_parms['stream'] is True:
+                return response
+            else:
+                if response['usage'] is not None:
                     self.turn_usage = response['usage']
                 if self.turn_usage:
                     self.running_usage['total_in'] += self.turn_usage['prompt_tokens']
                     self.running_usage['total_out'] += self.turn_usage['completion_tokens']
                 return response['choices'][0]['message']['content']
-            else:
-                # For streaming, `create_chat_completion(stream=True)` returns a generator
-                # We'll handle it in stream_chat()
-                return response
 
         except Exception as e:
             print("An exception occurred in llama-cpp provider:")
@@ -177,7 +192,8 @@ class LlamaCppProvider(APIProvider):
         completion_token_count = len(completion_tokens)
 
         total_token_count = prompt_token_count + completion_token_count
-
+        if self.params.get('speculative', False) == "draft":
+            self.draft_model.print_overall_metrics()
         # Create a usage dict compatible with what we'd normally expect
         self.turn_usage = {
             'prompt_tokens': prompt_token_count,
@@ -189,7 +205,9 @@ class LlamaCppProvider(APIProvider):
         self.running_usage['total_in'] += prompt_token_count
         self.running_usage['total_out'] += completion_token_count
         self.running_usage['total_time'] += time() - start_time
-
+        # Print the tokens per second
+        # print()
+        # print(f"TPS: {total_token_count / self.running_usage['total_time']}")
 
     def assemble_message(self) -> list:
         """

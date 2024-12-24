@@ -1,9 +1,43 @@
-from session_handler import InteractionAction
 import re
+import tempfile
 import subprocess
+from session_handler import InteractionAction
+from pathlib import Path
+import os
 
 
 class AssistantSubcommandsAction(InteractionAction):
+    """
+    A revised version of the assistant commands action with a new command format.
+
+    Command Format:
+    We use a start and end delimiter to clearly define the command block.
+    Example:
+
+    %%COMMAND_NAME%%
+    key1="value1"
+    key2=value2
+    <optional blank line>
+    <any content, including code blocks, etc.>
+    %%END%%
+
+    Parsing Logic:
+    1. Find all occurrences of blocks starting with %%COMMAND_NAME%% and ending with %%END%%.
+    2. Extract command_name from the first line (COMMAND_NAME must match a known command).
+    3. Subsequent lines until a blank line or non-argument line are treated as arguments.
+       - Arguments must be defined in self.commands[command_name]["args"] to be parsed as args.
+    4. Everything after that is considered content and passed as a single string.
+    5. Dispatch to the appropriate handler defined in self.commands.
+
+    Security & Validation:
+    - Only parse arguments that match known argument keys.
+    - Lines that don’t strictly match argument lines or contain unknown keys become content.
+
+    Extensibility:
+    - To add a new command, define it in self.commands with args, and a function.
+    - The handler receives a dict of args and a content string.
+    """
+
     def __init__(self, session):
         self.session = session
         self.params = session.get_params()
@@ -12,126 +46,385 @@ class AssistantSubcommandsAction(InteractionAction):
                 "args": [],
                 "function": {"type": "method", "name": "handle_datetime_command"}
             },
-            # Just an example, probably not recommended to let assistant run arbitrary bash commands
-            # "BASH_COMMAND": {
-            #    "args": ["command"],
-            #    "function": {"type": "method", "name": "handle_bash_command"}
-            # },
-            "UPTIME": {
-                "args": [],
-                "function": {"type": "method", "name": "handle_uptime_command"}
+            "CMD": {
+                "args": ["command", "arguments"],
+                "function": {"type": "method", "name": "handle_shell_command"}
+            },
+            "MATH": {
+                "args": ["bc_flags", "expression"],
+                "function": {"type": "method", "name": "handle_math"}
+            },
+            "MEMORY": {
+                "args": ["action"],
+                "function": {"type": "method", "name": "handle_memory_command"}
             },
             "ASK_AI": {
                 "args": ["model", "question"],
-                "function": {"type": "method", "name": "handle_ask_ai_command"}
+                "function": {"type": "method", "name": "handle_ask_ai"}
             }
-            # Add more commands here
+            # Add more commands here as needed.
         }
 
     def run(self, response: str = None):
         # Parse commands in the response
-        parsed_commands = self.parse_commands(response, self.commands)
+        parsed_commands = self.parse_commands(response)
 
         # Process commands
-        for command in parsed_commands:
-            if command['command'] in self.commands:
-                command_info = self.commands[command['command']]
-                if command_info["function"]["type"] == "method":
-                    method = getattr(self, command_info["function"]["name"])
-                    method(command['args'])
+        for cmd in parsed_commands:
+            command_name = cmd['command']
+            if command_name in self.commands:
+                command_info = self.commands[command_name]
+                handler = command_info["function"]
+                if handler["type"] == "method":
+                    method = getattr(self, handler["name"])
+                    method(cmd['args'], cmd['content'])
                 else:
-                    action = self.session.get_action(command_info["function"]["name"])
-                    action.run(command['args'])
+                    # If in future you want to run a different type of function/action
+                    action = self.session.get_action(handler["name"])
+                    action.run(cmd['args'], cmd['content'])
 
-        # Final processing: check for code blocks and reprint if necessary
+        # Final processing: if highlighting is True and code blocks are present, reprint chat
         if '```' in response:
             if 'highlighting' in self.params and self.params['highlighting'] is True:
                 self.session.get_action('reprint_chat').run()
 
-    @staticmethod
-    def parse_commands(text, commands):
-        # Regular expression to match commands with or without arguments
-        # pattern = r'###([A-Z0-9_]+)###'
-        pattern = r'(?<!["\'`])###([A-Z0-9_]+)###(?!["\'`])'
-
-        # Find all commands in the text
-        matches = re.finditer(pattern, text)
+    def parse_commands(self, text: str):
+        # Pattern to find command blocks:
+        # The pattern: A line starting with %%COMMAND_NAME%% followed by lines until %%END%%.
+        command_pattern = r'(?P<block>(?<!["\'`])%%(?P<command>[A-Z0-9_]+)%%([\s\S]*?)%%END%%)'
+        blocks = re.finditer(command_pattern, text)
 
         command_stack = []
 
-        for match in matches:
-            command_name = match.group(1)
+        for match in blocks:
+            block_content = match.group('block')
+            command_name = match.group('command')
 
-            # Check if the command is valid
-            if command_name in commands:
-                # Check if the command has arguments
-                if commands[command_name]["args"]:
-                    # Look for arguments
-                    start_index = match.end()
-                    args_str = ""
-                    for char in text[start_index:]:
-                        if char == "#":
-                            break
-                        args_str += char
-                    # Parse arguments
-                    args_dict = {}
-                    pairs = re.findall(r'(\w+)="([^"]*)"|(\w+)=(\S+)', args_str)
-                    for pair in pairs:
-                        key, value, key2, value2 = pair
-                        if key:
-                            args_dict[key] = value
-                        else:
-                            args_dict[key2] = value2
-                    # Add command with arguments to the stack
-                    command_stack.append({
-                        'command': command_name,
-                        'args': args_dict
-                    })
-                else:
-                    # If the command has no arguments, add it to the stack as is
-                    command_stack.append({
-                        'command': command_name,
-                        'args': {}
-                    })
-            else:
-                # If the command is not valid, skip it
-                continue
+            # Now we parse the content inside the block (excluding the start and end lines)
+            lines = block_content.split('\n')
+
+            # The first line is "%%COMMAND_NAME%%"
+            # The rest are arguments and content.
+            command_info = self.commands.get(command_name, {})
+            known_args = command_info.get("args", [])
+            args, command_content = self.extract_args_and_content(lines[1:], known_args)
+
+            command_stack.append({
+                'command': command_name,
+                'args': args,
+                'content': command_content
+            })
 
         return command_stack
 
-    def handle_datetime_command(self, args=None):
-        # Add the current date and time to the assistant context
+    @staticmethod
+    def extract_args_and_content(lines, known_args):
+        # Remove trailing %%END%% line if present
+        if lines and lines[-1].strip() == '%%END%%':
+            lines = lines[:-1]
+
+        args = {}
+        content_start = None
+
+        # A line is considered a pure argument line if:
+        # 1. It is not empty.
+        # 2. Every token matches key="value" or key=value
+        # 3. Every key is in known_args
+        arg_token_pattern = r'(\w+)="([^"]*)"|(\w+)=(\S+)'
+
+        # noinspection PyShadowingNames
+        def is_arg_line(candidate_line):
+            stripped = candidate_line.strip()
+            if stripped == '':
+                # Blank line means end of args
+                return False
+            # Find all tokens
+            candidate_pairs = re.findall(arg_token_pattern, stripped)
+            if not candidate_pairs:
+                # No argument pairs found
+                return False
+
+            # Reconstruct entire line from pairs to ensure this line is ONLY arguments
+            reconstructed = []
+            for k1, v1, k2, v2 in candidate_pairs:
+                key = k1 if k1 else k2
+                val = v1 if k1 else v2
+                # If key not in known args, can't treat as argument line
+                if key not in known_args:
+                    return False
+                # We'll just record it to ensure formatting matches arguments only
+                if ' ' in val:
+                    # If there's a space in val not enclosed in quotes, check if it's from quoted pattern.
+                    # Actually we've matched quotes in the regex, so no further check needed.
+                    pass
+                if k1:
+                    reconstructed.append(f'{key}="{val}"')
+                else:
+                    reconstructed.append(f'{key}={val}')
+
+            # Join reconstructed to see if it matches the stripped line exactly in terms of argument formatting
+            # We'll allow arguments separated by whitespace. We just need to ensure no extra non-argument stuff.
+            # Since we did a global match, if there's extra text that isn't matched as an argument,
+            # pairs wouldn't match the entire line. Let's do a quick check to ensure there's no leftover text.
+            # Another approach is to use a stricter regex that matches the whole line, but let's do a quick check:
+            arg_line_pattern = r'^(\w+="[^"]*"|\w+=\S+)(\s+(\w+="[^"]*"|\w+=\S+))*\s*$'
+            if re.match(arg_line_pattern, stripped):
+                return True
+            return False
+
+        # Parse argument lines first
+        for i, line in enumerate(lines):
+            if is_arg_line(line):
+                # Parse arguments from this line
+                pairs = re.findall(arg_token_pattern, line.strip())
+                for k1, v1, k2, v2 in pairs:
+                    key = k1 if k1 else k2
+                    val = v1 if k1 else v2
+                    args[key] = val
+            else:
+                # This line is not a pure argument line, so treat it and all subsequent lines as content
+                content_start = i
+                break
+
+        if content_start is None:
+            # No non-argument line found, content might be empty
+            content_start = len(lines)
+
+        content = '\n'.join(lines[content_start:])
+        return args, content
+
+    def handle_datetime_command(self, args, content):
         from datetime import datetime
         timestamp = "Current date and time: " + datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
         self.session.add_context('assistant', {'name': 'assistant_context', 'content': timestamp})
 
-    def handle_uptime_command(self, args=None):
-        # Run the uptime command and add the output to the context
-        output = subprocess.run('uptime', shell=True, capture_output=True, text=True)
-        if output.stdout:
+    def handle_memory_command(self, args, content):
+        if args.get('action') == 'save':
+            output = subprocess.run('echo ' + args.get('memory') + ' >> /Users/adam/.config/iptic-memex/memory.txt',
+                                    shell=True, capture_output=True, text=True)
+        if args.get('action') == 'read':
+            output = subprocess.run('cat /Users/adam/.config/iptic-memex/memory.txt', shell=True, capture_output=True,
+                                    text=True)
             self.session.add_context('assistant', {'name': 'assistant_context', 'content': output.stdout})
-        if output.stderr:
-            self.session.add_context('assistant', {'name': 'assistant_context', 'content': output.stderr})
 
-    def handle_ask_ai_command(self, args):
-        # Handle the ask_ai command
+    def handle_math(self, args, content):
+        bc_args = args.get('bc_flags', '')
+        bc_expression = args.get('expression', content)
+        bc_command = ['bc'] + bc_args.split()
+        output = self.run_with_temp_file(bc_command, bc_expression)
+        self.session.add_context('assistant', {
+            'name': 'assistant_context',
+            'content': output
+        })
+
+    def handle_ask_ai(self, args, content):
         model = args.get('model', 'claude')
         question = args.get('question', '')
-        # Get output by running the bash command: echo "<question>" | memex -m <model> -f -"
-        output = subprocess.run(f'echo "{question}" | memex -m {model} -f -', shell=True, capture_output=True, text=True)
-        self.session.add_context('assistant', {'name': 'assistant_context', 'content': output.stdout})
+        question += '\n' + content if content else ''
+        ai_command = [f'memex', '-m', model, '-f', '-']
+        output = self.run_with_temp_file(ai_command, question)
+        self.session.add_context('assistant', {
+            'name': 'assistant_context',
+            'content': output
+        })
 
-    def handle_bash_command(self, args):
-        # Run the bash command and add the output to the context
-        command = args['command']
-        output = subprocess.run(command, shell=True, capture_output=True, text=True)
-        if output.stdout:
-            self.session.add_context('multiline_input', {
-                'name': 'Bash Output',
-                'content': output.stdout
-            })
-        if output.stderr:
-            self.session.add_context('multiline_input', {
-                'name': 'Bash Error',
-                'content': output.stderr
-            })
+    def handle_shell_command(self, args, content):
+        # A dictionary of allowed commands mapped to their handler functions.
+        # Each handler function takes a list of arguments and returns (success, output).
+        safe_dispatch = {
+            'ls': self.run_ls,
+            'pwd': self.run_pwd,
+            'cat': self.run_cat,
+            'grep': self.run_grep,
+            'find': self.run_find,
+            'head': self.run_head,
+            'tail': self.run_tail,
+            # Add more handlers here if needed.
+        }
+
+        # Retrieve requested command and arguments (if any)
+        command = args.get('command', '').strip()
+        raw_args = args.get('arguments', '').strip()
+
+        # Basic sanity checks:
+        # Strip out shell metacharacters from arguments to reduce injection risks.
+        # This is a simple safeguard; more robust solutions might be needed in production.
+        dangerous_chars = [';', '|', '&', '`', '$', '<', '>', '(', ')', '{', '}', '!', '\\']
+        for c in dangerous_chars:
+            raw_args = raw_args.replace(c, '')
+
+        # Split arguments on whitespace for safer handling
+        arg_list = raw_args.split()
+
+        if command not in safe_dispatch:
+            allowed = ', '.join(safe_dispatch.keys())
+            msg = f"Command '{command}' is not allowed. Allowed commands: {allowed}"
+            self.session.add_context('assistant', {'name': 'assistant_context', 'content': msg})
+            return
+
+        # Call the appropriate handler function
+        success, output = safe_dispatch[command](arg_list, content)
+        if success:
+            self.session.add_context('assistant', {'name': 'assistant_context', 'content': output})
+        else:
+            self.session.add_context('assistant', {'name': 'assistant_context', 'content': f"Error: {output}"})
+
+    @staticmethod
+    def run_pwd(arg_list, content):
+        # pwd typically takes no arguments safely
+        if len(arg_list) == 0:
+            output = subprocess.run(['pwd'], capture_output=True, text=True)
+            return True, output.stdout if output.returncode == 0 else output.stderr
+        else:
+            return False, f"pwd does not support arguments."
+
+    @staticmethod
+    def run_ls(arg_list, content):
+        # Separate options (start with '-') from positional arguments (paths)
+        options = [a for a in arg_list if a.startswith('-')]
+        paths = [a for a in arg_list if not a.startswith('-')]
+
+        # If no paths are given, default to '.'
+        if not paths:
+            paths = ['.']
+
+        # Validate that no path is absolute
+        # for p in paths:
+        #     if p.startswith('/'):
+        #         return False, f"Absolute paths not allowed: {p}"
+
+        # Construct the final command
+        cmd = ['ls'] + options + paths
+        output = subprocess.run(cmd, capture_output=True, text=True)
+        return (True, output.stdout) if output.returncode == 0 else (False, output.stderr)
+
+    @staticmethod
+    def run_grep(arg_list, content):
+        # grep usage: grep [options] pattern file
+        # Let's find the last argument as file (path), the first non-option as pattern.
+        options = [a for a in arg_list if a.startswith('-')]
+        non_options = [a for a in arg_list if not a.startswith('-')]
+
+        # We need at least a pattern and a file
+        if len(non_options) < 2:
+            return False, "Please provide a pattern and a file for grep. Usage: grep [options] pattern file"
+
+        # The last non-option argument should be the file
+        file_path = non_options[-1]
+        pattern = ' '.join(non_options[:-1])  # If pattern is multiple words, join them.
+        # If pattern is strictly one argument, just use non_options[-2] before file.
+        # But let's assume multi-word patterns are allowed.
+
+        if file_path.startswith('/'):
+            return False, f"Absolute paths are not allowed in grep: {file_path}"
+
+        cmd = ['grep'] + options + [pattern, file_path]
+        output = subprocess.run(cmd, capture_output=True, text=True)
+        return (True, output.stdout) if output.returncode == 0 else (False, output.stderr)
+
+    @staticmethod
+    def run_find(arg_list, content):
+        # find usage: find [path] [options...]
+        # Usually the first argument after 'find' is the path, then options/conditions follow.
+        if not arg_list:
+            # Default path is '.' if none provided
+            arg_list = ['.']
+
+        path = arg_list[0]
+        # if path.startswith('/'):
+        #     return False, f"Absolute paths are not allowed in find: {path}"
+
+        # The rest are options/conditions
+        conditions = arg_list[1:]
+
+        # Disallow '-exec' for safety
+        if '-exec' in conditions:
+            return False, "The -exec option is not allowed due to security concerns."
+
+        # For simplicity, let's just allow conditions that do not contain absolute paths.
+        # Patterns like '-name test.py' are allowed. Just check that no argument starts with '/'
+        for c in conditions:
+            if c.startswith('/'):
+                return False, f"Argument '{c}' is not allowed as it starts with '/'."
+
+        # Construct the final command
+        cmd = ['find', path] + conditions
+        output = subprocess.run(cmd, capture_output=True, text=True)
+        return (True, output.stdout) if output.returncode == 0 else (False, output.stderr)
+
+    @staticmethod
+    def run_cat(arg_list, content):
+        # Separate options from file arguments
+        options = [a for a in arg_list if a.startswith('-')]
+        files = [a for a in arg_list if not a.startswith('-')]
+
+        # Validate that no file path is absolute
+        # for f in files:
+        #     if f.startswith('/'):
+        #         return False, f"Absolute paths are not allowed in cat: {f}"
+
+        # If no files are provided, cat reads from stdin - this is allowed.
+        # Construct the command
+        cmd = ['cat'] + options + files
+        output = subprocess.run(cmd, capture_output=True, text=True)
+        return (True, output.stdout) if output.returncode == 0 else (False, output.stderr)
+
+    @staticmethod
+    def run_head(arg_list, content):
+        # Separate options from files
+        # Example usage: head -n 10 file.txt
+        options = [a for a in arg_list if a.startswith('-')]
+        files = [a for a in arg_list if not a.startswith('-')]
+
+        # Validate that no file path is absolute
+        # for f in files:
+        #     if f.startswith('/'):
+        #         return False, f"Absolute paths not allowed in head: {f}"
+
+        # If no files are given, head will read from stdin.
+        cmd = ['head'] + options + files
+        output = subprocess.run(cmd, capture_output=True, text=True)
+        return (True, output.stdout) if output.returncode == 0 else (False, output.stderr)
+
+    @staticmethod
+    def run_tail(arg_list, content):
+        # Separate options from files
+        # Example usage: tail -n 10 file.txt
+        options = [a for a in arg_list if a.startswith('-')]
+        files = [a for a in arg_list if not a.startswith('-')]
+
+        # Validate that no file path is absolute
+        # for f in files:
+        #     if f.startswith('/'):
+        #         return False, f"Absolute paths not allowed in tail: {f}"
+
+        # If no files are given, tail will read from stdin.
+        cmd = ['tail'] + options + files
+        output = subprocess.run(cmd, capture_output=True, text=True)
+        return (True, output.stdout) if output.returncode == 0 else (False, output.stderr)
+
+    @staticmethod
+    def run_with_temp_file(command, content, mode='w+', encoding='utf-8'):
+        kwargs = {'mode': mode}
+        if 'b' not in mode and encoding:
+            kwargs['encoding'] = encoding
+
+        try:
+            with tempfile.NamedTemporaryFile(**kwargs) as temp_file:
+                temp_file.write(content)
+                temp_file.flush()
+                temp_file.seek(0)
+                try:
+                    output = subprocess.run(
+                        command,
+                        stdin=temp_file,
+                        capture_output=True,
+                        text=True,
+                        check=True
+                    )
+                    return output.stdout.strip()
+                except subprocess.CalledProcessError as e:
+                    return f"Error: Command {' '.join(command)} failed with exit status {e.returncode}\n{e.stderr.strip()}"
+        except OSError as e:
+            raise OSError(f"Error creating or deleting temporary file: {e}")
+

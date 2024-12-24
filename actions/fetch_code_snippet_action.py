@@ -6,8 +6,9 @@ from session_handler import InteractionAction
 class FetchCodeSnippetAction(InteractionAction):
     def __init__(self, session):
         self.session = session
-        self.tc = session.get_action('tab_completion')
-        self.token_counter = self.session.get_action('count_tokens')
+        self.tc = session.utils.tab_completion
+        self.tc.set_session(session)
+        self.token_counter = session.get_action('count_tokens')
 
     def run(self, args=None):
         self.tc.run('file_path')
@@ -43,7 +44,8 @@ class FetchCodeSnippetAction(InteractionAction):
             print(f"Error parsing Python file: {str(e)}")
 
     # noinspection PyTypeChecker
-    def extract_python_elements(self, tree):
+    @staticmethod
+    def extract_python_elements(tree):
         elements = [{'type': 'entire_file', 'name': 'Entire File', 'node': tree}]
         for node in ast.iter_child_nodes(tree):
             if isinstance(node, ast.ClassDef):
@@ -97,7 +99,8 @@ class FetchCodeSnippetAction(InteractionAction):
             except ValueError:
                 print("Invalid input. Please enter a number or 'q'.")
 
-    def get_token_count(self, text):
+    @staticmethod
+    def get_token_count(text):
         # Implement token counting logic here if needed
         # For now, we'll just return the character count as a placeholder
         return len(text)

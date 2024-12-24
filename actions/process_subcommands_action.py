@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from session_handler import InteractionAction
 
 
@@ -5,7 +7,8 @@ class ProcessSubcommandsAction(InteractionAction):
 
     def __init__(self, session):
         self.session = session
-        self.tc = session.get_action('tab_completion')
+        self.tc = session.utils.tab_completion
+        self.tc.set_session(session)
         self.chat = session.get_context('chat')
         self.commands = {
             "help": {
@@ -104,6 +107,10 @@ class ProcessSubcommandsAction(InteractionAction):
                 "description": "Show usage statistics",
                 "function": {"type": "action", "name": "show", "args": "usage"},
             },
+            "show contexts": {
+                "description": "List all contexts",
+                "function": {"type": "action", "name": "show", "args": "contexts"},
+            },
             "set option": {
                 "description": "Set an option",
                 "function": {"type": "action", "name": "set_option"},
@@ -144,9 +151,9 @@ class ProcessSubcommandsAction(InteractionAction):
                 "description": "Run a command",
                 "function": {"type": "action", "name": "run_command"},
             },
-            "run persist": {
+            "storage debug": {
                 "description": "Run a persist command",
-                "function": {"type": "action", "name": "persist"},
+                "function": {"type": "action", "name": "storage_debug"},
             },
         }
 

@@ -2,6 +2,7 @@ import importlib
 from abc import ABC, abstractmethod
 from typing import Any, Generator
 from config_handler import ConfigHandler
+from utils_handler import UtilsHandler
 
 
 ############################################################################################################
@@ -83,6 +84,7 @@ class SessionHandler:
 
     def __init__(self, config_file=None):
         self.conf = ConfigHandler(config_file)
+        self.utils = UtilsHandler(self.conf)
         self.session_state = {
             "context": {},
             "params": {},
