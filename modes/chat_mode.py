@@ -23,7 +23,6 @@ class ChatMode(InteractionMode):
         tc.set_session(self.session)  # Set the session for tab completion for dynamic context completion
         response = self.session.get_action('print_response')
 
-
         # Start the chat session loop
         tc.run('chat')
         while True:

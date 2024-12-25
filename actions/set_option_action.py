@@ -9,6 +9,7 @@ class SetOptionAction(InteractionAction):
         self.tc.set_session(session)
 
     def run(self, args: list = None):
+        print(self.session.get_params())
         if len(args) == 0:
             self.tc.run('option')
             while True:

@@ -2,8 +2,6 @@ import re
 import tempfile
 import subprocess
 from session_handler import InteractionAction
-from pathlib import Path
-import os
 
 
 class AssistantSubcommandsAction(InteractionAction):
@@ -44,18 +42,22 @@ class AssistantSubcommandsAction(InteractionAction):
         self.commands = {
             "DATETIME": {
                 "args": [],
+                'auto_submit': True,
                 "function": {"type": "method", "name": "handle_datetime_command"}
             },
             "CMD": {
                 "args": ["command", "arguments"],
+                'auto_submit': True,
                 "function": {"type": "method", "name": "handle_shell_command"}
             },
             "MATH": {
                 "args": ["bc_flags", "expression"],
+                'auto_submit': True,
                 "function": {"type": "method", "name": "handle_math"}
             },
             "MEMORY": {
                 "args": ["action"],
+                'auto_submit': True,
                 "function": {"type": "method", "name": "handle_memory_command"}
             },
             "ASK_AI": {
@@ -70,49 +72,72 @@ class AssistantSubcommandsAction(InteractionAction):
         parsed_commands = self.parse_commands(response)
 
         # Process commands
+        auto_submit = None  # Track if we should auto-submit after all commands
         for cmd in parsed_commands:
             command_name = cmd['command']
             if command_name in self.commands:
                 command_info = self.commands[command_name]
+                # Check auto-submit status
+                allow_auto_submit = self.session.conf.get_option('TOOLS', 'allow_auto_submit', fallback=False)
+                if command_info.get('auto_submit') and auto_submit is not False and allow_auto_submit:
+                    auto_submit = True
+                elif not command_info.get('auto_submit'):
+                    auto_submit = False
+
+                # Run the command
                 handler = command_info["function"]
                 if handler["type"] == "method":
                     method = getattr(self, handler["name"])
                     method(cmd['args'], cmd['content'])
                 else:
-                    # If in future you want to run a different type of function/action
                     action = self.session.get_action(handler["name"])
                     action.run(cmd['args'], cmd['content'])
 
+        # Handle auto-submit if allowed and not disabled by any command
+        if auto_submit:
+            self._submit_assistant_response()
+            return
+
         # Final processing: if highlighting is True and code blocks are present, reprint chat
+        # todo - this probably should be, and might have once been, in the print_response action
         if '```' in response:
             if 'highlighting' in self.params and self.params['highlighting'] is True:
                 self.session.get_action('reprint_chat').run()
 
     def parse_commands(self, text: str):
-        # Pattern to find command blocks:
-        # The pattern: A line starting with %%COMMAND_NAME%% followed by lines until %%END%%.
-        command_pattern = r'(?P<block>(?<!["\'`])%%(?P<command>[A-Z0-9_]+)%%([\s\S]*?)%%END%%)'
+        # Normalize line endings first
+        text = text.replace('\r\n', '\n')
+
+        # Enhanced pattern that ensures both command and END are on their own lines
+        command_pattern = (
+            r'(?m)(?P<block>'
+            r'^[ \t]*(?<!["\'`])%%(?P<command>[A-Z0-9_]+)%%[ \t]*\n'  # command line
+            r'(?P<content>[\s\S]*?)'                                   # content
+            r'^[ \t]*%%END%%[ \t]*$'                                  # end line
+            r')'
+        )
         blocks = re.finditer(command_pattern, text)
 
         command_stack = []
 
         for match in blocks:
-            block_content = match.group('block')
             command_name = match.group('command')
+            block_content = match.group('content')
 
-            # Now we parse the content inside the block (excluding the start and end lines)
-            lines = block_content.split('\n')
+            # Split content into lines, removing any leading/trailing blank lines
+            lines = [line for line in block_content.splitlines()]
 
-            # The first line is "%%COMMAND_NAME%%"
-            # The rest are arguments and content.
+            # Get command info and known args
             command_info = self.commands.get(command_name, {})
             known_args = command_info.get("args", [])
-            args, command_content = self.extract_args_and_content(lines[1:], known_args)
+
+            # Extract args and content, with clean line handling
+            args, command_content = self.extract_args_and_content(lines, known_args)
 
             command_stack.append({
                 'command': command_name,
                 'args': args,
-                'content': command_content
+                'content': command_content.strip()  # Remove any trailing whitespace from final content
             })
 
         return command_stack
@@ -192,6 +217,24 @@ class AssistantSubcommandsAction(InteractionAction):
 
         content = '\n'.join(lines[content_start:])
         return args, content
+
+    def _submit_assistant_response(self):
+        """Handle submission of assistant response to get AI completion"""
+        contexts = self.session.get_action('process_contexts').get_contexts(self.session)
+        chat = self.session.get_context('chat')
+
+        # Submit the assistant response based on the context
+        if contexts:
+            processed_context = self.session.get_action('process_contexts').process_contexts_for_assistant(contexts)
+            chat.add(processed_context, 'assistant')
+
+        # Clear the contexts after adding them
+        for context in list(self.session.get_context().keys()):
+            if context != 'prompt' and context != 'chat':
+                self.session.remove_context_type(context)
+
+        # Get and print response
+        self.session.get_action('print_response').run()
 
     def handle_datetime_command(self, args, content):
         from datetime import datetime
@@ -427,4 +470,3 @@ class AssistantSubcommandsAction(InteractionAction):
                     return f"Error: Command {' '.join(command)} failed with exit status {e.returncode}\n{e.stderr.strip()}"
         except OSError as e:
             raise OSError(f"Error creating or deleting temporary file: {e}")
-

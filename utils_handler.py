@@ -4,6 +4,7 @@ class UtilsHandler:
         self.config = config
         self._output = None  # Lazy load output handler
         self._input = None  # Lazy load input handler
+        self._stream = None  # Lazy load stream handler
         self._fs = None  # Lazy load filesystem handler
         self._storage = None  # Lazy load storage handler
         self._tab_completion = None  # Lazy load tab completion handler
@@ -21,6 +22,13 @@ class UtilsHandler:
             from utils.input_utils import InputHandler
             self._input = InputHandler(self.config, self.output)
         return self._input
+
+    @property
+    def stream(self):
+        if self._stream is None:
+            from utils.stream_utils import StreamHandler
+            self._stream = StreamHandler(self.config, self.output)
+        return self._stream
 
     @property
     def fs(self):

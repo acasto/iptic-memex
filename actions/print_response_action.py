@@ -1,4 +1,3 @@
-import time
 from session_handler import InteractionAction
 
 
@@ -13,43 +12,38 @@ class PrintResponseAction(InteractionAction):
 
     def run(self):
         """
-        Print the response to the user and reprint conversation if code block is detected
+        Print the response to the user and process it for commands
         """
         # Refresh the params
         self.params = self.session.get_params()
+
         # Start the response
-        response_label = self.ui.color_wrap(self.params['response_label'], self.params['response_label_color'])
-        print(f"{response_label} ", end='', flush=True)
+        response_label = self.ui.color_wrap(self.params['response_label'],
+                                            self.params['response_label_color'])
+        self.session.utils.output.write(f"{response_label} ", end='', flush=True)
 
-        response = ''
-        accumulator = ''
-
-        # if we are in stream mode, iterate through the stream of events
+        # Get response from provider (streaming or regular)
         if self.params['stream'] is True:
             try:
-                response = self.session.get_provider().stream_chat()
-                if response:
-                    for event in response:
-                        print(event, end='', flush=True)
-                        accumulator += event
-                        if 'stream_delay' in self.params:
-                            time.sleep(float(self.params['stream_delay']))
+                stream = self.session.get_provider().stream_chat()
+                if stream:
+                    response = self.session.utils.stream.process_stream(stream)
+                else:
+                    return
             except (KeyboardInterrupt, EOFError):
-                pass
-            print()
-            response = accumulator
-
-        # else just print the response
+                self.session.utils.output.write('')  # newline
+                return
         else:
             try:
                 response = self.session.get_provider().chat()
                 if response is None:
                     return
-                print(response)
-
+                self.session.utils.output.write(response)
+                self.session.utils.output.write('')  # newline
             except (KeyboardInterrupt, EOFError):
-                print()
+                self.session.utils.output.write('')  # newline
+                return
 
-        # Add the response to the chat and process for subcommands
+        # Add to chat context and process subcommands
         self.chat.add(response, 'assistant')
         self.sc.run(response)
