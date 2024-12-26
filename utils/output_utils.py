@@ -4,6 +4,9 @@ import sys
 import os
 import platform
 import ctypes
+import threading
+import time
+import itertools
 from dataclasses import dataclass, asdict
 from enum import Enum
 from typing import Optional, Dict, Any, List, TextIO, Union
@@ -140,6 +143,70 @@ class ColorSystem:
             return text
 
         return f"\033[{';'.join(codes)}m{text}\033[0m"
+
+
+class Spinner:
+    """Animated spinner for indicating progress."""
+
+    STYLES = {
+        'dots': '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏',
+        'line': '|/-\\',
+        'block': '▖▘▝▗',
+        'arrow': '←↖↑↗→↘↓↙',
+        'pulse': '• •• ••• •• •',
+        'blocks': '▏▎▍▌▋▊▉█',
+        'none': ''
+    }
+
+    def __init__(self, message: Optional[str] = None, delay=0.1, style=None, config=None):
+        default_style = 'dots'
+        if config:
+            default_style = config.get_option('DEFAULT', 'spinner_style', fallback='dots').lower()
+        style = style or default_style
+        spinner_chars = self.STYLES.get(style, self.STYLES['dots'])
+        self.enabled = bool(spinner_chars)
+        self.spinner = itertools.cycle(spinner_chars) if spinner_chars else None
+        self.delay = delay
+        self.message = f" {message}" if message else ""  # Add space if message exists
+        self.busy = False
+        self.thread = None
+        self._stream = sys.stdout
+        self._hide_cursor = '\033[?25l'
+        self._show_cursor = '\033[?25h'
+
+    def _spin(self):
+        while self.busy and self.enabled:
+            char = next(self.spinner)
+            # Write spinner and optional message
+            self._stream.write(f"{char}{self.message}")
+            self._stream.flush()
+            time.sleep(self.delay)
+            # Move cursor back over the spinner and message
+            self._stream.write('\b' * (1 + len(self.message)))
+
+    def __enter__(self):
+        if self.enabled:
+            self.busy = True
+            self._stream.write(self._hide_cursor)
+            self.thread = threading.Thread(target=self._spin)
+            self.thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.enabled:
+            self.busy = False
+            time.sleep(self.delay)
+            self.thread.join()
+            self._stream.write(self._show_cursor)
+            # Clear spinner and message by overwriting with spaces
+            self._stream.write(' ' * (1 + len(self.message)) + '\b' * (1 + len(self.message)))
+            self._stream.flush()
+
+
+class DummySpinnerContext:
+    """No-op context manager when spinner is not supported."""
+    def __enter__(self): return self
+    def __exit__(self, *args): pass
 
 
 # noinspection PyTypeChecker
@@ -359,3 +426,9 @@ class OutputHandler:
         Output a 'success' message in green and bold by default.
         """
         self.write(message, style=Style(fg='green', bold=True), **kwargs)
+
+    def spinner(self, message="", style=None):
+        """Get a spinner context manager for showing progress."""
+        if not self._supports_color() or not self._color_enabled:
+            return DummySpinnerContext()
+        return Spinner(message, style=style, config=self.config)

@@ -155,6 +155,10 @@ class ProcessSubcommandsAction(InteractionAction):
                 "description": "Run a persist command",
                 "function": {"type": "action", "name": "storage_debug"},
             },
+            "test spinner": {
+                "description": "Test the spinner",
+                "function": {"type": "method", "name": "test_spinner"},
+            }
         }
 
     def run(self, user_input: str = None) -> bool | None:
@@ -210,3 +214,8 @@ class ProcessSubcommandsAction(InteractionAction):
             quit()
         else:
             print()
+
+    def test_spinner(self, style="dots"):
+        import time
+        with self.session.utils.output.spinner("Testing spinner", style=style):
+            time.sleep(5)

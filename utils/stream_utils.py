@@ -37,17 +37,21 @@ class StreamHandler:
             stream: Generator[str, None, None],
             on_token: Optional[Callable[[str], Any]] = None,
             on_complete: Optional[Callable[[str], Any]] = None,
-            on_buffer: Optional[Callable[[str], Any]] = None
+            on_buffer: Optional[Callable[[str], Any]] = None,
+            spinner_message: Optional[str] = None,
+            spinner_style: Optional[str] = None
     ) -> str:
         """
         Process a stream of text tokens, collecting them while allowing real-time processing.
+        Shows spinner until first token arrives.
 
         Args:
             stream: Generator yielding text tokens
             on_token: Callback for each token (defaults to writing to output)
             on_complete: Callback for complete accumulated text
             on_buffer: Optional callback for buffer analysis
-
+            spinner_message: Optional spinner message until first token
+            spinner_style: Optional spinner style until first token
         Returns:
             Complete accumulated text
         """
@@ -66,7 +70,20 @@ class StreamHandler:
         buffer = ''
 
         try:
-            for token in stream:
+            # Use iterator to control spinner timing
+            stream_iter = iter(stream)
+
+            # Show spinner until first token, using provided style or default
+            with self.output.spinner(message=spinner_message, style=spinner_style):
+                first_token = next(stream_iter, None)
+
+            if first_token:
+                if on_token:
+                    on_token(first_token)
+                accumulated += first_token
+
+            # Process rest of stream normally
+            for token in stream_iter:
                 if on_token:
                     on_token(token)
                 accumulated += token

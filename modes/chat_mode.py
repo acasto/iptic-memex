@@ -2,75 +2,106 @@ from session_handler import InteractionMode
 
 
 class ChatMode(InteractionMode):
-    """
-    Interaction handler for chat mode
-    """
-
     def __init__(self, session):
         self.session = session
         self.params = session.get_params()
+        self.utils = session.utils
 
-        # Initialize a chat context object
-        session.add_context('chat')  # initialize a chat context object
-        self.chat = session.get_context('chat')  # get the chat context object
+        session.add_context('chat')
+        self.chat = session.get_context('chat')
+        self.subcommands = session.get_action('assistant_subcommands')
+        self.process_contexts = session.get_action('process_contexts')
+
+    def get_user_input(self):
+        """Handle multiline user input with continuation support"""
+        first_line = True
+        user_input = []
+
+        while True:
+            prompt = self.utils.output.style_text(self.params['user_label'],
+                                                  fg=self.params['user_label_color']) + " " if first_line else ""
+            line = self.utils.input.get_input(prompt)
+            first_line = False
+
+            if line.rstrip() == r"\\":
+                break
+            elif line.endswith("\\"):
+                user_input.append(line[:-1] + "\n")
+            else:
+                user_input.append(line)
+                break
+
+        return "".join(user_input).rstrip()
+
+    def handle_assistant_response(self):
+        """Handle getting and processing the assistant's response"""
+        response_label = self.utils.output.style_text(
+            self.params['response_label'],
+            fg=self.params['response_label_color']
+        )
+        self.utils.output.write(f"{response_label} ", end='', flush=True)
+
+        try:
+            if self.params['stream']:
+                stream = self.session.get_provider().stream_chat()
+                if not stream:
+                    return None
+                response = self.utils.stream.process_stream(stream, spinner_message="Thinking...")
+            else:
+                response = self.session.get_provider().chat()
+                if response is None:
+                    return None
+                self.utils.output.write(response)
+                self.utils.output.write('')
+        except (KeyboardInterrupt, EOFError):
+            self.utils.output.write('')
+            return None
+
+        self.chat.add(response, 'assistant')
+        self.subcommands.run(response)
+        return response
 
     def start(self):
-        # Setup some core actions
-        sc = self.session.get_action('process_subcommands')
-        pc = self.session.get_action('process_contexts')
-        ui = self.session.utils
-        tc = ui.tab_completion
-        tc.set_session(self.session)  # Set the session for tab completion for dynamic context completion
-        response = self.session.get_action('print_response')
+        """Start the chat interaction loop"""
+        self.utils.tab_completion.run('chat')
 
-        # Start the chat session loop
-        tc.run('chat')
         while True:
+            if self.session.get_flag('auto_submit'):
+                contexts = self.process_contexts.process_contexts_for_user(auto_submit=True)
+            else:
+                contexts = self.process_contexts.process_contexts_for_user()
 
-            # process the contexts first
-            contexts = pc.process_contexts_for_user()
             try:
-                # Get the users input
-                first_line = True
-                user_input = []
-                while True:
-                    prompt = f"{ui.output.style_text(self.params['user_label'], fg=self.params['user_label_color'])} " if first_line else ""
-                    line = ui.input.get_input(prompt)
-                    first_line = False
-                    if line.rstrip() == r"\\":
-                        break
-                    elif line.endswith("\\"):
-                        user_input.append(line[:-1] + "\n")  # Add newline instead of stripping backslash
-                    else:
-                        user_input.append(line)
-                        break  # Exit loop on a line without trailing backslash
+                # Skip user input if auto_submit is set
+                if self.session.get_flag('auto_submit'):
+                    self.session.set_flag('auto_submit', False)
+                    user_input = ""
+                else:
+                    user_input = self.get_user_input()
 
-                full_input = "".join(user_input).rstrip()  # Join without spaces and remove trailing newline
-                user_input = full_input
-                ui.output.write()
+                self.utils.output.write()
 
-                # Process any subcommands (will return True if no subcommands are found)
-                if sc.run(user_input):
+                if self.session.get_action('process_subcommands').run(user_input):
                     continue
 
             except (KeyboardInterrupt, EOFError):
                 try:
-                    ui.input.get_input(ui.output.style_text("Hit Ctrl-C again to quit or Enter to continue.", fg='red'), spacing=1)
-                    tc.run('chat')  # They hit enter to continue
+                    self.utils.input.get_input(
+                        self.utils.output.style_text("Hit Ctrl-C again to quit or Enter to continue.", fg='red'),
+                        spacing=1
+                    )
+                    self.utils.tab_completion.run('chat')
                     continue
-                except (KeyboardInterrupt, EOFError):  # They hit Ctrl-C again
-                    ui.output.write()
+                except (KeyboardInterrupt, EOFError):
+                    self.utils.output.write()
                     self.session.get_action('persist_stats').run()
-                    raise  # Re-raise to exit
+                    raise
 
-            # Add the question to the chat context
             self.chat.add(user_input, 'user', contexts)
-            for context in list(self.session.get_context().keys()):
-                if context != 'prompt' and context != 'chat':  # Ignore the prompt and chat contexts
-                    self.session.remove_context_type(context)   # remove the context for this turn
-            del contexts  # clear contexts now that we have saved them to the chat context
 
-            # Start the response
-            response.run()
+            for context_type in list(self.session.get_context().keys()):
+                if context_type not in ('prompt', 'chat'):
+                    self.session.remove_context_type(context_type)
 
-            ui.output.write()
+            self.handle_assistant_response()
+            self.utils.output.write()

@@ -80,23 +80,18 @@ class AssistantSubcommandsAction(InteractionAction):
                 # Check auto-submit status
                 allow_auto_submit = self.session.conf.get_option('TOOLS', 'allow_auto_submit', fallback=False)
                 if command_info.get('auto_submit') and auto_submit is not False and allow_auto_submit:
-                    auto_submit = True
-                elif not command_info.get('auto_submit'):
-                    auto_submit = False
+                    self.session.set_flag('auto_submit', True)
 
                 # Run the command
                 handler = command_info["function"]
-                if handler["type"] == "method":
-                    method = getattr(self, handler["name"])
-                    method(cmd['args'], cmd['content'])
-                else:
-                    action = self.session.get_action(handler["name"])
-                    action.run(cmd['args'], cmd['content'])
-
-        # Handle auto-submit if allowed and not disabled by any command
-        if auto_submit:
-            self._submit_assistant_response()
-            return
+                self.session.utils.output.write()
+                with self.session.utils.output.spinner("Running command..."):
+                    if handler["type"] == "method":
+                        method = getattr(self, handler["name"])
+                        method(cmd['args'], cmd['content'])
+                    else:
+                        action = self.session.get_action(handler["name"])
+                        action.run(cmd['args'], cmd['content'])
 
         # Final processing: if highlighting is True and code blocks are present, reprint chat
         # todo - this probably should be, and might have once been, in the print_response action
@@ -218,24 +213,6 @@ class AssistantSubcommandsAction(InteractionAction):
         content = '\n'.join(lines[content_start:])
         return args, content
 
-    def _submit_assistant_response(self):
-        """Handle submission of assistant response to get AI completion"""
-        contexts = self.session.get_action('process_contexts').get_contexts(self.session)
-        chat = self.session.get_context('chat')
-
-        # Submit the assistant response based on the context
-        if contexts:
-            processed_context = self.session.get_action('process_contexts').process_contexts_for_assistant(contexts)
-            chat.add(processed_context, 'assistant')
-
-        # Clear the contexts after adding them
-        for context in list(self.session.get_context().keys()):
-            if context != 'prompt' and context != 'chat':
-                self.session.remove_context_type(context)
-
-        # Get and print response
-        self.session.get_action('print_response').run()
-
     def handle_datetime_command(self, args, content):
         from datetime import datetime
         timestamp = "Current date and time: " + datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
@@ -256,7 +233,7 @@ class AssistantSubcommandsAction(InteractionAction):
         bc_command = ['bc'] + bc_args.split()
         output = self.run_with_temp_file(bc_command, bc_expression)
         self.session.add_context('assistant', {
-            'name': 'assistant_context',
+            'name': 'math tool',
             'content': output
         })
 
@@ -308,9 +285,9 @@ class AssistantSubcommandsAction(InteractionAction):
         # Call the appropriate handler function
         success, output = safe_dispatch[command](arg_list, content)
         if success:
-            self.session.add_context('assistant', {'name': 'assistant_context', 'content': output})
+            self.session.add_context('assistant', {'name': f'{command} command', 'content': output})
         else:
-            self.session.add_context('assistant', {'name': 'assistant_context', 'content': f"Error: {output}"})
+            self.session.add_context('assistant', {'name': f'{command} command', 'content': f"Error: {output}"})
 
     @staticmethod
     def run_pwd(arg_list, content):

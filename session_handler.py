@@ -313,6 +313,25 @@ class SessionHandler:
         if context_type is None:
             return self.session_state['context']
 
+    def set_flag(self, flag_name: str, value: bool) -> None:
+        """
+        Set a session flag
+        :param flag_name: name of the flag to set
+        :param value: boolean value for the flag
+        """
+        if "flags" not in self.session_state:
+            self.session_state["flags"] = {}
+        self.session_state["flags"][flag_name] = value
+
+    def get_flag(self, flag_name: str, default: bool = False) -> bool:
+        """
+        Get a session flag value
+        :param flag_name: name of the flag to get
+        :param default: default value if flag is not set
+        :return: the flag's value
+        """
+        return self.session_state.get("flags", {}).get(flag_name, default)
+
     ############################################################################################################
     # Passthrough methods for CLI interaction
     ############################################################################################################

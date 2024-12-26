@@ -19,22 +19,27 @@ class ProcessContextsAction(InteractionAction):
         if args == "user" or args is None:
             return self.process_contexts_for_user()
 
-    def process_contexts_for_user(self) -> list:
+    def process_contexts_for_user(self, auto_submit=False) -> list:
         """
         Takes in a list of contexts, prints them out for the user, and returns the list back for processing to chat
         params: contexts (list) - list of context dictionaries
         return: contexts (list) - list of context dictionaries
         """
+        output = self.session.utils.output
         contexts = self.session.get_action("process_contexts").get_contexts(self.session)
         if len(contexts) > 0:
-            print()
+            output.write()
             for idx, context in enumerate(contexts):
                 tokens = self.token_counter.count_tiktoken(context['context'].get()['content'])
-                print(f"In context: [{idx}] {context['context'].get()['name']} ({tokens} tokens)")
-            print()
+                if auto_submit:
+                    output.write(f"Output of: {context['context'].get()['name']} ({tokens} tokens)")
+                else:
+                    output.write(f"In context: [{idx}] {context['context'].get()['name']} ({tokens} tokens)")
+            output.write()
         return contexts
 
-    def process_contexts_for_assistant(self, contexts: list) -> str:
+    @staticmethod
+    def process_contexts_for_assistant(contexts: list) -> str:
         turn_context = ""
         is_project = False
         # go through each object and place the contents in tags in the format:
