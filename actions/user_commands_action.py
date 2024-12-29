@@ -3,7 +3,7 @@ from __future__ import annotations
 from session_handler import InteractionAction
 
 
-class ProcessSubcommandsAction(InteractionAction):
+class UserCommandsAction(InteractionAction):
 
     def __init__(self, session):
         self.session = session
@@ -63,10 +63,6 @@ class ProcessSubcommandsAction(InteractionAction):
                 "description": "Search the web",
                 "function": {"type": "action", "name": "brave_summary"},
             },
-            # "load summary": {
-            #     "description": "Load a summary from the web",
-            #     "function": {"type": "action", "name": "brave_summary"},
-            # },
             "clear context": {
                 "description": "Clear item from context",
                 "function": {"type": "action", "name": "clear_context"},
@@ -150,16 +146,14 @@ class ProcessSubcommandsAction(InteractionAction):
             "run command": {
                 "description": "Run a command",
                 "function": {"type": "action", "name": "run_command"},
-            },
-            "storage debug": {
-                "description": "Run a persist command",
-                "function": {"type": "action", "name": "storage_debug"},
-            },
-            "test spinner": {
-                "description": "Test the spinner",
-                "function": {"type": "method", "name": "test_spinner"},
             }
         }
+        # Check for and load user commands
+        user_commands = self.session.get_action('register_user_commands')
+        if user_commands:
+            new_commands = user_commands.run()
+            if new_commands:
+                self.commands.update(new_commands)
 
     def run(self, user_input: str = None) -> bool | None:
         if user_input is None or len(user_input.split()) > 4:  # limit command checking to messages with >4 words
@@ -214,8 +208,3 @@ class ProcessSubcommandsAction(InteractionAction):
             quit()
         else:
             print()
-
-    def test_spinner(self, style="dots"):
-        import time
-        with self.session.utils.output.spinner("Testing spinner", style=style):
-            time.sleep(5)

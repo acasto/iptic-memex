@@ -5,3 +5,4 @@ sessions/*
 !sessions/.gitkeep
 venv
 temp
+user-config

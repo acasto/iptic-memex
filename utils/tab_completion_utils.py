@@ -45,7 +45,7 @@ class TabCompletionHandler:
         """Tab completion for chat commands"""
         if not self._session:
             return None
-        options = self._session.get_action('process_subcommands').get_commands()
+        options = self._session.get_action('user_commands').get_commands()
         try:
             return [x for x in options if x.startswith(text)][state]
         except IndexError:

@@ -9,7 +9,6 @@ class ChatMode(InteractionMode):
 
         session.add_context('chat')
         self.chat = session.get_context('chat')
-        self.subcommands = session.get_action('assistant_subcommands')
         self.process_contexts = session.get_action('process_contexts')
 
     def get_user_input(self):
@@ -46,7 +45,7 @@ class ChatMode(InteractionMode):
                 stream = self.session.get_provider().stream_chat()
                 if not stream:
                     return None
-                response = self.utils.stream.process_stream(stream, spinner_message="Thinking...")
+                response = self.utils.stream.process_stream(stream, spinner_message="")
             else:
                 response = self.session.get_provider().chat()
                 if response is None:
@@ -58,7 +57,7 @@ class ChatMode(InteractionMode):
             return None
 
         self.chat.add(response, 'assistant')
-        self.subcommands.run(response)
+        self.session.get_action('assistant_commands').run(response)
         return response
 
     def start(self):
@@ -81,7 +80,7 @@ class ChatMode(InteractionMode):
 
                 self.utils.output.write()
 
-                if self.session.get_action('process_subcommands').run(user_input):
+                if self.session.get_action('user_commands').run(user_input):
                     continue
 
             except (KeyboardInterrupt, EOFError):

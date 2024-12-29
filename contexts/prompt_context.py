@@ -20,6 +20,7 @@ class PromptContext(InteractionContext):
         """
         Process a file from either a path or stdin
         """
+        fs = self.session.utils.fs
         params = self.session.get_params()
         if prompt is not None:
             # if file is coming from stdin read it in
@@ -30,9 +31,9 @@ class PromptContext(InteractionContext):
 
             # if prompt is a file in prompt_directory check and make sure it exists and return it
             if 'prompt_directory' not in params:
-                prompt_directory = self.session.conf.get_option('DEFAULT', 'prompt_directory')
+                prompt_directory = fs.resolve_directory_path(self.session.conf.get_option('DEFAULT', 'prompt_directory'))
             else:
-                prompt_directory = params.get('prompt_directory')
+                prompt_directory = fs.resolve_directory_path(params.get('prompt_directory'))
             prompt_file = self.session.utils.fs.resolve_file_path(prompt, prompt_directory, '.txt')
             if prompt_file is not None:
                 with open(prompt_file, 'r') as f:

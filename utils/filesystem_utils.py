@@ -206,9 +206,9 @@ class FileSystemHandler:
             return None
 
     def write_file(self, file_path: str, content: Union[str, bytes], binary: bool = False,
-                   encoding: str = 'utf-8', create_dirs: bool = False) -> bool:
+                   encoding: str = 'utf-8', create_dirs: bool = False, append: bool = False) -> bool:
         """
-        Write content to a file.
+        Write or append content to a file.
 
         Args:
             file_path: Path to the file to write
@@ -216,7 +216,7 @@ class FileSystemHandler:
             binary: If True, write in binary mode
             encoding: Character encoding to use when writing text files
             create_dirs: If True, create parent directories if they don't exist
-
+            append: If True, append to file instead of overwriting
         Returns:
             True if successful, False otherwise
         """
@@ -224,8 +224,13 @@ class FileSystemHandler:
             if create_dirs:
                 os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
 
-            mode = 'wb' if binary else 'w'
-            kwargs = {} if binary else {'encoding': encoding}
+            # Determine mode based on binary and append flags
+            if binary:
+                mode = 'ab' if append else 'wb'
+                kwargs = {}
+            else:
+                mode = 'a' if append else 'w'
+                kwargs = {'encoding': encoding}
 
             with open(file_path, mode, **kwargs) as f:
                 f.write(content)

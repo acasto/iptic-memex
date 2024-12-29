@@ -3,6 +3,8 @@ from abc import ABC, abstractmethod
 from typing import Any, Generator
 from config_handler import ConfigHandler
 from utils_handler import UtilsHandler
+import os
+from importlib import util
 
 
 ############################################################################################################
@@ -69,7 +71,7 @@ class InteractionAction(ABC):
     """
 
     @abstractmethod
-    def run(self):
+    def run(self, *args, **kwargs):
         pass
 
 
@@ -162,22 +164,42 @@ class SessionHandler:
 
     def get_action(self, action: str, action_folder: str = "actions"):
         """
-        Instantiate and return an action class
+        Instantiate and return an action class, checking user actions directory first
         :param action: the action to instantiate
         :param action_folder: the folder where the action is located
         """
-        # construct the module and class names based on the action
-        module_name = f'{action_folder}.{action}_action'
+        # Construct class names
         class_name = ''.join(word.capitalize() for word in action.split('_'))
         class_name += 'Action'
 
-        # import the module and get the class
+        # Try user actions directory first if configured
+        user_actions_dir = self.conf.get_option('DEFAULT', 'user_actions', fallback=None)
+        if user_actions_dir:
+            resolved_dir = self.utils.fs.resolve_directory_path(user_actions_dir)
+            if resolved_dir:
+                # Check if the file exists before trying to load it
+                user_action_path = os.path.join(resolved_dir, f"{action}_action.py")
+                if os.path.isfile(user_action_path):
+                    try:
+                        spec = importlib.util.spec_from_file_location(
+                            f"{action}_action",
+                            user_action_path
+                        )
+                        if spec:
+                            user_module = importlib.util.module_from_spec(spec)
+                            spec.loader.exec_module(user_module)
+                            user_action_class = getattr(user_module, class_name)
+                            return user_action_class(self)
+                    except (ImportError, AttributeError) as e:
+                        pass  # Fall through to try project actions
+
+        # Try project actions directory
         try:
+            module_name = f'{action_folder}.{action}_action'
             module = importlib.import_module(module_name)
             action_class = getattr(module, class_name)
             return action_class(self)
         except (ImportError, AttributeError):
-            # raise ValueError(f"Unsupported action: {action}")
             return None
 
     def configure_session(self):
