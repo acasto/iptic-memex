@@ -19,7 +19,14 @@ class CompletionMode(InteractionMode):
         session.remove_context_type('prompt')  # get rid of the default prompt
         session.add_context('chat')  # initialize a chat context object
         self.chat = self.session.get_context('chat')  # get the chat context object
-        self.chat.add(session.get_context('file')[0].get()['content'])  # add the file contents as the user input
+        # self.chat.add(session.get_context('file')[0].get()['content'])  # add the file contents as the user input
+        contexts = self.session.get_action('process_contexts').get_contexts(self.session)
+        if len(contexts) > 1:
+            content = self.session.get_action('process_contexts').process_contexts_for_assistant(contexts)
+        else:
+            content = self.session.get_context('file')[0].get()['content']
+
+        self.chat.add(content)
 
     def start(self):
         """

@@ -51,6 +51,11 @@ class AssistantCommandsAction(InteractionAction):
                 "args": ["action", "memory"],
                 'auto_submit': True,
                 "function": {"type": "action", "name": "assistant_memory_tool"}
+            },
+            "FILE": {
+                "args": ["mode", "file"],
+                'auto_submit': True,
+                "function": {"type": "action", "name": "assistant_file_tool"}
             }
         }
         # Check for and load user commands

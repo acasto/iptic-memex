@@ -27,15 +27,28 @@ class ProcessContextsAction(InteractionAction):
         """
         output = self.session.utils.output
         contexts = self.session.get_action("process_contexts").get_contexts(self.session)
+
         if len(contexts) > 0:
             output.write()
+            total_tokens = 0
+
             for idx, context in enumerate(contexts):
                 tokens = self.token_counter.count_tiktoken(context['context'].get()['content'])
+                total_tokens += tokens
                 if auto_submit:
                     output.write(f"Output of: {context['context'].get()['name']} ({tokens} tokens)")
                 else:
                     output.write(f"In context: [{idx}] {context['context'].get()['name']} ({tokens} tokens)")
+
+            # Check total tokens against max_input if auto_submit is True
+            if auto_submit:
+                max_input = self.session.conf.get_option('TOOLS', 'max_input', fallback=4000)
+                if total_tokens > max_input:
+                    output.write(f"\nWarning: Total tokens ({total_tokens}) exceed maximum ({max_input}). Auto-submit disabled.")
+                    self.session.set_flag('auto_submit', False)
+
             output.write()
+
         return contexts
 
     @staticmethod
