@@ -192,8 +192,9 @@ class Spinner:
             self.thread.start()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.enabled:
+    def stop(self):
+        """Stop the spinner and clean up display"""
+        if self.enabled and self.busy:
             self.busy = False
             time.sleep(self.delay)
             self.thread.join()
@@ -201,6 +202,10 @@ class Spinner:
             # Clear spinner and message by overwriting with spaces
             self._stream.write(' ' * (1 + len(self.message)) + '\b' * (1 + len(self.message)))
             self._stream.flush()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.enabled:
+            self.stop()
 
 
 class DummySpinnerContext:
@@ -226,8 +231,9 @@ class OutputHandler:
         """
         self.config = config
         self._stream: TextIO = sys.stdout
+        self._current_spinner = None  # Track current spinner
 
-        # Determine if color is enabled
+    # Determine if color is enabled
         self._color_enabled = (
                 config.get_option('DEFAULT', 'colors', fallback=True)
                 and self._supports_color()
@@ -431,4 +437,11 @@ class OutputHandler:
         """Get a spinner context manager for showing progress."""
         if not self._supports_color() or not self._color_enabled:
             return DummySpinnerContext()
-        return Spinner(message, style=style, config=self.config)
+        self._current_spinner = Spinner(message, style=style, config=self.config)
+        return self._current_spinner
+
+    def stop_spinner(self):
+        """Stop the current spinner if one exists"""
+        if self._current_spinner:
+            self._current_spinner.stop()
+            self._current_spinner = None

@@ -23,6 +23,13 @@ class PromptContext(InteractionContext):
         fs = self.session.utils.fs
         params = self.session.get_params()
         if prompt is not None:
+
+            # if prompt is a string but "none" or "false" return
+            if prompt.lower() in ['none', 'false']:
+                self.prompt['name'] = 'none'
+                self.prompt['content'] = ''
+                return
+
             # if file is coming from stdin read it in
             if prompt == '-':
                 self.prompt['name'] = 'stdin'
@@ -48,12 +55,6 @@ class PromptContext(InteractionContext):
                     self.prompt['name'] = prompt_file
                     self.prompt['content'] = f.read()
                     return
-
-            # if prompt is a string but "none" or "false" return
-            if prompt.lower() in ['none', 'false']:
-                self.prompt['name'] = 'none'
-                self.prompt['content'] = ''
-                return
 
             # if it seems like the user meant to specify a file, but it doesn't exist, raise an error
             if prompt.endswith('.txt') or ' ' not in prompt:

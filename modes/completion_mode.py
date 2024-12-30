@@ -13,18 +13,28 @@ class CompletionMode(InteractionMode):
         self.session = session
         self.params = session.get_params()
 
-        # Since in this interaction we want the file contents to serve as the prompt we'll remove the default
-        # prompt and initialize a chat context object and add the file contents to it
-        #
-        session.remove_context_type('prompt')  # get rid of the default prompt
-        session.add_context('chat')  # initialize a chat context object
-        self.chat = self.session.get_context('chat')  # get the chat context object
-        # self.chat.add(session.get_context('file')[0].get()['content'])  # add the file contents as the user input
         contexts = self.session.get_action('process_contexts').get_contexts(self.session)
-        if len(contexts) > 1:
+        stdin_context = next((c for c in contexts if c['context'].get()['name'] == 'stdin'), None)
+
+        # Only remove prompt if stdin is present
+        if stdin_context:
+            session.remove_context_type('prompt')
+            # Remove stdin from contexts
+            contexts.remove(stdin_context)
+
+        session.add_context('chat')
+        self.chat = session.get_context('chat')
+
+        # Format any remaining files if they exist
+        content = ""
+        if contexts:
             content = self.session.get_action('process_contexts').process_contexts_for_assistant(contexts)
-        else:
-            content = self.session.get_context('file')[0].get()['content']
+            if stdin_context:
+                content += "\n"
+
+        # Append stdin content if present
+        if stdin_context:
+            content += stdin_context['context'].get()['content']
 
         self.chat.add(content)
 

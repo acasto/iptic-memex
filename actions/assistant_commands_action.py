@@ -53,7 +53,7 @@ class AssistantCommandsAction(InteractionAction):
                 "function": {"type": "action", "name": "assistant_memory_tool"}
             },
             "FILE": {
-                "args": ["mode", "file"],
+                "args": ["mode", "file", "new_name", "recursive"],
                 'auto_submit': True,
                 "function": {"type": "action", "name": "assistant_file_tool"}
             }

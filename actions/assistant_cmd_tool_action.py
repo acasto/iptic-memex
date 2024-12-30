@@ -11,8 +11,8 @@ class AssistantCmdToolAction(InteractionAction):
     def __init__(self, session):
         self.session = session
         self.temp_file_runner = session.get_action('assistant_cmd_handler')
-        self.token_counter = self.session.get_action('count_tokens')
-        self.fs = session.utils.fs
+        self.token_counter = session.get_action('count_tokens')
+        self.fs_handler = session.get_action('assistant_fs_handler')
 
         # Get base directory configuration
         base_dir = session.conf.get_option('TOOLS', 'base_directory', fallback='working')
@@ -85,13 +85,9 @@ class AssistantCmdToolAction(InteractionAction):
         # Check if any arguments look like paths and validate them
         for arg in non_options:
             if os.path.sep in arg or arg.startswith('~'):
-                # Try to resolve the path
-                try:
-                    resolved_path = os.path.abspath(os.path.expanduser(arg))
-                    if not self.fs.is_path_in_base(self.base_dir, resolved_path):
-                        return False, f"Path '{arg}' is outside allowed directory"
-                except Exception as e:
-                    return False, f"Error validating path '{arg}': {str(e)}"
+                resolved_path = self.fs_handler.resolve_path(arg, must_exist=False)
+                if resolved_path is None:
+                    return False, f"Path '{arg}' is not allowed"
 
         return True, None
 

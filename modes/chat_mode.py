@@ -63,6 +63,7 @@ class ChatMode(InteractionMode):
     def start(self):
         """Start the chat interaction loop"""
         self.utils.tab_completion.run('chat')
+        self.utils.tab_completion.set_session(self.session)
 
         while True:
             if self.session.get_flag('auto_submit'):

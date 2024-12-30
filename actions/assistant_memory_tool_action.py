@@ -12,9 +12,6 @@ class AssistantMemoryToolAction(InteractionAction):
     def run(self, args: dict, content: str = ""):
         content = args.get('memory', content)
         if args.get('action') == 'save':
-            # Add a newline character if content doesn't end with one
-            if not content.endswith('\n'):
-                content += '\n'
             output = self.session.utils.fs.write_file(
                 '/Users/adam/.config/iptic-memex/memory.txt',
                 content,
