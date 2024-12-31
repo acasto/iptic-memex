@@ -47,6 +47,15 @@ class AssistantFileToolAction(InteractionAction):
                 })
                 return
             self._handle_rename(filename, new_name)
+        elif mode == 'copy':
+            new_name = args.get('new_name')
+            if not new_name:
+                self.session.add_context('assistant', {
+                    'name': 'file_tool_error',
+                    'content': 'New name required for copy operation'
+                })
+                return
+            self._handle_copy(filename, new_name)
         else:
             self.session.add_context('assistant', {
                 'name': 'file_tool_error',
@@ -147,6 +156,15 @@ class AssistantFileToolAction(InteractionAction):
         """Handle file or directory rename"""
         success = self.fs_handler.rename(old_name, new_name)
         msg = 'Rename operation successful' if success else f'Failed to rename {old_name} to {new_name}'
+        self.session.add_context('assistant', {
+            'name': 'file_tool_result',
+            'content': msg
+        })
+
+    def _handle_copy(self, filename, new_name):
+        """Handle file or directory copy"""
+        success = self.fs_handler.copy(filename, new_name)
+        msg = 'Copy operation successful' if success else f'Failed to copy {filename} to {new_name}'
         self.session.add_context('assistant', {
             'name': 'file_tool_result',
             'content': msg

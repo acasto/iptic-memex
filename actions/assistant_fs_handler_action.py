@@ -221,6 +221,28 @@ class AssistantFsHandlerAction(InteractionAction):
 
         return self.fs.rename(resolved_old, resolved_new)
 
+    def copy(self, src_path: str, dst_path: str, force: bool = False) -> bool:
+        """Copy a file or directory with path validation and confirmation"""
+        resolved_src = self.validate_path(src_path)
+        if resolved_src is None:
+            return False
+
+        resolved_dst = self.validate_path(dst_path)
+        if resolved_dst is None:
+            return False
+
+        if not force and self.session.conf.get_option('TOOLS', 'write_confirm', fallback=True):
+            self.session.utils.output.stop_spinner()
+            confirm = input(f"Confirm copy {src_path} to {dst_path}? [y/N]: ").lower()
+            if confirm != 'y':
+                self.session.add_context('assistant', {
+                    'name': 'fs_info',
+                    'content': f'Copy operation cancelled by user'
+                })
+                return False
+
+        return self.fs.copy(resolved_src, resolved_dst)
+
     def run(self, args=None, content=None):
         """
         Not used - this action provides methods for other actions to use.

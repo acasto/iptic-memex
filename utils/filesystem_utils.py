@@ -273,3 +273,36 @@ class FileSystemHandler:
                 self.output.error(f"Error renaming {old_path} to {new_path}: {str(e)}")
             return False
 
+    def copy(self, src_path: str, dst_path: str) -> bool:
+        """
+        Copy a file or directory.
+
+        Args:
+            src_path: Source path
+            dst_path: Destination path
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            if not os.path.exists(src_path):
+                if self.output:
+                    self.output.error(f"Source path not found: {src_path}")
+                return False
+
+            if os.path.exists(dst_path):
+                if self.output:
+                    self.output.error(f"Target path already exists: {dst_path}")
+                return False
+
+            import shutil
+            if os.path.isdir(src_path):
+                shutil.copytree(src_path, dst_path)
+            else:
+                shutil.copy2(src_path, dst_path)
+            return True
+
+        except Exception as e:
+            if self.output:
+                self.output.error(f"Error copying {src_path} to {dst_path}: {str(e)}")
+            return False
