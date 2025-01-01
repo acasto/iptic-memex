@@ -200,6 +200,7 @@ class SessionHandler:
             action_class = getattr(module, class_name)
             return action_class(self)
         except (ImportError, AttributeError):
+            # print(f"\nUnsupported action: {action}\n")
             return None
 
     def configure_session(self):
