@@ -163,7 +163,8 @@ class UserCommandsAction(InteractionAction):
         sorted_commands = sorted(self.commands.keys(), key=len, reverse=True)
 
         for command in sorted_commands:
-            if user_input.lower().startswith(command):
+            # Check if it's an exact match or if it's followed by a space
+            if user_input.lower() == command or user_input.lower().startswith(command + " "):
                 user_args = user_input[len(command):].strip().split()
                 command_info = self.commands[command]
 
