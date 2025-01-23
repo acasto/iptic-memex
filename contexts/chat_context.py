@@ -10,6 +10,10 @@ class ChatContext(InteractionContext):
         self.params = session.get_params()
 
     def add(self, message, role='user', context=None):
+        # If the conversation is empty and the role isn't 'user', insert a blank 'user' message first
+        if not self.conversation and role != 'user':
+            self.add('', role='user')  # Add a blank 'user' message
+
         if message is None:
             message = ''
         turn = {

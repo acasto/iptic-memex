@@ -116,7 +116,7 @@ class UserCommandsAction(InteractionAction):
                 "function": {"type": "action", "name": "manage_chats", "args": "save"},
             },
             "save last": {
-                "description": "Save the last message",
+                "description": "Save the last message or last <n> messages",
                 "function": {"type": "action", "name": "manage_chats", "args": ["save", False, "last"]},
             },
             "save full": {

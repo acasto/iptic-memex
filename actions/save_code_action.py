@@ -141,8 +141,10 @@ class SaveCodeAction(InteractionAction):
                     continue
 
             try:
+                # Extract the content from the code_block tuple
+                _, content = code_block  # Unpack the tuple
                 with open(file_path, 'w') as f:
-                    f.write(code_block)
+                    f.write(content)  # Write only the content
                 print(f"Code saved to {file_path}")
                 break
             except Exception as e:

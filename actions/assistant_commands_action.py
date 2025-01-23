@@ -4,12 +4,9 @@ from session_handler import InteractionAction
 
 class AssistantCommandsAction(InteractionAction):
     """
-    A revised version of the assistant commands action with a new command format.
+    Handler for assistant commands with support for referencing labeled code blocks.
 
     Command Format:
-    We use a start and end delimiter to clearly define the command block.
-    Example:
-
     %%COMMAND_NAME%%
     key1="value1"
     key2=value2
@@ -17,21 +14,17 @@ class AssistantCommandsAction(InteractionAction):
     <any content, including code blocks, etc.>
     %%END%%
 
+    Block Reference Format:
+    #[block:identifier]
+    ```language
+    code content
+    ```
+
     Parsing Logic:
-    1. Find all occurrences of blocks starting with %%COMMAND_NAME%% and ending with %%END%%.
-    2. Extract command_name from the first line (COMMAND_NAME must match a known command).
-    3. Subsequent lines until a blank line or non-argument line are treated as arguments.
-       - Arguments must be defined in self.commands[command_name]["args"] to be parsed as args.
-    4. Everything after that is considered content and passed as a single string.
-    5. Dispatch to the appropriate handler defined in self.commands.
-
-    Security & Validation:
-    - Only parse arguments that match known argument keys.
-    - Lines that don’t strictly match argument lines or contain unknown keys become content.
-
-    Extensibility:
-    - To add a new command, define it in self.commands with args, and a function.
-    - The handler receives a dict of args and a content string.
+    1. Find all code blocks and their identifiers
+    2. Find all command blocks
+    3. If a command references a block, substitute the block content
+    4. Process command normally
     """
     def __init__(self, session):
         self.session = session
@@ -53,7 +46,7 @@ class AssistantCommandsAction(InteractionAction):
                 "function": {"type": "action", "name": "assistant_memory_tool"}
             },
             "FILE": {
-                "args": ["mode", "file", "new_name", "recursive"],
+                "args": ["mode", "file", "new_name", "recursive", "block"],
                 'auto_submit': True,
                 "function": {"type": "action", "name": "assistant_file_tool"}
             }
@@ -66,6 +59,9 @@ class AssistantCommandsAction(InteractionAction):
                 self.commands.update(new_commands)
 
     def run(self, response: str = None):
+        # Extract labeled blocks first
+        blocks = self.extract_labeled_blocks(response)
+
         # Parse commands in the response
         parsed_commands = self.parse_commands(response)
 
@@ -74,6 +70,14 @@ class AssistantCommandsAction(InteractionAction):
         for cmd in parsed_commands:
             command_name = cmd['command']
             if command_name in self.commands:
+                # Check if command references a block and handle substitution
+                if 'block' in cmd['args']:
+                    block_id = cmd['args'].pop('block')  # Remove block arg after using
+                    if block_id in blocks:
+                        # Append block content to any existing content
+                        block_content = blocks[block_id]
+                        cmd['content'] = cmd['content'] + "\n" + block_content if cmd['content'] else block_content
+
                 command_info = self.commands[command_name]
                 # Check auto-submit status
                 allow_auto_submit = self.session.conf.get_option('TOOLS', 'allow_auto_submit', fallback=False)
@@ -82,7 +86,6 @@ class AssistantCommandsAction(InteractionAction):
 
                 # Run the command
                 handler = command_info["function"]
-                # self.session.utils.output.write()
                 with self.session.utils.output.spinner("Running command..."):
                     if handler["type"] == "method":
                         method = getattr(self, handler["name"])
@@ -92,10 +95,53 @@ class AssistantCommandsAction(InteractionAction):
                         action.run(cmd['args'], cmd['content'])
 
         # Final processing: if highlighting is True and code blocks are present, reprint chat
-        # todo - this probably should be, and might have once been, in the print_response action
         if '```' in response:
             if 'highlighting' in self.params and self.params['highlighting'] is True:
                 self.session.get_action('reprint_chat').run()
+
+    @staticmethod
+    def extract_labeled_blocks(text: str) -> dict:
+        """
+        Extract labeled code blocks from the text.
+        Returns a dict mapping block identifiers to their content.
+        """
+        if not text:
+            return {}
+
+        # Pattern to match block identifier line
+        block_id_pattern = r'#\[block:(\w+)\]\s*\n'
+
+        # Pattern to match code blocks with optional language
+        code_block_pattern = r'```\w*\n(.*?)```'
+
+        blocks = {}
+        last_pos = 0
+
+        while True:
+            # Find next block identifier
+            id_match = re.search(block_id_pattern, text[last_pos:], re.MULTILINE)
+            if not id_match:
+                break
+
+            # Adjust position to start of identifier match
+            block_start = last_pos + id_match.end()
+
+            # Find the code block that follows
+            code_match = re.search(code_block_pattern, text[block_start:], re.DOTALL)
+            if not code_match:
+                break
+
+            # Extract identifier and content
+            block_id = id_match.group(1)
+            block_content = code_match.group(1).strip()
+
+            # Store block
+            blocks[block_id] = block_content
+
+            # Move position past this block
+            last_pos = block_start + code_match.end()
+
+        return blocks
 
     def parse_commands(self, text: str):
         # Normalize line endings first

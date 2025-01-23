@@ -11,7 +11,7 @@ class ManageChatsAction(InteractionAction):
     def __init__(self, session):
         self.session = session
         self.params = session.get_params()
-        self.tc = session.get_utils().tab_completion
+        self.tc = session.utils.tab_completion
         self.tc.set_session(session)
         self.chat = session.get_context('chat')
 
@@ -24,6 +24,13 @@ class ManageChatsAction(InteractionAction):
         if command == "save":
             include_context = args[1] == "full" if len(args) > 1 else False
             turns = args[2] if len(args) > 2 else None
+
+            # Handle numeric argument for "last"
+            if len(args) > 3 and args[2] == "last" and args[3].isdigit():
+                turns = ("last", int(args[3]))
+            elif len(args) > 2 and args[2] == "last":
+                turns = "last"
+
             self.save_chat(include_context, turns)
         elif command == "load":
             self.load_chat()
@@ -140,7 +147,13 @@ class ManageChatsAction(InteractionAction):
 
     def _format_chat_content(self, chat_format, include_context=False, turns=None):
         content = ""
-        if turns == "last" or turns == "1":
+
+        # Handle message selection
+        if isinstance(turns, tuple) and turns[0] == "last":
+            # Handle "last N" case
+            num_messages = turns[1]
+            conversation = self.chat.get()[-num_messages:]
+        elif turns == "last" or turns == "1":
             conversation = self.chat.get()[-1:]
         else:
             conversation = self.chat.get()
@@ -157,7 +170,6 @@ class ManageChatsAction(InteractionAction):
                 turn_context = None
                 if include_context and 'context' in turn and turn['context']:
                     turn_context = self.session.get_action('process_contexts').process_contexts_for_assistant(turn['context'])
-                    # message = turn_context + "\n\n\n" + message
                 if chat_format == 'md':
                     if turn_context:
                         content += f"## {role}\n\n```\n{turn_context}\n```\n\n\n{message}\n\n"
@@ -171,7 +183,8 @@ class ManageChatsAction(InteractionAction):
 
         return content
 
-    def _save_as_pdf(self, filename, content):
+    @staticmethod
+    def _save_as_pdf(filename, content):
         doc = SimpleDocTemplate(filename, pagesize=letter)
         styles = getSampleStyleSheet()
         flowables = []
@@ -236,7 +249,8 @@ class ManageChatsAction(InteractionAction):
             print(f"Unsupported format for loading: {chat_format}")
 
     # noinspection PyTypeChecker
-    def _parse_chat_content(self, content, chat_format):
+    @staticmethod
+    def _parse_chat_content(content, chat_format):
         messages = []
         if chat_format == 'md':
             sections = re.split(r'\n(?=## (?:User|Assistant))', content)

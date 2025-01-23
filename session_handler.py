@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import importlib
 from abc import ABC, abstractmethod
 from typing import Any, Generator
@@ -162,46 +164,101 @@ class SessionHandler:
             if index < len(self.session_state['context'][context_type]):
                 self.session_state['context'][context_type].pop(index)
 
-    def get_action(self, action: str, action_folder: str = "actions"):
+    def get_action(self, action: str, action_folder: str = "actions") -> InteractionAction | None:
         """
-        Instantiate and return an action class, checking user actions directory first
-        :param action: the action to instantiate
-        :param action_folder: the folder where the action is located
+        Instantiate and return an action class with improved error handling.
+        Checks user actions directory first, then project actions directory.
+
+        Args:
+            action: The action to instantiate (e.g., 'load_file')
+            action_folder: The folder where the action is located (default: 'actions')
+
+        Returns:
+            An instance of the requested action class
+
+        Raises:
+            ValueError: If the action cannot be loaded or instantiated
         """
-        # Construct class names
-        class_name = ''.join(word.capitalize() for word in action.split('_'))
-        class_name += 'Action'
+        # Construct class name using consistent naming convention
+        class_name = ''.join(word.capitalize() for word in action.split('_')) + 'Action'
+        action_module_name = f"{action}_action"
 
         # Try user actions directory first if configured
         user_actions_dir = self.conf.get_option('DEFAULT', 'user_actions', fallback=None)
         if user_actions_dir:
-            resolved_dir = self.utils.fs.resolve_directory_path(user_actions_dir)
-            if resolved_dir:
-                # Check if the file exists before trying to load it
-                user_action_path = os.path.join(resolved_dir, f"{action}_action.py")
-                if os.path.isfile(user_action_path):
-                    try:
-                        spec = importlib.util.spec_from_file_location(
-                            f"{action}_action",
-                            user_action_path
-                        )
-                        if spec:
+            try:
+                resolved_dir = self.utils.fs.resolve_directory_path(user_actions_dir)
+                if resolved_dir:
+                    user_action_path = os.path.join(resolved_dir, f"{action_module_name}.py")
+
+                    if os.path.isfile(user_action_path):
+                        try:
+                            # Attempt to load user action
+                            spec = importlib.util.spec_from_file_location(
+                                action_module_name,
+                                user_action_path
+                            )
+                            if spec is None:
+                                raise ImportError(f"Could not load spec from {user_action_path}")
+
                             user_module = importlib.util.module_from_spec(spec)
                             spec.loader.exec_module(user_module)
+
+                            # Verify the class exists and is valid
+                            if not hasattr(user_module, class_name):
+                                raise AttributeError(f"Class {class_name} not found in {user_action_path}")
+
                             user_action_class = getattr(user_module, class_name)
-                            return user_action_class(self)
-                    except (ImportError, AttributeError) as e:
-                        pass  # Fall through to try project actions
+                            return self._instantiate_action(user_action_class)
+
+                        except Exception as e:
+                            print(f"\nWarning: Failed to load user action {action}: {str(e)}\n")
+                            # Fall through to try project actions
+
+            except Exception as e:
+                print(f"\nWarning: Error processing user actions directory: {str(e)}\n")
+                # Fall through to try project actions
 
         # Try project actions directory
         try:
-            module_name = f'{action_folder}.{action}_action'
+            module_name = f'{action_folder}.{action_module_name}'
             module = importlib.import_module(module_name)
+
+            if not hasattr(module, class_name):
+                raise AttributeError(f"Class {class_name} not found in {module_name}")
+
             action_class = getattr(module, class_name)
-            return action_class(self)
-        except (ImportError, AttributeError):
-            # print(f"\nUnsupported action: {action}\n")
+            return self._instantiate_action(action_class)
+
+        except Exception as e:
+            error_msg = f"\nFailed to load action '{action}': {str(e)}\n"
+            error_msg += f"Expected to find class '{class_name}' in module '{action_module_name}'\n"
+            if user_actions_dir:
+                error_msg += f"Checked user actions directory: {user_actions_dir}\n"
+            error_msg += f"Checked project actions directory: {action_folder}\n"
+            print(error_msg)
             return None
+
+    def _instantiate_action(self, action_class) -> InteractionAction:
+        """
+        Helper method to safely instantiate an action class
+
+        Args:
+            action_class: The class to instantiate
+
+        Returns:
+            An instance of the action class
+
+        Raises:
+            ValueError: If instantiation fails
+        """
+        try:
+            instance = action_class(self)
+            if not isinstance(instance, InteractionAction):
+                raise ValueError(f"Class {action_class.__name__} does not inherit from InteractionAction")
+            return instance
+        except Exception as e:
+            raise ValueError(f"Failed to instantiate action: {str(e)}")
 
     def configure_session(self):
         """
