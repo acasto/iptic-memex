@@ -3,6 +3,7 @@ from time import time
 import openai
 from openai import OpenAI
 from session_handler import APIProvider, SessionHandler
+from actions.process_contexts_action import ProcessContextsAction
 
 
 class OpenAIProvider(APIProvider):
@@ -117,24 +118,28 @@ class OpenAIProvider(APIProvider):
                     self.running_usage['total_out'] += self.turn_usage.completion_tokens
                 return response.choices[0].message.content
 
-        except (openai.APIConnectionError, openai.RateLimitError, openai.APIStatusError, Exception) as e:
-            print("An exception occurred:")
+        except Exception as e:
+            error_msg = "An error occurred:\n"
             if isinstance(e, openai.APIConnectionError):
-                print("The server could not be reached")
-                print(e.__cause__)  # an underlying Exception, likely raised within httpx.
+                error_msg += "The server could not be reached\n"
+                if e.__cause__:
+                    error_msg += f"Cause: {str(e.__cause__)}\n"
             elif isinstance(e, openai.RateLimitError):
-                print("A 429 status code was received; we should back off a bit.")
+                error_msg += "Rate limit exceeded - please wait before retrying\n"
             elif isinstance(e, openai.APIStatusError):
-                print("Another non-200-range status code was received")
-                print("Status code: " + str(e.status_code))
-                print("Response: " + str(e.response))
+                error_msg += f"Status code: {getattr(e, 'status_code', 'unknown')}\n"
+                error_msg += f"Response: {getattr(e, 'response', 'unknown')}\n"
             else:
-                print(f"An unexpected error occurred: {e}")
-            # the last_api_param is set then print them nicely
+                error_msg += f"Unexpected error: {str(e)}\n"
+
             if self.last_api_param is not None:
-                print("Last API call parameters:")
+                error_msg += "\nDebug info:\n"
                 for key, value in self.last_api_param.items():
-                    print(f"\t{key}: {value}")
+                    error_msg += f"{key}: {value}\n"
+
+            print(error_msg)
+            return error_msg
+
         finally:
             # calculate the total time for the API call
             self.running_usage['total_time'] += time() - start_time
@@ -146,18 +151,32 @@ class OpenAIProvider(APIProvider):
         """
         response = self.chat()
         start_time = time()  # Start the timer for the streaming
+
+        if isinstance(response, str):  # Error message
+            yield response
+            return
+
         if response is None:
             return
 
-        for i, chunk in enumerate(response):
-            if chunk.choices and len(chunk.choices) > 0:
-                if chunk.choices[0].finish_reason != 'stop' and chunk.choices[0].delta.content is not None:
-                    content = chunk.choices[0].delta.content
-                    if i < 2:  # Only process the first two chunks
-                        content = content.lstrip('\n')  # Remove leading newlines only
-                    yield content
-            if chunk.usage is not None:
-                self.turn_usage = chunk.usage
+        try:
+            for i, chunk in enumerate(response):
+                if chunk.choices and len(chunk.choices) > 0:
+                    if chunk.choices[0].finish_reason != 'stop' and chunk.choices[0].delta.content is not None:
+                        content = chunk.choices[0].delta.content
+                        if i < 2:  # Only process the first two chunks
+                            content = content.lstrip('\n')  # Remove leading newlines only
+                        yield content
+                if chunk.usage is not None:
+                    self.turn_usage = chunk.usage
+        except Exception as e:
+            error_msg = "Stream interrupted:\n"
+            if hasattr(e, 'status_code'):
+                error_msg += f"Status code: {e.status_code}\n"
+            if hasattr(e, 'response'):
+                error_msg += f"Response: {e.response}\n"
+            error_msg += f"Error details: {str(e)}"
+            yield error_msg
 
         # Update running totals once after streaming is complete
         self.running_usage['total_time'] += time() - start_time
@@ -181,7 +200,7 @@ class OpenAIProvider(APIProvider):
                 # if context is in turn and not an empty list
                 if 'context' in turn and turn['context']:
                     # get the processed context
-                    turn_context = self.session.get_action('process_contexts').process_contexts_for_assistant(turn['context'])
+                    turn_context = ProcessContextsAction.process_contexts_for_assistant(turn['context'])
 
                 message.append({'role': turn['role'], 'content': turn_context + "\n" + turn['message']})
         return message

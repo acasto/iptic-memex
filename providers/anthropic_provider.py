@@ -2,6 +2,7 @@ import os
 from time import time
 from anthropic import Anthropic
 from session_handler import APIProvider, SessionHandler
+from actions.process_contexts_action import ProcessContextsAction
 
 
 class AnthropicProvider(APIProvider):
@@ -46,7 +47,7 @@ class AnthropicProvider(APIProvider):
         ]
 
         # place to store usage data
-        self.turn_usage = {}
+        self.turn_usage = {'in': 0, 'out': 0}
         self.running_usage = {
             'total_in': 0,
             'total_out': 0,
@@ -93,21 +94,15 @@ class AnthropicProvider(APIProvider):
                     self.running_usage['total_out'] += self.turn_usage['out']
                 return response.content[0].text
 
-        except (Exception) as e:
-            print(f"An error occurred: {str(e)}")
-        # except (anthropic.APIStatusError, Exception) as e:
-        #     print("An exception occurred:")
-        #     if isinstance(e, anthropic.APIConnectionError):
-        #         print("The server could not be reached")
-        #         print(e.__cause__)  # an underlying Exception, likely raised within httpx.
-        #     elif isinstance(e, anthropic.RateLimitError):
-        #         print("A 429 status code was received; we should back off a bit.")
-        #     elif isinstance(e, anthropic.APIStatusError):
-        #         print("Another non-200-range status code was received")
-        #         print("Status code: " + str(e.status_code))
-        #         print("Response: " + str(e.response))
-        #     else:
-        #         print(f"An unexpected error occurred: {e}")
+        except Exception as e:
+            error_msg = "An error occurred:\n"
+            if hasattr(e, 'status_code'):
+                error_msg += f"Status code: {e.status_code}\n"
+            if hasattr(e, 'response'):
+                error_msg += f"Response: {e.response}\n"
+            error_msg += f"Error details: {str(e)}"
+            print(error_msg)
+            return error_msg
 
         finally:
             # calculate the total time for the API call
@@ -118,18 +113,36 @@ class AnthropicProvider(APIProvider):
         Use generator chaining to keep the response provider-agnostic
         :return:
         """
+        self.turn_usage = {'in': 0, 'out': 0}
         response = self.chat()
+
+        if response is None:
+            return
+
+        if isinstance(response, str):  # Error message
+            yield response
+            return
+
         start_time = time()  # Start the timer for the streaming
-        for event in response:
-            if event.type == "content_block_delta":
-                yield event.delta.text
-            if event.type == "message_start":
-                if event.message.usage is not None:
-                    self.turn_usage['in'] = event.message.usage.input_tokens
-                    self.turn_usage['out'] = event.message.usage.output_tokens
-            if event.type == "message_delta":
-                if event.usage is not None:
-                    self.turn_usage['out'] = self.turn_usage['out'] + event.usage.output_tokens
+        try:
+            for event in response:
+                if event.type == "content_block_delta":
+                    yield event.delta.text
+                if event.type == "message_start":
+                    if event.message.usage is not None:
+                        self.turn_usage['in'] = event.message.usage.input_tokens
+                        self.turn_usage['out'] = event.message.usage.output_tokens
+                if event.type == "message_delta":
+                    if event.usage is not None:
+                        self.turn_usage['out'] = self.turn_usage['out'] + event.usage.output_tokens
+        except Exception as e:
+            error_msg = "Stream interrupted:\n"
+            if hasattr(e, 'status_code'):
+                error_msg += f"Status code: {e.status_code}\n"
+            if hasattr(e, 'response'):
+                error_msg += f"Response: {e.response}\n"
+            error_msg += f"Error details: {str(e)}"
+            yield error_msg
 
         # Update running totals once after streaming is complete
         self.running_usage['total_time'] += time() - start_time
@@ -150,13 +163,8 @@ class AnthropicProvider(APIProvider):
                 turn_context = ''
                 # if context is in turn and not an empty list
                 if 'context' in turn and turn['context']:
-                    turn_context += "<|project_context|>"
-                    # go through each object and place the contents in tags in the format:
-                    # <|project_context|><|file:file_name|>{file content}<|end_file|><|end_project_context|>
-                    for f in turn['context']:
-                        file = f['context'].get()
-                        turn_context += f"<|file:{file['name']}|>{file['content']}<|end_file|>"
-                    turn_context += "<|end_project_context|>"
+                    # get the processed context
+                    turn_context = ProcessContextsAction.process_contexts_for_assistant(turn['context'])
 
                 message.append({'role': turn['role'], 'content': turn_context + "\n" + turn['message']})
         return message

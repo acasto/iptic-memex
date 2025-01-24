@@ -239,31 +239,39 @@ class ConfigHandler:
         """
         Fix some of the values due to how they are stored and retrieved with ConfigParser
         """
-        value = value.strip()
+        if isinstance(value, str):
+            value = value.strip()
 
-        # Handle dict-like strings
-        if value.startswith('{') and value.endswith('}'):
-            pairs = re.findall(r'(\w+)\s*:\s*(\[.*?]|[^,]+)(?=\s*(?:,|$))', value[1:-1])
-            return {k.strip(): ConfigHandler.fix_values(v.strip()) for k, v in pairs}
+            # Handle path expansion only for strings that clearly look like paths
+            if (value.startswith(('~', './', '/', '\\')) and
+                    not value.startswith(('{', '[', '"', "'"))):
+                expanded = os.path.expanduser(value)
+                if expanded != value:
+                    value = expanded
 
-        # Handle list-like strings
-        if value.startswith('[') and value.endswith(']'):
-            return [ConfigHandler.fix_values(item.strip()) for item in re.findall(r'<[^>]+>|[^,\s]+', value[1:-1])]
+            # Handle dict-like strings
+            if value.startswith('{') and value.endswith('}'):
+                pairs = re.findall(r'(\w+)\s*:\s*(\[.*?]|[^,]+)(?=\s*(?:,|$))', value[1:-1])
+                return {k.strip(): ConfigHandler.fix_values(v.strip()) for k, v in pairs}
 
-        # Check for integer values
-        if value.isdigit():
-            return int(value)
+            # Handle list-like strings
+            if value.startswith('[') and value.endswith(']'):
+                return [ConfigHandler.fix_values(item.strip()) for item in re.findall(r'<[^>]+>|[^,\s]+', value[1:-1])]
 
-        # Handle boolean values
-        lower_value = value.lower()
-        if lower_value in ('true', 'yes', '1'):
-            return True
-        if lower_value in ('false', 'no', '0'):
-            return False
+            # Check for integer values
+            if value.isdigit():
+                return int(value)
 
-        # Remove quotes if present
-        if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
-            return value[1:-1]
+            # Handle boolean values
+            lower_value = value.lower()
+            if lower_value in ('true', 'yes', '1'):
+                return True
+            if lower_value in ('false', 'no', '0'):
+                return False
+
+            # Remove quotes if present
+            if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+                return value[1:-1]
 
         # Return as is for other cases
         return value
