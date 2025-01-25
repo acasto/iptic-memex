@@ -12,25 +12,29 @@ class ChatMode(InteractionMode):
         self.process_contexts = session.get_action('process_contexts')
 
     def get_user_input(self):
-        """Handle multiline user input with continuation support"""
-        first_line = True
-        user_input = []
+        """
+        Use the new InputHandler to gather possibly-multiline user input.
+        If the user ends a line with a backslash or types a line that is just '\\',
+        it will continue prompting until they finish.
+        """
+        # Here, we construct the prompt with colors/styling if desired.
+        prompt = self.utils.output.style_text(
+            self.params['user_label'],
+            fg=self.params['user_label_color']
+        ) + " "
 
-        while True:
-            prompt = self.utils.output.style_text(self.params['user_label'],
-                                                  fg=self.params['user_label_color']) + " " if first_line else ""
-            line = self.utils.input.get_input(prompt)
-            first_line = False
+        # Call the new get_input() with multiline=True and continuation_char='\\'.
+        # This removes the need for any while loop here, since the InputHandler
+        # does the heavy lifting.
+        user_input = self.utils.input.get_input(
+            prompt=prompt,
+            multiline=True,
+            continuation_char="\\",  # Or any other char you prefer
+        )
 
-            if line.rstrip() == r"\\":
-                break
-            elif line.endswith("\\"):
-                user_input.append(line[:-1] + "\n")
-            else:
-                user_input.append(line)
-                break
-
-        return "".join(user_input).rstrip()
+        # The result is a single string of user input—
+        # either one line or multiple lines joined together.
+        return user_input
 
     def handle_assistant_response(self):
         """Handle getting and processing the assistant's response"""
@@ -88,7 +92,7 @@ class ChatMode(InteractionMode):
                 try:
                     self.utils.input.get_input(
                         self.utils.output.style_text("Hit Ctrl-C again to quit or Enter to continue.", fg='red'),
-                        spacing=1
+                        spacing=1,
                     )
                     self.utils.tab_completion.run('chat')
                     continue

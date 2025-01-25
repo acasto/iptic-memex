@@ -5,8 +5,11 @@ class LoadMultilineAction(InteractionAction):
 
     def __init__(self, session):
         self.session = session
+        self.tc = session.utils.tab_completion
+        self.tc.set_session(session)
 
     def run(self, args=None):
+        self.tc.deactivate_completion()
         ui = self.session.get_action('ui')
         print(ui.color_wrap("Entering multiline input mode. Press Ctrl+C when finished.", 'cyan'))
         print()
@@ -37,4 +40,5 @@ class LoadMultilineAction(InteractionAction):
             'content': content
         }
         self.session.add_context('multiline_input', context_data)
+        self.tc.run('chat')
         return
