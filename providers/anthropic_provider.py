@@ -69,13 +69,13 @@ class AnthropicProvider(APIProvider):
 
     def _build_messages(self) -> List[Dict[str, Any]]:
         messages = []
-        first_user_found = False
         chat = self.session.get_context('chat')
 
         if not chat:
             return messages
 
-        for turn in chat.get():
+        chat_turns = chat.get()
+        for i, turn in enumerate(chat_turns):
             content_blocks = []
             context = turn.get('context')
 
@@ -86,17 +86,18 @@ class AnthropicProvider(APIProvider):
                         'type': 'text',
                         'text': processed_context
                     }
-                    if not first_user_found and turn['role'] == 'user' and self._is_caching_enabled():
-                        block['cache_control'] = {"type": "ephemeral"}
-                        first_user_found = True
                     content_blocks.append(block)
 
             message = turn.get('message')
             if message:
-                content_blocks.append({
+                block = {
                     'type': 'text',
                     'text': message
-                })
+                }
+                # Add cache_control to the last message if caching is enabled
+                if i == len(chat_turns) - 1 and self._is_caching_enabled():
+                    block['cache_control'] = {"type": "ephemeral"}
+                content_blocks.append(block)
 
             if content_blocks:
                 messages.append({
