@@ -56,14 +56,16 @@ class AnthropicProvider(APIProvider):
         prompt_ctx = self.session.get_context('prompt')
         if prompt_ctx:
             content = prompt_ctx.get().get('content')
+            block = None
             if content:
                 block = {
                     'type': 'text',
                     'text': content
                 }
-            if self._is_caching_enabled():
+            if block and self._is_caching_enabled():
                 block['cache_control'] = {"type": "ephemeral"}
-            system_blocks.append(block)
+            if block:
+                system_blocks.append(block)
 
         return system_blocks
 
