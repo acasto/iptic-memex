@@ -142,7 +142,7 @@ class AnthropicProvider(APIProvider):
             return str(context)
 
     def _is_caching_enabled(self) -> bool:
-        return self.session.conf.get_option('DEFAULT', 'prompt_caching', fallback=False)
+        return self.params.get('prompt_caching', False)
 
     def _prepare_api_parameters(self) -> Dict[str, Any]:
         params = {
