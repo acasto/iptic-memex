@@ -141,6 +141,11 @@ class SessionHandler:
         except (ImportError, AttributeError):
             raise ValueError(f"Unsupported context type: {context_type}")
 
+        # Special handling for prompt context
+        if context_type == 'prompt':
+            resolved_content = self.resolve_prompt(context_data)
+            context_data = resolved_content
+
         # Add the context to the session under self.session[context_type]
         if context_type not in self.session_state['context']:
             self.session_state['context'][context_type] = []
@@ -283,12 +288,7 @@ class SessionHandler:
 
         # get the default prompt if needed
         if 'prompt' not in self.session_state['context']:
-            # does model have a prompt defined?
-            if self.conf.get_option_from_model('prompt', model):
-                self.add_context('prompt', self.conf.get_option_from_model('prompt', model))
-            else:
-                # use the default prompt
-                self.add_context('prompt')
+            self.add_context('prompt')
 
         # get the provider for the model for our convenience
         provider = self.conf.get_option_from_model('provider', model)
@@ -311,24 +311,49 @@ class SessionHandler:
 
     def set_provider(self, provider):
         """
-        Initialize and set an API provider
+        Initialize and set an API provider with detailed error reporting
         """
-        # See if the provider is an alias
+        # Check if provider is an alias
         alias = self.conf.get_option_from_provider('alias', provider)
         if alias:
             provider = alias
 
-        # Construct the module and class names based on the provider
         module_name = f'providers.{provider.lower()}_provider'
         class_name = f'{provider}Provider'
 
-        # Import the module and get the class
         try:
-            module = importlib.import_module(module_name)
-            provider_class = getattr(module, class_name)
-            self.session_state['provider'] = provider_class(self)
-        except (ImportError, AttributeError):
-            print(f"\nUnsupported provider: {provider}\n")
+            # Try importing the module
+            try:
+                module = importlib.import_module(module_name)
+            except ImportError as e:
+                error_msg = f"\nFailed to import provider module '{module_name}':\n{str(e)}"
+                if util.find_spec(module_name) is None:
+                    error_msg += f"\nModule '{module_name}.py' not found in providers directory"
+                print(error_msg)
+                quit()
+
+            # Try getting the provider class
+            try:
+                provider_class = getattr(module, class_name)
+            except AttributeError:
+                print(f"\nProvider class '{class_name}' not found in {module_name}.py")
+                print(f"Expected to find class definition: class {class_name}(APIProvider)")
+                quit()
+
+            # Try instantiating the provider
+            try:
+                self.session_state['provider'] = provider_class(self)
+            except Exception as e:
+                print(f"\nFailed to instantiate provider '{provider}':")
+                print(f"Error: {str(e)}")
+                if hasattr(e, '__traceback__'):
+                    import traceback
+                    traceback.print_tb(e.__traceback__)
+                quit()
+
+        except Exception as e:
+            print(f"\nUnexpected error setting up provider '{provider}':")
+            print(f"Error: {str(e)}")
             quit()
 
     def start_mode(self, mode: str):
@@ -355,6 +380,72 @@ class SessionHandler:
         # Instantiate the class and start the interaction
         interaction = mode_class(self)
         interaction.start()
+
+    def resolve_prompt(self, prompt_source=None):
+        """
+        Central method for resolving prompts in a consistent way.
+
+        Args:
+            prompt_source: Optional source prompt (from user/CLI/etc)
+
+        Returns:
+            Resolved prompt content as string
+        """
+        def resolve_single_prompt(source):
+            """Helper to resolve a single prompt source"""
+            if not source or not isinstance(source, str):
+                return ''
+
+            # Handle none/false case
+            if source.lower() in ['none', 'false']:
+                return ''
+
+            # Check if it's a chain in the PROMPTS section
+            chain = self.conf.get_option('PROMPTS', source, fallback=None)
+            if chain:
+                resolved_contents = []
+                # Split and recursively resolve each part
+                for part in (p.strip() for p in chain.split(',')):
+                    resolved = resolve_single_prompt(part)
+                    if resolved:
+                        resolved_contents.append(resolved)
+                return '\n\n'.join(resolved_contents)
+
+            # Check prompt directory for file
+            prompt_dir = self.utils.fs.resolve_directory_path(
+                self.conf.get_option('DEFAULT', 'prompt_directory')
+            )
+            if prompt_dir:
+                prompt_file = self.utils.fs.resolve_file_path(source, prompt_dir, '.txt')
+                if prompt_file:
+                    with open(prompt_file, 'r') as f:
+                        return f.read()
+
+            # Check if direct file path
+            prompt_file = self.utils.fs.resolve_file_path(source)
+            if prompt_file:
+                with open(prompt_file, 'r') as f:
+                    return f.read()
+
+            # Treat as direct prompt text if not a file
+            if source.strip():
+                return source
+
+            return ''
+
+        # Start resolution process
+        if prompt_source:
+            return resolve_single_prompt(prompt_source)
+
+        # Check for model-specific prompt
+        model = self.session_state['params'].get('model')
+        if model:
+            model_prompt = self.conf.get_option_from_model('prompt', model)
+            if model_prompt:
+                return resolve_single_prompt(model_prompt)
+
+        # Finally fall back to default prompt
+        return self.conf.get_default_prompt()
 
     def get_session_state(self):
         """
