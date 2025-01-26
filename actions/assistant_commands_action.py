@@ -84,15 +84,41 @@ class AssistantCommandsAction(InteractionAction):
                 if command_info.get('auto_submit') and auto_submit is not False and allow_auto_submit:
                     self.session.set_flag('auto_submit', True)
 
-                # Run the command
+                # Run the command with interrupt handling
                 handler = command_info["function"]
-                with self.session.utils.output.spinner("Running command..."):
-                    if handler["type"] == "method":
-                        method = getattr(self, handler["name"])
-                        method(cmd['args'], cmd['content'])
-                    else:
-                        action = self.session.get_action(handler["name"])
-                        action.run(cmd['args'], cmd['content'])
+                try:
+                    # Stop any existing spinner before starting a new one
+                    self.session.utils.output.stop_spinner()
+                    with self.session.utils.output.spinner("Running command..."):
+                        if handler["type"] == "method":
+                            method = getattr(self, handler["name"])
+                            method(cmd['args'], cmd['content'])
+                        else:
+                            action = self.session.get_action(handler["name"])
+                            action.run(cmd['args'], cmd['content'])
+                except KeyboardInterrupt:
+                    self.session.utils.output.stop_spinner()
+                    self.session.utils.output.write()
+                    try:
+                        user_input = self.session.utils.input.get_input(
+                            self.session.utils.output.style_text(
+                                "Hit Ctrl-C again to quit or Enter to continue: ",
+                                fg='red'
+                            ),
+                            allow_empty=True  # Allow empty input without retry
+                        )
+                        if user_input.strip():
+                            continue
+                        # Add cancellation context for the assistant
+                        self.session.add_context('assistant', {
+                            'name': 'command_error',
+                            'content': f"Command '{command_name}' was cancelled by user"
+                        })
+                    except KeyboardInterrupt:
+                        self.session.utils.output.write()
+                        self.session.get_action('persist_stats').run()
+                        raise
+                    continue
 
         # Final processing: if highlighting is True and code blocks are present, reprint chat
         if '```' in response:

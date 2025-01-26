@@ -13,6 +13,7 @@ class AssistantCmdToolAction(InteractionAction):
         self.temp_file_runner = session.get_action('assistant_cmd_handler')
         self.token_counter = session.get_action('count_tokens')
         self.fs_handler = session.get_action('assistant_fs_handler')
+        self._default_timeout = float(session.conf.get_option('TOOLS', 'timeout', fallback=15))
 
         # Get base directory configuration
         base_dir = session.conf.get_option('TOOLS', 'base_directory', fallback='working')
@@ -120,13 +121,16 @@ class AssistantCmdToolAction(InteractionAction):
                     prev_process.stdout.close()
                 prev_process = process
 
-            # Get final output from last process
-            output, error = processes[-1].communicate()
-
-            if processes[-1].returncode != 0:
-                return False, error
-
-            return True, output
+            # Get final output from last process with timeout
+            try:
+                output, error = processes[-1].communicate(timeout=self._default_timeout)
+                if processes[-1].returncode != 0:
+                    return False, error
+                return True, output
+            except subprocess.TimeoutExpired:
+                for p in processes:
+                    p.kill()
+                return False, f"Command pipeline timed out after {self._default_timeout} seconds"
 
         except (OSError, subprocess.SubprocessError) as e:
             return False, str(e)
