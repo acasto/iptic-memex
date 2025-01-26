@@ -1,26 +1,37 @@
 from session_handler import InteractionContext
-import sys
 
 
 class PromptContext(InteractionContext):
-    """Class for processing system prompts with support for prompt chaining and templating"""
+    """Class for managing prompts with support for prompt chaining and templating"""
 
-    def __init__(self, session, prompt=None):
+    def __init__(self, session, content=None):
         """
-        Initialize the prompt context
-        :param prompt: the data to process
+        Initialize the prompt context with pre-resolved content
+        
+        Args:
+            session: The current session
+            content: Pre-resolved prompt content from SessionHandler
         """
         self.session = session
-        self.prompt = {}  # dictionary to hold the prompt name and content
         self.output = session.utils.output
-        self.proces_prompt(prompt)
-
+        self.prompt = {
+            'name': 'resolved',  # Since resolution is now handled upstream
+            'content': ''
+        }
+        
+        # Process the content through chains and templates
+        if content is not None:
+            self.process_content(content)
+        
     def resolve_prompt_chain(self, prompt_str, seen=None):
         """
         Recursively resolves prompt chains into flat list of prompts
-        :param prompt_str: comma-separated prompt string or chain alias
-        :param seen: set of already processed chains to detect cycles
-        :return: list of individual prompt names/files
+        
+        Args:
+            prompt_str: comma-separated prompt string or chain alias
+            seen: set of already processed chains to detect cycles
+        Returns:
+            list of individual prompt names/files
         """
         if seen is None:
             seen = set()
@@ -41,21 +52,14 @@ class PromptContext(InteractionContext):
 
         return prompts
 
-    def _get_prompt_directory(self):
-        """Get prompt directory from config"""
-        if 'prompt_directory' not in self.session.get_params():
-            return self.session.utils.fs.resolve_directory_path(
-                self.session.conf.get_option('DEFAULT', 'prompt_directory')
-            )
-        return self.session.utils.fs.resolve_directory_path(
-            self.session.get_params().get('prompt_directory')
-        )
-
     def process_templates(self, content):
         """
         Process any template variables in the prompt content
-        :param content: The prompt content to process
-        :return: Processed content with templates resolved
+        
+        Args:
+            content: The prompt content to process
+        Returns:
+            Processed content with templates resolved
         """
         template_handlers = self.session.conf.get_option('DEFAULT', 'template_handler', fallback='none')
 
@@ -75,71 +79,32 @@ class PromptContext(InteractionContext):
 
         return result
 
-    def proces_prompt(self, prompt):
+    def process_content(self, content):
         """
-        Process prompts from paths, stdin, chains, or direct strings
+        Process the provided content through chains and templates
+        
+        Args:
+            content: The prompt content to process
         """
-        if prompt is not None:
-            # Handle none/false case
-            if prompt.lower() in ['none', 'false']:
-                self.prompt['name'] = 'none'
-                self.prompt['content'] = ''
-                return
+        # Handle none/false case
+        if isinstance(content, str) and content.lower() in ['none', 'false']:
+            self.prompt['name'] = 'none'
+            self.prompt['content'] = ''
+            return
 
-            # Resolve any prompt chains into flat list
-            resolved_prompts = self.resolve_prompt_chain(prompt)
-            combined_content = []
-            prompt_sources = []
+        # Resolve any prompt chains
+        resolved_prompts = self.resolve_prompt_chain(content)
+        combined_content = []
 
-            for p in resolved_prompts:
-                content = None
-                source = None
+        for p in resolved_prompts:
+            if p.strip():
+                # Process templates in the content
+                processed = self.process_templates(p)
+                combined_content.append(processed)
 
-                # Handle stdin
-                if p == '-':
-                    content = sys.stdin.read()
-                    source = 'stdin'
-
-                # Check prompt directory
-                if content is None:
-                    prompt_directory = self._get_prompt_directory()
-                    prompt_file = self.session.utils.fs.resolve_file_path(p, prompt_directory, '.txt')
-                    if prompt_file:
-                        with open(prompt_file, 'r') as f:
-                            content = f.read()
-                            source = prompt_file
-
-                # Check direct file path
-                if content is None:
-                    prompt_file = self.session.utils.fs.resolve_file_path(p)
-                    if prompt_file:
-                        with open(prompt_file, 'r') as f:
-                            content = f.read()
-                            source = prompt_file
-
-                # Treat as direct prompt text
-                if content is None and p.strip():
-                    content = p
-                    source = 'string'
-
-                if content:
-                    # Process templates in the content
-                    content = self.process_templates(content)
-                    combined_content.append(content)
-                    prompt_sources.append(source)
-
-            # Set combined prompt info
-            if combined_content:
-                self.prompt['name'] = ', '.join(str(s) for s in prompt_sources)
-                self.prompt['content'] = '\n\n'.join(combined_content)
-            else:
-                # Fall back to default prompt
-                self.prompt['name'] = 'default'
-                self.prompt['content'] = self.process_templates(self.session.conf.get_default_prompt())
-        else:
-            # Use default prompt
-            self.prompt['name'] = 'default'
-            self.prompt['content'] = self.process_templates(self.session.conf.get_default_prompt())
+        # Set final prompt content
+        if combined_content:
+            self.prompt['content'] = '\n\n'.join(combined_content)
 
     def get(self):
         """Return the processed prompt"""
