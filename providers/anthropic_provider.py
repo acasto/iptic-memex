@@ -82,13 +82,26 @@ class AnthropicProvider(APIProvider):
             context = turn.get('context')
 
             if context:
-                processed_context = self._process_context(context)
-                if processed_context:
-                    block = {
-                        'type': 'text',
-                        'text': processed_context
-                    }
-                    content_blocks.append(block)
+                # Process contexts and handle images
+                for ctx in context:
+                    if ctx['type'] == 'image':
+                        img_data = ctx['context'].get()
+                        content_blocks.append({
+                            'type': 'image',
+                            'source': {
+                                'type': 'base64',
+                                'media_type': img_data['mime_type'],
+                                'data': img_data['content']
+                            }
+                        })
+                    else:
+                        # Accumulate non-image contexts for text processing
+                        processed_context = self._process_context([ctx])
+                        if processed_context:
+                            content_blocks.append({
+                                'type': 'text',
+                                'text': processed_context
+                            })
 
             message = turn.get('message')
             if message:

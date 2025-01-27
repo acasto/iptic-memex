@@ -178,8 +178,8 @@ class OpenAIProvider(APIProvider):
 
     def assemble_message(self) -> list:
         """
-        Assemble the message from the context
-        :return: message (str)
+        Assemble the message from the context, including image handling
+        :return: message (list)
         """
         message = []
         if self.session.get_context('prompt'):
@@ -187,14 +187,38 @@ class OpenAIProvider(APIProvider):
 
         chat = self.session.get_context('chat')
         if chat is not None:
-            for idx, turn in enumerate(chat.get()):  # go through each turn in the conversation
-                turn_context = ''
-                # if context is in turn and not an empty list
-                if 'context' in turn and turn['context']:
-                    # get the processed context
-                    turn_context = ProcessContextsAction.process_contexts_for_assistant(turn['context'])
+            for idx, turn in enumerate(chat.get()):
+                content = []
+                turn_contexts = []
 
-                message.append({'role': turn['role'], 'content': turn_context + "\n" + turn['message']})
+                # Handle message text
+                if turn['message']:
+                    content.append({'type': 'text', 'text': turn['message']})
+
+                # Process contexts
+                if 'context' in turn and turn['context']:
+                    for ctx in turn['context']:
+                        if ctx['type'] == 'image':
+                            img_data = ctx['context'].get()
+                            # Format image data for OpenAI's API
+                            content.append({
+                                'type': 'image_url',
+                                'image_url': {
+                                    'url': f"data:image/{img_data['mime_type'].split('/')[-1]};base64,{img_data['content']}"
+                                }
+                            })
+                        else:
+                            # Accumulate non-image contexts
+                            turn_contexts.append(ctx)
+
+                    # Add text contexts if any exist
+                    if turn_contexts:
+                        text_context = ProcessContextsAction.process_contexts_for_assistant(turn_contexts)
+                        if text_context:
+                            content.insert(0, {'type': 'text', 'text': text_context})
+
+                message.append({'role': turn['role'], 'content': content})
+
         return message
 
     def get_messages(self):

@@ -192,29 +192,49 @@ class GoogleProvider(APIProvider):
             yield f"Stream error: {str(e)}"
 
     def assemble_message(self) -> list:
-        """Assemble messages for the chat"""
-        messages = []
+        """
+        Assemble the message from the context, including image handling
+        :return: message (list)
+        """
+        message = []
+        if self.session.get_context('prompt'):
+            message.append({'role': 'model', 'content': self.session.get_context('prompt').get()['content']})
 
-        # Add system prompt if not using cache
-        if not self._cached_content and self.session.get_context('prompt'):
-            messages.append({
-                'role': 'system',
-                'content': self.session.get_context('prompt').get()['content']
-            })
-
-        # Add chat history
         chat = self.session.get_context('chat')
         if chat is not None:
             for turn in chat.get():
-                turn_context = ''
-                if 'context' in turn and turn['context']:
-                    turn_context = ProcessContextsAction.process_contexts_for_assistant(turn['context'])
-                messages.append({
-                    'role': turn['role'],
-                    'content': f"{turn_context}\n{turn['message']}" if turn_context else turn['message']
-                })
+                content = []
+                turn_contexts = []
 
-        return messages
+                # Process message content
+                if turn['message']:
+                    content.append({'type': 'text', 'text': turn['message']})
+
+                # Process contexts, including images
+                if 'context' in turn and turn['context']:
+                    for ctx in turn['context']:
+                        if ctx['type'] == 'image':
+                            img_data = ctx['context'].get()
+                            content.append({
+                                'type': 'image',
+                                'source': {
+                                    'mime_type': img_data['mime_type'],
+                                    'data': img_data['content']
+                                }
+                            })
+                        else:
+                            # Accumulate non-image contexts
+                            turn_contexts.append(ctx)
+
+                    # Add text contexts if any exist
+                    if turn_contexts:
+                        text_context = ProcessContextsAction.process_contexts_for_assistant(turn_contexts)
+                        if text_context:
+                            content.insert(0, {'type': 'text', 'text': text_context})
+
+                message.append({'role': turn['role'], 'content': content})
+
+        return message
 
     def get_messages(self):
         """Return assembled messages"""
