@@ -16,11 +16,14 @@ class GoogleProvider(APIProvider):
 
         # List of parameters that can be passed to the Google API
         self.parameters = [
+            'model',
+            'max_tokens',
             'temperature',
             'top_p',
             'top_k',
-            'system',
             'stop_sequences',
+            'candidate_count',
+            'stream',
             'tools',
             'tool_choice'
         ]
@@ -82,6 +85,30 @@ class GoogleProvider(APIProvider):
             print(f"Failed to initialize cache: {str(e)}")
             self._cached_content = None
 
+    def _get_safety_settings(self):
+        """Get safety settings from config"""
+        settings = []
+        default = self.params.get('safety_default', 'BLOCK_MEDIUM_AND_ABOVE')
+
+        # Map of our simplified category names to Google's enum names
+        categories = {
+            'harassment': 'HARM_CATEGORY_HARASSMENT',
+            'hate_speech': 'HARM_CATEGORY_HATE_SPEECH',
+            'sexually_explicit': 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+            'dangerous_content': 'HARM_CATEGORY_DANGEROUS_CONTENT'
+        }
+
+        for category_key, enum_name in categories.items():
+            # Check for category-specific override
+            threshold = self.params.get(f'safety_{category_key}', default)
+
+            settings.append({
+                'category': getattr(genai.types.HarmCategory, enum_name),
+                'threshold': getattr(genai.types.HarmBlockThreshold, threshold)
+            })
+
+        return settings
+
     def chat(self):
         """Handle chat completion requests"""
         try:
@@ -90,26 +117,34 @@ class GoogleProvider(APIProvider):
             if not messages:
                 return None
 
-            # Extract the latest message
-            latest_message = messages[-1]['content']
-
             # Loop through parameters and add supported ones
             gen_params = {}
             for param in self.parameters:
                 if param in self.params and self.params[param] is not None:
                     gen_params[param] = self.params[param]
 
-            # Handle type conversions for numeric parameters
-            if 'temperature' in gen_params:
-                gen_params['temperature'] = float(gen_params['temperature'])
-            if 'max_tokens' in gen_params:
-                gen_params['max_tokens'] = int(gen_params['max_tokens'])
+            # Extract params used elsewhere
+            stream = False
+            if 'stream' in gen_params:
+                stream = gen_params['stream']
+                del gen_params['stream']
+            if 'model' in gen_params:
+                del gen_params['model']
 
-            # Send message with filtered parameters
+            # Convert parameters
+            if 'max_tokens' in gen_params:
+                max_output_tokens = int(gen_params['max_tokens'])
+                del gen_params['max_tokens']
+                gen_params['max_output_tokens'] = max_output_tokens
+
+            # Get safety settings
+            safety_settings = self._get_safety_settings()
+
             response = self.gchat.send_message(
-                latest_message,
-                stream=bool(gen_params.get('stream', False)),
-                generation_config=genai.GenerationConfig(**gen_params)
+                messages[-1]['content'],
+                stream=stream,
+                generation_config=genai.GenerationConfig(**gen_params),
+                safety_settings=safety_settings
             )
 
             # Handle streaming vs non-streaming response
@@ -118,7 +153,11 @@ class GoogleProvider(APIProvider):
             else:
                 # Store usage metrics if available
                 if hasattr(response, 'usage_metadata'):
-                    self.usage = response.usage_metadata
+                    self.usage = {
+                        'prompt_tokens': response.usage_metadata.prompt_token_count,
+                        'completion_tokens': response.usage_metadata.candidates_token_count,
+                        'total_tokens': response.usage_metadata.total_token_count
+                    }
                 return response.text
 
         except Exception as e:
@@ -127,17 +166,28 @@ class GoogleProvider(APIProvider):
             return error_msg
 
     def stream_chat(self):
-        """Stream chat responses"""
+        """Stream chat responses and capture final usage stats"""
         response = self.chat()
         try:
             if isinstance(response, str):
                 yield response
                 return
+
+            final_chunk = None
             for chunk in response:
                 if hasattr(chunk, 'text'):
                     yield chunk.text
-                else:
-                    yield str(chunk)
+                final_chunk = chunk
+
+            # Capture usage from final chunk
+            if final_chunk and hasattr(final_chunk, 'usage_metadata'):
+                self.usage = {
+                    'prompt_tokens': final_chunk.usage_metadata.prompt_token_count,
+                    'completion_tokens': getattr(final_chunk.usage_metadata, 'candidates_token_count', 0),
+                    'total_tokens': final_chunk.usage_metadata.total_token_count,
+                    'cached_tokens': getattr(final_chunk.usage_metadata, 'cached_content_token_count', 0)
+                }
+
         except Exception as e:
             yield f"Stream error: {str(e)}"
 
@@ -171,18 +221,21 @@ class GoogleProvider(APIProvider):
         return self.assemble_message()
 
     def get_usage(self):
-        """Return usage statistics"""
+        """Return usage statistics including cache metrics if available"""
         if not self.usage:
             return {}
 
         stats = {
-            'total_tokens': self.usage.total_token_count,
-            'prompt_tokens': self.usage.prompt_token_count,
-            'completion_tokens': self.usage.candidates_token_count,
+            'total_in': self.usage['prompt_tokens'],
+            'total_out': self.usage['completion_tokens'],
+            'total_tokens': self.usage['total_tokens'],
+            'turn_in': self.usage['prompt_tokens'],
+            'turn_out': self.usage['completion_tokens'],
+            'turn_total': self.usage['total_tokens']
         }
 
-        if hasattr(self.usage, 'cached_content_token_count'):
-            stats['cached_tokens'] = self.usage.cached_content_token_count
+        if 'cached_tokens' in self.usage:
+            stats['cached_tokens'] = self.usage['cached_tokens']
 
         return stats
 
