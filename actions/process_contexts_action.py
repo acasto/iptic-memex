@@ -74,7 +74,7 @@ class ProcessContextsAction(InteractionAction):
                 continue
             elif f['type'] != 'project':
                 file = f['context'].get()
-                turn_context += f"<|file:{file['name']}|>\n{file['content']}\n<|end_file:{file['name']}|>\n"
+                turn_context += f"<|results:{file['name']}|>\n{file['content']}\n<|end_file:{file['name']}|>\n"
             else:
                 is_project = True
                 project = f['context'].get()
