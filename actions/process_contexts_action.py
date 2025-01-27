@@ -33,15 +33,21 @@ class ProcessContextsAction(InteractionAction):
             total_tokens = 0
 
             for idx, context in enumerate(contexts):
-                tokens = self.token_counter.count_tiktoken(context['context'].get()['content'])
-                total_tokens += tokens
-                if auto_submit:
-                    output.write(f"Output of: {context['context'].get()['name']} ({tokens} tokens)")
+                if context['type'] == 'image':
+                    if auto_submit:
+                        output.write(f"Output of: {context['context'].get()['name']} (image)")
+                    else:
+                        output.write(f"In context: [{idx}] {context['context'].get()['name']} (image)")
                 else:
-                    output.write(f"In context: [{idx}] {context['context'].get()['name']} ({tokens} tokens)")
+                    tokens = self.token_counter.count_tiktoken(context['context'].get()['content'])
+                    total_tokens += tokens
+                    if auto_submit:
+                        output.write(f"Output of: {context['context'].get()['name']} ({tokens} tokens)")
+                    else:
+                        output.write(f"In context: [{idx}] {context['context'].get()['name']} ({tokens} tokens)")
 
             # Check total tokens against max_input if auto_submit is True
-            if auto_submit:
+            if auto_submit and total_tokens > 0:
                 max_input = self.session.conf.get_option('TOOLS', 'max_input', fallback=4000)
                 if total_tokens > max_input:
                     output.write(f"\nWarning: Total tokens ({total_tokens}) exceed maximum ({max_input}). Auto-submit disabled.")
@@ -55,11 +61,16 @@ class ProcessContextsAction(InteractionAction):
     def process_contexts_for_assistant(contexts: list) -> str:
         turn_context = ""
         is_project = False
-        # go through each object and place the contents in tags in the format:
+
+        # go through each object and place the contents in tags
         for f in contexts:
             if f['type'] == 'raw':
                 file = f['context'].get()
                 turn_context += file['content']
+                continue
+            elif f['type'] == 'image':
+                # Images get handled differently by each provider
+                # Just pass through the full context
                 continue
             elif f['type'] != 'project':
                 file = f['context'].get()

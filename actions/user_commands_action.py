@@ -31,6 +31,10 @@ class UserCommandsAction(InteractionAction):
                 "description": "Load a file into the context",
                 "function": {"type": "action", "name": "load_file"},
             },
+            "load image": {
+                "description": "Load an image into the context",
+                "function": {"type": "action", "name": "load_image"},
+            },
             "load pdf": {
                 "description": "Load a pdf into the context",
                 "function": {"type": "action", "name": "load_pdf"},

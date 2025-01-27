@@ -98,6 +98,29 @@ class TabCompletionHandler:
             return None
 
     @staticmethod
+    def image_completer(text, state):
+        """Tab completion for image files only"""
+        if text.startswith('~'):  # if text begins with '~' expand it
+            text = os.path.expanduser(text)
+
+        if os.path.isdir(os.path.dirname(text)):
+            files_and_dirs = [str(Path(os.path.dirname(text)) / x) for x in os.listdir(os.path.dirname(text))]
+        else:  # will catch CWD and empty inputs
+            files_and_dirs = os.listdir(os.getcwd())
+
+        # Find options that match and are either directories or supported image files
+        options = [x for x in files_and_dirs if x.startswith(text) and
+                   (os.path.isdir(x) or any(x.lower().endswith(ext) for ext in ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif')))]
+
+        # Add a slash to directories
+        options = [f"{x}/" if os.path.isdir(x) else x for x in options]
+
+        try:
+            return options[state]
+        except IndexError:
+            return None
+
+    @staticmethod
     def file_path_completer(text: str, state: int) -> Optional[str]:
         """Tab completion for file paths"""
         if text.startswith('~'):
