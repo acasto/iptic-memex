@@ -88,17 +88,14 @@ class ChatMode(InteractionMode):
                 if self.session.get_action('user_commands').run(user_input):
                     continue
 
+            # handle Ctrl-C
             except (KeyboardInterrupt, EOFError):
                 try:
-                    self.utils.input.get_input(
-                        self.utils.output.style_text("Hit Ctrl-C again to quit or Enter to continue.", fg='red'),
-                        spacing=1,
-                    )
-                    self.utils.tab_completion.run('chat')
-                    continue
+                    if not self.session.handle_exit():
+                        self.utils.tab_completion.run('chat')
+                        continue
+                    raise
                 except (KeyboardInterrupt, EOFError):
-                    self.utils.output.write()
-                    self.session.get_action('persist_stats').run()
                     raise
 
             self.chat.add(user_input, 'user', contexts)

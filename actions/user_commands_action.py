@@ -201,11 +201,5 @@ class UserCommandsAction(InteractionAction):
         print()
 
     def handle_quit(self):
-        ui = self.session.get_action('ui')
-        user_input = input(ui.color_wrap("Hit Ctrl-C or enter 'y' to quit: ", "red"))
-        if user_input.lower() == 'y':
-            print()
-            self.session.get_action('persist_stats').run()
+        if self.session.handle_exit():
             quit()
-        else:
-            print()

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import importlib
 from abc import ABC, abstractmethod
-from typing import Any, Generator
+from typing import Optional, Any, Generator
 from config_handler import ConfigHandler
 from utils_handler import UtilsHandler
 import os
@@ -502,6 +502,36 @@ class SessionHandler:
         :return: the flag's value
         """
         return self.session_state.get("flags", {}).get(flag_name, default)
+
+    def handle_exit(self, prompt: bool = True) -> bool:
+        """
+        Clean up resources and handle program exit
+        Args:
+            prompt: Whether to prompt for confirmation
+        Returns:
+            True if exit should proceed, False if cancelled
+        """
+        if prompt:
+            try:
+                user_input = self.utils.input.get_input(
+                    self.utils.output.style_text("Hit Ctrl-C or enter 'y' to quit: ", "red")
+                )
+                if user_input.lower() != 'y':
+                    return False
+            except (KeyboardInterrupt, EOFError):
+                self.utils.output.write()
+
+        # Run cleanup tasks
+        provider: Optional[APIProvider] = self.session_state['provider']
+        if provider and hasattr(provider, 'cleanup'):
+            try:
+                provider.cleanup()
+            except Exception as e:
+                self.utils.output.error(f"Error during provider cleanup: {e}")
+
+        # Persist stats
+        self.get_action('persist_stats').run()
+        return True
 
     ############################################################################################################
     # Passthrough methods for CLI interaction

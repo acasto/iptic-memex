@@ -243,10 +243,18 @@ class GoogleProvider(APIProvider):
         """Reset usage statistics"""
         self.usage = None
 
-    def __del__(self):
-        """Cleanup cached content on deletion"""
+    def cleanup(self):
+        """Clean up resources, specifically the cache if it exists"""
         if self._cached_content:
             try:
                 self._cached_content.delete()
-            except Exception:
-                pass  # Ignore cleanup errors
+                self._cached_content = None
+            except Exception as e:
+                raise Exception(f"Failed to delete Google cache: {str(e)}")
+
+    def __del__(self):
+        """Attempt cleanup on deletion, but don't raise errors"""
+        try:
+            self.cleanup()
+        except Exception:
+            pass
