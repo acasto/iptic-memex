@@ -215,7 +215,9 @@ class LlamaCppProvider(APIProvider):
         """
         message = []
         if self.session.get_context('prompt'):
-            message.append({'role': 'developer', 'content': self.session.get_context('prompt').get()['content']})
+            # Use 'system' or 'developer' based on provider configuration
+            role = 'system' if self.params.get('use_old_system_role', False) else 'developer'
+            message.append({'role': role, 'content': self.session.get_context('prompt').get()['content']})
 
         chat = self.session.get_context('chat')
         if chat is not None:

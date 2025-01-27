@@ -43,3 +43,10 @@ class LoadImageAction(InteractionAction):
             self.tc.run('chat')
         else:
             print(f"Image file '{filename}' not found.")
+
+    @staticmethod
+    def can_run(session) -> bool:
+        model = session.get_params().get('model')
+        if not model:
+            return False
+        return bool(session.conf.get_option_from_model('vision', model))

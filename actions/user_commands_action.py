@@ -158,6 +158,18 @@ class UserCommandsAction(InteractionAction):
             new_commands = user_commands.run()
             if new_commands:
                 self.commands.update(new_commands)
+        # Filter out commands whose actions can't run
+        for cmd_name, cmd_info in list(self.commands.items()):
+            if cmd_info["function"]["type"] == "action":
+                try:
+                    action_name = cmd_info["function"]["name"]
+                    class_name = ''.join(word.capitalize() for word in action_name.split('_')) + 'Action'
+                    mod = __import__(f'actions.{action_name}_action', fromlist=[class_name])
+                    action_class = getattr(mod, class_name)
+                    if hasattr(action_class, 'can_run') and action_class.can_run(self.session) is False:
+                        del self.commands[cmd_name]
+                except ImportError:
+                    pass
 
     def run(self, user_input: str = None) -> bool | None:
         if user_input is None or len(user_input.split()) > 4:  # limit command checking to messages with >4 words
