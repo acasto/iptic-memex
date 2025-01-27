@@ -183,7 +183,7 @@ class OpenAIProvider(APIProvider):
         """
         message = []
         if self.session.get_context('prompt'):
-            message.append({'role': 'system', 'content': self.session.get_context('prompt').get()['content']})
+            message.append({'role': 'developer', 'content': self.session.get_context('prompt').get()['content']})
 
         chat = self.session.get_context('chat')
         if chat is not None:
