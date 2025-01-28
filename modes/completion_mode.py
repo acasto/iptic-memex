@@ -25,36 +25,23 @@ class CompletionMode(InteractionMode):
         session.add_context('chat')
         self.chat = session.get_context('chat')
 
-        # Format any remaining files if they exist
-        content = ""
-        if contexts:
-            content = self.session.get_action('process_contexts').process_contexts_for_assistant(contexts)
-            if stdin_context:
-                content += "\n"
-
-        # Append stdin content if present
+        # Add the message with all contexts included
         if stdin_context:
-            content += stdin_context['context'].get()['content']
-
-        self.chat.add(content)
+            self.chat.add(stdin_context['context'].get()['content'], 'user', contexts)
+        elif contexts:
+            self.chat.add("", 'user', contexts)
 
     def start(self):
         """
         Start the completion mode interaction
         """
-        # print(self.session.get_session_state())
-        # quit()
-        # if we are in stream mode, iterate through the stream of events
         if self.params['stream'] is True:
             response = self.session.get_provider().stream_chat()
-            # iterate through the stream of events, add in a delay to simulate a more natural conversation
             if response:
                 for i, event in enumerate(response):
                     print(event, end='', flush=True)
                     if 'stream_delay' in self.params:
                         time.sleep(float(self.params['stream_delay']))
             print()
-
-        # else just print the response
         else:
             print(self.session.get_provider().chat())

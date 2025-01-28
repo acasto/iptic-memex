@@ -35,6 +35,10 @@ class UserCommandsAction(InteractionAction):
                 "description": "Load an image into the context",
                 "function": {"type": "action", "name": "load_image"},
             },
+            "load image summary": {
+                "description": "Load an image summary into the context",
+                "function": {"type": "action", "name": "load_image", "args": ["summary"]},
+            },
             "load pdf": {
                 "description": "Load a pdf into the context",
                 "function": {"type": "action", "name": "load_pdf"},

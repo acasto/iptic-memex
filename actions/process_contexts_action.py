@@ -5,9 +5,6 @@ class ProcessContextsAction(InteractionAction):
     """
     Class for processing contexts
     """
-    # Todo: Some of this functionality might be better suited for the session handler. Maybe consider keeping
-    #       the user interaction stuff that displays context and move the get_contexts and assistant stuff elsewhere
-
     def __init__(self, session):
         self.session = session
         self.token_counter = self.session.get_action('count_tokens')
@@ -39,12 +36,18 @@ class ProcessContextsAction(InteractionAction):
                     else:
                         output.write(f"In context: [{idx}] {context['context'].get()['name']} (image)")
                 else:
-                    tokens = self.token_counter.count_tiktoken(context['context'].get()['content'])
-                    total_tokens += tokens
-                    if auto_submit:
-                        output.write(f"Output of: {context['context'].get()['name']} ({tokens} tokens)")
+                    context_data = context['context'].get()
+                    content = context_data.get('content', '')
+                    if content:
+                        tokens = self.token_counter.count_tiktoken(content)
+                        total_tokens += tokens
                     else:
-                        output.write(f"In context: [{idx}] {context['context'].get()['name']} ({tokens} tokens)")
+                        tokens = 0
+
+                    if auto_submit:
+                        output.write(f"Output of: {context_data.get('name', 'unnamed')} ({tokens} tokens)")
+                    else:
+                        output.write(f"In context: [{idx}] {context_data.get('name', 'unnamed')} ({tokens} tokens)")
 
             # Check total tokens against max_input if auto_submit is True
             if auto_submit and total_tokens > 0:
@@ -74,7 +77,8 @@ class ProcessContextsAction(InteractionAction):
                 continue
             elif f['type'] != 'project':
                 file = f['context'].get()
-                turn_context += f"<|results:{file['name']}|>\n{file['content']}\n<|end_file:{file['name']}|>\n"
+                if 'content' in file:
+                    turn_context += f"<|results:{file['name']}|>\n{file['content']}\n<|end_file:{file['name']}|>\n"
             else:
                 is_project = True
                 project = f['context'].get()
