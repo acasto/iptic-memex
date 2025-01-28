@@ -49,11 +49,14 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file
     if verbose:
         ctx.obj['VERBOSE'] = verbose
 
-    # if we're in file mode take care of that now
+    # In the CLI function, modify the file handling:
     if len(file) > 0:
         # loop through the files and read them in appending the content to the message
         for f in file:
-            session.add_context('file', f)
+            if is_image_file(f):
+                session.add_context('image', f)
+            else:
+                session.add_context('file', f)
 
         session.start_mode("completion")
 
@@ -173,20 +176,10 @@ def list_prompts(ctx):
         print("No prompts available")
 
 
-# @cli.command()
-# @click.pass_context
-# def list_chats(ctx):
-#     """
-#     list the available chats
-#     :param ctx: click context
-#     """
-#     session = ctx.obj['SESSION']
-#     chats = session.list_chats()
-#     if chats is not None:
-#         for session in chats:
-#             print(session)
-#     else:
-#         print("No chats available")
+def is_image_file(filename: str) -> bool:
+    """Check if a file is an image based on extension"""
+    image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif')
+    return filename.lower().endswith(image_extensions)
 
 
 # take care of business

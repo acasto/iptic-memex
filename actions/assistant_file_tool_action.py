@@ -1,5 +1,4 @@
 from session_handler import InteractionAction
-import subprocess
 import os
 
 
@@ -100,40 +99,43 @@ class AssistantFileToolAction(InteractionAction):
         })
 
     def _handle_summary(self, filename):
+        """Handle file summary using AssistantCompletionAction"""
         resolved_path = self.fs_handler.resolve_path(filename)
         if resolved_path is None:
             return
 
         try:
+            # Get file content
+            content = self.fs_handler.read_file(resolved_path)
+            if content is None:
+                return
+
+            # Get configuration
             summary_prompt = self.session.conf.get_option('TOOLS', 'summary_prompt')
             summary_model = self.session.conf.get_option('TOOLS', 'summary_model')
-            if not summary_model:
+
+            if not summary_prompt:
                 self.session.add_context('assistant', {
                     'name': 'file_tool_error',
-                    'content': 'No summary model configured'
+                    'content': 'No summary prompt configured'
                 })
                 return
 
-            result = subprocess.run(['memex', '-m', summary_model, '-p', summary_prompt, '-f', resolved_path],
-                                    capture_output=True, text=True)
-            summary = result.stdout if result.returncode == 0 else f"Error: {result.stderr}"
+            # Use completion action for summary
+            completion = self.session.get_action('assistant_completion')
+            summary = completion.run(
+                content=content,
+                prompt=summary_prompt,
+                model=summary_model
+            )
 
-            # Check summary against token limit
-            token_count = self.token_counter.count_tiktoken(summary)
-            max_input = self.session.conf.get_option('TOOLS', 'max_input', fallback=4000)
-
-            if token_count > max_input:
+            if summary:
                 self.session.add_context('assistant', {
-                    'name': 'file_tool_error',
-                    'content': f'Summary exceeds maximum token limit ({max_input}). Try using a different summarization approach.'
+                    'name': f'Summary of: {filename}',
+                    'content': summary
                 })
-                return
 
-            self.session.add_context('assistant', {
-                'name': f'Summary of: {filename}',
-                'content': summary
-            })
-        except subprocess.SubprocessError as e:
+        except Exception as e:
             self.session.add_context('assistant', {
                 'name': 'file_tool_error',
                 'content': f'Failed to get file summary: {str(e)}'
