@@ -49,6 +49,11 @@ class AssistantCommandsAction(InteractionAction):
                 "args": ["mode", "file", "new_name", "recursive", "block"],
                 'auto_submit': True,
                 "function": {"type": "action", "name": "assistant_file_tool"}
+            },
+            "WEBSEARCH": {
+                "args": ["query"],
+                'auto_submit': True,
+                "function": {"type": "action", "name": "assistant_websearch_tool"}
             }
         }
         # Check for and load user commands
