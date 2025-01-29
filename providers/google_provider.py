@@ -141,7 +141,7 @@ class GoogleProvider(APIProvider):
             safety_settings = self._get_safety_settings()
 
             response = self.gchat.send_message(
-                messages[-1]['content'],
+                messages[-1]['parts'],
                 stream=stream,
                 generation_config=genai.GenerationConfig(**gen_params),
                 safety_settings=safety_settings
@@ -158,6 +158,9 @@ class GoogleProvider(APIProvider):
                         'completion_tokens': response.usage_metadata.candidates_token_count,
                         'total_tokens': response.usage_metadata.total_token_count
                     }
+                if hasattr(response, 'parts'):
+                    text_parts = [part.text for part in response.parts]
+                    return ' '.join(text_parts)
                 return response.text
 
         except Exception as e:
@@ -198,41 +201,45 @@ class GoogleProvider(APIProvider):
         """
         message = []
         if self.session.get_context('prompt'):
-            message.append({'role': 'model', 'content': self.session.get_context('prompt').get()['content']})
+            message.append({
+                'role': 'model',
+                'parts': [{
+                    'text': self.session.get_context('prompt').get()['content']
+                }]
+            })
 
         chat = self.session.get_context('chat')
         if chat is not None:
             for turn in chat.get():
-                content = []
+                parts = []
                 turn_contexts = []
-
-                # Process message content
-                if turn['message']:
-                    content.append({'type': 'text', 'text': turn['message']})
 
                 # Process contexts, including images
                 if 'context' in turn and turn['context']:
                     for ctx in turn['context']:
                         if ctx['type'] == 'image':
                             img_data = ctx['context'].get()
-                            content.append({
-                                'type': 'image',
-                                'source': {
+                            parts.append({
+                                'inline_data': {
                                     'mime_type': img_data['mime_type'],
                                     'data': img_data['content']
                                 }
                             })
                         else:
-                            # Accumulate non-image contexts
                             turn_contexts.append(ctx)
 
                     # Add text contexts if any exist
                     if turn_contexts:
                         text_context = ProcessContextsAction.process_contexts_for_assistant(turn_contexts)
                         if text_context:
-                            content.insert(0, {'type': 'text', 'text': text_context})
+                            parts.insert(0, {'text': text_context})
 
-                message.append({'role': turn['role'], 'content': content})
+                # Add message text
+                if turn['message']:
+                    parts.append({'text': turn['message']})
+
+                if parts:
+                    message.append({'role': turn['role'], 'parts': parts})
 
         return message
 
