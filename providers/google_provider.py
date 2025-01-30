@@ -8,12 +8,13 @@ from actions.process_contexts_action import ProcessContextsAction
 
 class GoogleProvider(APIProvider):
     """
-    Google Generative AI provider with support for context caching
+    Google Generative AI provider with proper system prompt and context caching
     """
     def __init__(self, session: SessionHandler):
         self.session = session
         self.params = session.get_params()
-
+        self.token_counter = session.get_action('count_tokens')
+        
         # List of parameters that can be passed to the Google API
         self.parameters = [
             'model',
@@ -28,69 +29,93 @@ class GoogleProvider(APIProvider):
             'tool_choice'
         ]
 
-        self._configure_client()
-        self._initialize_chat()
-        self._cached_content = None
-        self.usage = None
-
-    def _configure_client(self):
-        """Configure the Google API client with credentials"""
+        # Initialize API client configuration
         api_key = self.params.get('api_key') or os.environ.get('GOOGLE_API_KEY', 'none')
         genai.configure(api_key=api_key)
 
-    def _initialize_chat(self):
-        """Initialize chat with optional caching support"""
-        # Only create cache if caching is enabled and we have a system prompt
-        if self._should_enable_caching():
-            self._setup_cache()
-            if self._cached_content:
-                self.client = genai.GenerativeModel.from_cached_content(
-                    cached_content=self._cached_content
-                )
-            else:
-                self.client = genai.GenerativeModel(self.params['model'])
-        else:
-            self.client = genai.GenerativeModel(self.params['model'])
+        # Defer client initialization until first turn to handle caching
+        self.client = None
+        self.gchat = None
+        self.usage = None
+        self._cached_content = None
+        self._first_turn = True
 
+    def _initialize_client(self, first_turn_context=None):
+        """Initialize client with optional caching on first turn"""
+        if not self._should_enable_caching():
+            # Standard initialization without caching
+            self.client = genai.GenerativeModel(
+                model_name=self.params['model'],
+                system_instruction=self._get_system_prompt()
+            )
+            self.gchat = self.client.start_chat(history=[])
+            return
+
+        # Get combined content for potential caching
+        content = self._get_system_prompt() or ""
+        if first_turn_context:
+            content += "\n" + first_turn_context
+
+        # Check if content meets minimum token threshold
+        token_count = self.token_counter.count_tiktoken(content)
+        cache_threshold = 32768 + 1000  # Add buffer to be safe
+        
+        if token_count >= cache_threshold:
+            # Setup caching
+            try:
+                ttl_minutes = float(self.params.get('cache_ttl', 60))
+                self._cached_content = caching.CachedContent.create(
+                    model=self.params['model'],
+                    display_name=f"session_context_{datetime.datetime.now().isoformat()}",
+                    system_instruction=content,
+                    ttl=datetime.timedelta(minutes=ttl_minutes)
+                )
+                self.client = genai.GenerativeModel.from_cached_content(cached_content=self._cached_content)
+            except Exception as e:
+                print(f"Failed to initialize cache: {str(e)}")
+                # Fall back to standard initialization
+                self.client = genai.GenerativeModel(
+                    model_name=self.params['model'],
+                    system_instruction=self._get_system_prompt()
+                )
+        else:
+            # Not enough content to cache, initialize normally
+            self.client = genai.GenerativeModel(
+                model_name=self.params['model'],
+                system_instruction=self._get_system_prompt()
+            )
+        
         self.gchat = self.client.start_chat(history=[])
 
     def _should_enable_caching(self) -> bool:
-        """Check if caching should be enabled"""
-        return bool(self.params.get('prompt_caching', False))
+        """Check if caching should be enabled based on config"""
+        return (self.params.get('prompt_caching', False) and 
+                self.params.get('cache', False))
 
-    def _setup_cache(self):
-        """Set up context caching for prompt and initial context"""
-        try:
-            # Get TTL from config or use default
-            ttl_minutes = float(self.params.get('cache_ttl', 5))
-            ttl = datetime.timedelta(minutes=ttl_minutes)
+    def _get_system_prompt(self) -> str:
+        """Get system prompt from context"""
+        if self.session.get_context('prompt'):
+            return self.session.get_context('prompt').get()['content']
+        return ""
 
-            # Build initial context from prompt and any existing context
-            prompt_context = ''
-            if self.session.get_context('prompt'):
-                prompt_context = self.session.get_context('prompt').get()['content']
-
-            # Only proceed if we have enough content to meet minimum token requirement
-            # Note: A proper token counting implementation would be needed here
-            # For now we'll try to cache and let the API handle validation
-            if prompt_context:
-                self._cached_content = caching.CachedContent.create(
-                    model=self.params['model'],
-                    display_name=f"session_prompt_{datetime.datetime.now().isoformat()}",
-                    system_instruction=prompt_context,
-                    ttl=ttl
-                )
-        except Exception as e:
-            # Log error but continue without caching
-            print(f"Failed to initialize cache: {str(e)}")
-            self._cached_content = None
+    @staticmethod
+    def _get_first_turn_context(messages) -> str:
+        """Extract context from first turn if present"""
+        if messages and len(messages) > 1:  # Skip system message
+            first_msg = messages[1]
+            if 'parts' in first_msg:
+                # Look for context part specifically
+                for part in first_msg['parts']:
+                    if isinstance(part, dict) and 'text' in part:
+                        # Assuming first text part is context
+                        return part['text']
+        return ""
 
     def _get_safety_settings(self):
         """Get safety settings from config"""
         settings = []
         default = self.params.get('safety_default', 'BLOCK_MEDIUM_AND_ABOVE')
 
-        # Map of our simplified category names to Google's enum names
         categories = {
             'harassment': 'HARM_CATEGORY_HARASSMENT',
             'hate_speech': 'HARM_CATEGORY_HATE_SPEECH',
@@ -99,9 +124,7 @@ class GoogleProvider(APIProvider):
         }
 
         for category_key, enum_name in categories.items():
-            # Check for category-specific override
             threshold = self.params.get(f'safety_{category_key}', default)
-
             settings.append({
                 'category': getattr(genai.types.HarmCategory, enum_name),
                 'threshold': getattr(genai.types.HarmBlockThreshold, threshold)
@@ -110,36 +133,38 @@ class GoogleProvider(APIProvider):
         return settings
 
     def chat(self):
-        """Handle chat completion requests"""
+        """Handle chat completion requests with caching support"""
         try:
-            # Assemble the message from the context
             messages = self.assemble_message()
             if not messages:
                 return None
 
-            # Loop through parameters and add supported ones
+            # Initialize client on first turn
+            if self.client is None:
+                first_turn_context = self._get_first_turn_context(messages)
+                self._initialize_client(first_turn_context)
+                
+                # If we're caching, remove context from messages to avoid duplication
+                if self._cached_content and len(messages) > 1:
+                    messages = [messages[0]] + messages[2:]
+
+            # Process generation parameters
             gen_params = {}
             for param in self.parameters:
                 if param in self.params and self.params[param] is not None:
                     gen_params[param] = self.params[param]
 
-            # Extract params used elsewhere
-            stream = False
-            if 'stream' in gen_params:
-                stream = gen_params['stream']
-                del gen_params['stream']
+            # Handle special parameters
+            stream = gen_params.pop('stream', False)
             if 'model' in gen_params:
                 del gen_params['model']
-
-            # Convert parameters
             if 'max_tokens' in gen_params:
-                max_output_tokens = int(gen_params['max_tokens'])
-                del gen_params['max_tokens']
-                gen_params['max_output_tokens'] = max_output_tokens
+                gen_params['max_output_tokens'] = int(gen_params.pop('max_tokens'))
 
             # Get safety settings
             safety_settings = self._get_safety_settings()
 
+            # Send message
             response = self.gchat.send_message(
                 messages[-1]['parts'],
                 stream=stream,
@@ -147,8 +172,11 @@ class GoogleProvider(APIProvider):
                 safety_settings=safety_settings
             )
 
+            # Mark first turn complete
+            self._first_turn = False
+
             # Handle streaming vs non-streaming response
-            if self.params.get('stream', False):
+            if stream:
                 return response
             else:
                 # Store usage metrics if available
@@ -156,7 +184,8 @@ class GoogleProvider(APIProvider):
                     self.usage = {
                         'prompt_tokens': response.usage_metadata.prompt_token_count,
                         'completion_tokens': response.usage_metadata.candidates_token_count,
-                        'total_tokens': response.usage_metadata.total_token_count
+                        'total_tokens': response.usage_metadata.total_token_count,
+                        'cached_tokens': getattr(response.usage_metadata, 'cached_content_token_count', 0)
                     }
                 if hasattr(response, 'parts'):
                     text_parts = [part.text for part in response.parts]
@@ -195,16 +224,13 @@ class GoogleProvider(APIProvider):
             yield f"Stream error: {str(e)}"
 
     def assemble_message(self) -> list:
-        """
-        Assemble the message from the context, including image handling
-        :return: message (list)
-        """
+        """Assemble the message from context"""
         message = []
-        if self.session.get_context('prompt'):
+        if self.session.get_context('prompt') and not self._cached_content:
             message.append({
                 'role': 'model',
                 'parts': [{
-                    'text': self.session.get_context('prompt').get()['content']
+                    'text': self._get_system_prompt()
                 }]
             })
 
@@ -214,7 +240,7 @@ class GoogleProvider(APIProvider):
                 parts = []
                 turn_contexts = []
 
-                # Process contexts, including images
+                # Process contexts
                 if 'context' in turn and turn['context']:
                     for ctx in turn['context']:
                         if ctx['type'] == 'image':
@@ -228,7 +254,7 @@ class GoogleProvider(APIProvider):
                         else:
                             turn_contexts.append(ctx)
 
-                    # Add text contexts if any exist
+                    # Add text contexts
                     if turn_contexts:
                         text_context = ProcessContextsAction.process_contexts_for_assistant(turn_contexts)
                         if text_context:
@@ -248,7 +274,7 @@ class GoogleProvider(APIProvider):
         return self.assemble_message()
 
     def get_usage(self):
-        """Return usage statistics including cache metrics if available"""
+        """Return usage statistics including cache metrics"""
         if not self.usage:
             return {}
 
@@ -271,7 +297,7 @@ class GoogleProvider(APIProvider):
         self.usage = None
 
     def cleanup(self):
-        """Clean up resources, specifically the cache if it exists"""
+        """Clean up resources and cached content"""
         if self._cached_content:
             try:
                 self._cached_content.delete()
@@ -280,7 +306,7 @@ class GoogleProvider(APIProvider):
                 raise Exception(f"Failed to delete Google cache: {str(e)}")
 
     def __del__(self):
-        """Attempt cleanup on deletion, but don't raise errors"""
+        """Attempt cleanup on deletion"""
         try:
             self.cleanup()
         except Exception:
