@@ -29,11 +29,15 @@ class AssistantCommandsAction(InteractionAction):
     def __init__(self, session):
         self.session = session
         self.params = session.get_params()
+
+        cmd_tool = session.conf.get_option('TOOLS', 'cmd_tool', fallback='assistant_cmd_tool')
+        search_tool = session.conf.get_option('TOOLS', 'search_tool', fallback='assistant_websearch_tool')
+
         self.commands = {
             "CMD": {
                 "args": ["command", "arguments"],
                 'auto_submit': True,
-                "function": {"type": "action", "name": "assistant_cmd_tool"}
+                "function": {"type": "action", "name": cmd_tool}
             },
             "MATH": {
                 "args": ["bc_flags", "expression"],
@@ -51,9 +55,9 @@ class AssistantCommandsAction(InteractionAction):
                 "function": {"type": "action", "name": "assistant_file_tool"}
             },
             "WEBSEARCH": {
-                "args": ["query"],
+                "args": ["query", "recency"],
                 'auto_submit': True,
-                "function": {"type": "action", "name": "assistant_websearch_tool"}
+                "function": {"type": "action", "name": search_tool}
             }
         }
         # Check for and load user commands
