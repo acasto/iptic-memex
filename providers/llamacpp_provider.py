@@ -216,7 +216,8 @@ class LlamaCppProvider(APIProvider):
         message = []
         if self.session.get_context('prompt'):
             # Use 'system' or 'developer' based on provider configuration
-            role = 'system' if self.params.get('use_old_system_role', False) else 'developer'
+            # role = 'system' if self.params.get('use_old_system_role', False) else 'developer'
+            role = 'system'  # Remove when 'developer' is supported and uncomment above
             message.append({'role': role, 'content': self.session.get_context('prompt').get()['content']})
 
         chat = self.session.get_context('chat')
