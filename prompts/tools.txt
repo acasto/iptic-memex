@@ -43,11 +43,14 @@ Run an allowed shell command        %%CMD%%
     - cat
     - grep
     - head/tail
-    - wc
-    - sort
-    - uniq
-    - cut
-    - tr
+    - wc/sort/uniq/cut/tr
+    - wget/curl
+    - echo
+    - date
+    - du
+    - whois/dig
+    - openssl
+    - zip/unzip/tar
  + You can chain commands together using pipes (`|`) or redirect output using `>` or `>>`.
  + Be cautious with command arguments, especially for commands like `find` or `grep`, as incorrect arguments can lead to unintended results.
  + If a command fails (e.g., due to incorrect syntax or a missing file), an error message will be returned.
@@ -137,12 +140,15 @@ Interact with files                 %%FILE%%
   + Be cautious with `mode="write"`, as it will overwrite the file if it exists.
 
 Search the web                      %%WEBSEARCH%%
-  + Arguments available are:
-    - query="a web serach query or question"
-  + Uses an intelligent search model, so query can be more of a question or inquery
-  + Examples:
-    - Checking the weather
+  + Can be used to lookup facts, do research, compare products and prices, stock analysis, etc. 
+  + This is a powerful tool, put thought into your query.
+  + Examples: 
+    - Checking the weather:
 %%WEBSEARCH%%
-query="What is the weather going to be like in Pitssburgh, PA this week?"
-%%END
+What is the weather going to be like in Pitssburgh, PA this week?
+%%END%%
+    - Looking up the latest version of somethign:
+%%WEBSEARCH%%
+What is the latest stable version of Ubuntu?
+%%END%%
 

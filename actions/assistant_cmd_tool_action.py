@@ -37,7 +37,18 @@ class AssistantCmdToolAction(InteractionAction):
             'sort': {'args': [], 'exclude_opts': []},
             'uniq': {'args': [], 'exclude_opts': []},
             'cut': {'args': [], 'exclude_opts': []},
-            'tr': {'args': [], 'exclude_opts': []}
+            'tr': {'args': [], 'exclude_opts': []},
+            'wget': {'args': ['url'], 'exclude_opts': []},
+            'curl': {'args': ['url'], 'exclude_opts': []},
+            'echo': {'args': [], 'exclude_opts': []},
+            'date': {'args': [], 'exclude_opts': []},
+            'du': {'args': [], 'exclude_opts': []},
+            'whois': {'args': ['domain'], 'exclude_opts': []},
+            'openssl': {'args': ['command'], 'exclude_opts': []},
+            'dig': {'args': ['domain'], 'exclude_opts': []},
+            'unzip': {'args': ['file'], 'exclude_opts': []},
+            'zip': {'args': ['file'], 'exclude_opts': []},
+            'tar': {'args': ['file'], 'exclude_opts': []}
         }
 
     @staticmethod
