@@ -42,15 +42,37 @@ class AssistantWebsearchToolAction(InteractionAction):
         print()
         return True
 
+    def validate_search_model(self, model_name):
+        """
+        Validate and return the correct search model name
+        Returns the default 'sonar' model if invalid
+        """
+        if not model_name:
+            return 'sonar'
+
+        model_name = model_name.lower()
+        if model_name in self.SEARCH_MODELS:
+            return self.SEARCH_MODELS[model_name]
+
+        # If the full model name is provided (e.g., 'sonar-pro')
+        if model_name in self.SEARCH_MODELS.values():
+            return model_name
+
+        return 'sonar'  # Default to basic search model
+
     def __init__(self, session):
         self.session = session
         self._search_prompt = self.session.get_tools().get('search_prompt', None)
-        self._search_model = self.session.get_tools().get('search_model', "sonar")
+
+        # Validate search model during initialization
+        initial_model = self.session.get_tools().get('search_model', "sonar")
+        self._search_model = self.validate_search_model(initial_model)
 
     def run(self, args: dict, content: str = ""):
-        # We can take args from the assistant command here (e.g., recency, query) but
-        # for simplicity we're currently juts getting the query from content. Leaving
-        # this here in case we want to expand the args in the future though.
+        # Recheck search model at runtime in case it was changed
+        current_model = self.session.get_tools().get('search_model', self._search_model)
+        self._search_model = self.validate_search_model(current_model)
+
         query = args.get('query', '')
         if content:
             query = f"{query} {content}".strip()

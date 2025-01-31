@@ -15,22 +15,22 @@ class AssistantDockerToolAction(InteractionAction):
         self.fs_handler = session.get_action('assistant_fs_handler')
         self._default_timeout = float(session.get_tools().get('timeout', 15))
 
-        # Get Docker environment configuration
-        self.docker_env = session.get_tools().get('docker_env', 'ephemeral')
-        env_section = self.docker_env.upper()
-        # Load persistence setting from the environment's config
-        self.is_persistent = self.session.conf.get_option(env_section, 'persistent', False)
-
         # Get base directory configuration
         base_dir = session.get_tools().get('base_directory', 'working')
         self.base_dir = os.getcwd() if base_dir in ('working', '.') else os.path.expanduser(base_dir)
 
-        # Load mode-specific configuration
-        self._load_mode_config()
+        # Initialize environment settings
+        self._refresh_environment_config()
 
-    def _load_mode_config(self) -> None:
-        """Load configuration based on selected Docker environment"""
+    def _refresh_environment_config(self) -> None:
+        """Refresh Docker environment configuration from current session settings"""
+        # Get Docker environment configuration
+        self.docker_env = self.session.get_tools().get('docker_env', 'ephemeral')
         env_section = self.docker_env.upper()
+        # Load persistence setting from the environment's config
+        self.is_persistent = self.session.conf.get_option(env_section, 'persistent', False)
+
+        # Load Docker-specific configuration
         self.docker_image = self.session.conf.get_option(env_section, 'docker_image', 'ubuntu:latest')
         self.docker_run_options = self.session.conf.get_option(env_section, 'docker_run_options', '')
         self.container_name = None if not self.is_persistent else \
@@ -87,6 +87,9 @@ class AssistantDockerToolAction(InteractionAction):
         """Create a Docker command based on the current mode"""
         if not command_str.strip():
             return None
+
+        # Refresh environment config before creating command
+        self._refresh_environment_config()
 
         if not self.is_persistent:
             # Build ephemeral docker command
@@ -146,33 +149,6 @@ class AssistantDockerToolAction(InteractionAction):
         except (OSError, subprocess.SubprocessError) as e:
             return False, str(e)
 
-    # Currently unused, but kept for potential future use
-    # We might want to do some cleaning up eventually, but need to consider the level
-    # of persistence we want to maintain
-    def cleanup(self) -> None:
-        """Clean up any persistent containers on exit"""
-        if self.is_persistent and self.container_name:
-            try:
-                # Check if container exists before attempting removal
-                result = subprocess.run(
-                    ["docker", "ps", "-a", "-q", "-f", f"name={self.container_name}"],
-                    capture_output=True,
-                    text=True,
-                    check=False
-                )
-                if result.stdout.strip():
-                    # Stop container if it's running
-                    subprocess.run(["docker", "stop", self.container_name],
-                                   stderr=subprocess.DEVNULL,
-                                   check=False)
-                    # Remove container
-                    subprocess.run(["docker", "rm", "-f", self.container_name],
-                                   stderr=subprocess.DEVNULL,
-                                   check=False)
-            except subprocess.SubprocessError:
-                # Best effort cleanup - don't raise if it fails
-                pass
-
     def setup(self) -> None:
         """Set up the action - required by InteractionAction
 
@@ -195,7 +171,7 @@ class AssistantDockerToolAction(InteractionAction):
 
     def run(self, args: Optional[dict] = None, content: str = "") -> None:
         """Process and execute commands from either content or command/arguments"""
-        # Build command from either content or command/arguments
+        # Build command from either content or arguments
         command_str = content
         if not command_str and args:
             cmd = args.get('command', '').strip()
