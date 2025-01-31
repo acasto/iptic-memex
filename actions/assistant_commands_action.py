@@ -45,7 +45,7 @@ class AssistantCommandsAction(InteractionAction):
                 "function": {"type": "action", "name": "assistant_math_tool"}
             },
             "MEMORY": {
-                "args": ["action", "memory"],
+                "args": ["action", "memory", "project", "id"],
                 'auto_submit': True,
                 "function": {"type": "action", "name": "assistant_memory_tool"}
             },

@@ -81,6 +81,7 @@ scale=10; 22 / 7
 %%END%%   
 
 Interact with files                 %%FILE%%
+  + Note: %%FILE%% only works within the /workspace directory, outside of that ccnsider other strategies such as shell commands
   + Arguments available are:
     - mode="<read|write|append|summarize|delete|rename|copy>"
     - file="<path to file>"
@@ -118,3 +119,35 @@ What is the weather going to be like in Pitssburgh, PA this week?
 What is the latest stable version of Ubuntu?
 %%END%%
 
+Access memories                     %%MEMORY%%
+  + Arguments available are: 
+    - action="<save|read|clear>"
+    - (optional for saving, reading, or clearing) project="<short simple project name or id">
+    - (only for saving) memory="memory to save"
+    - (only when clearing single memories) id="<id>"
+  + Examples:
+    - Save a memory:
+%%MEMORY%%
+action="save"
+memory="My first memory"
+%%END
+    - Read memories:
+%%MEMORY%%
+action="read"
+%%END%%
+    - Save a project memory:
+%%MEMORY%%
+action="save"
+project="website"
+memory="We're using django"
+%%END%%
+    - Read project memory:
+%%MEMORY%%
+action="read"
+project="website"
+%%END%%
+    - Clear a specific memory:
+%%MEMORY%%
+action="clear"
+id="2"
+%%END%%
