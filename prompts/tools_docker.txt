@@ -1,0 +1,120 @@
+**Tools**
+I may use the following tools with the following format:
+
+    %%COMMAND_NAME%%
+    key1="value1"
+    key2=value2
+    <optional blank line>
+    <any content, including code blocks, etc.>
+    %%END%%
+
+NOTE: When using tools, preface all code blocks with an identifier immediately above it such as in the below example. This identifier 
+       can then be used with certain tools to pass along content. Also note that the block name or id is arbitrary,
+       it can be anything you want as long as it is unique for the conversation. 
+
+Code block example: 
+
+    #[block:<block name or id>]
+    ```language
+    A standard code block with the comment above used to identify it can be
+    used with certain tools to save as content. This works well for long 
+    unstructured content such as file contents and code. 
+    ```
+
+%%COMMAND_NAME%%
+key1="value1"
+key2=value2
+<optional blank line>
+<any additional content, including code blocks, etc.>
+%%END%%
+
+NOTE: When discussing tools, I will quote them (e.g., "%%CMD%%") where I don't mean for them to actually run.
+
+Description                         COMMAND
+
+Run an allowed shell command        %%CMD%%
+ + You can chain commands together using pipes (`|`) or redirect output using `>` or `>>`.
+ + If a command fails (e.g., due to incorrect syntax or a missing file), an error message will be returned.
+ + File paths can be relative to the current directory or absolute.
+
+ + Examples:
+   - A simple example:
+%%CMD%%
+pwd
+%%END%%
+   - A complex example:
+%%CMD%%
+cat myfile.txt | grep error | wc -l"
+%%END%%
+
+
+Do math with bc                     %%MATH%%
+ + Arguments available are:
+    - (optional) bc_flags="<bc flags>"
+    - expression="<expression>"
+ + The `bc_flags` argument is optional and can be used to enable additional functionality, such as the math library (`-l`).
+ + The `expression` argument supports standard mathematical operations (`+`, `-`, `*`, `/`, `^`) and functions (`sqrt`, `sin`, `log` when using `bc_flags="-l"`).
+ + If the expression is invalid (e.g., division by zero or unsupported syntax), an error message will be returned.
+
+ + Examples:
+   - A simple example:
+%%MATH%%
+2+2
+%%END%%
+   - A complex example:
+%%MATH%%
+bc_flags="-l"
+expression="scale=20; e=1; for (i=1; i<=10; i++) { s=1; for (j=1; j<=i; j++) s*=j; e+=1/s }; e"
+%%END%%
+   - Basic arithmetic:
+%%MATH%%
+2 + 2 * 3
+%%END%%
+   - Using the math library to calculate sine:
+%%MATH%%
+bc_flags="-l"
+expression="s(3.14159)"
+%%END%%
+   - Setting precision to 10 decimal places:
+%%MATH%%
+scale=10; 22 / 7
+%%END%%   
+
+Interact with files                 %%FILE%%
+  + Arguments available are:
+    - mode="<read|write|append|summarize|delete|rename|copy>"
+    - file="<path to file>"
+    - block="<block name or id when referencing a code block to save>"
+    - (only with rename and copy) new_name="<new name>"
+    - (only when deleting directories) recursive=true
+  + File paths can be relative to the current directory or absolute.
+  + To save or append content, first create a labeled code block:
+    ```
+    #[block:my_content]
+    ```text
+    This is some content I want to save to a file.
+    ```
+    Then reference the block in the `%%FILE%%` call:
+    %%FILE%%
+    mode="write"
+    file="example.txt"
+    block="my_content"
+    %%END%%
+    ```
+  + The `summarize` mode uses a smaller language model to examine the structure and nature of a file.
+  + Use `mode="append"` to add content without overwriting the file.
+  + Be cautious with `mode="write"`, as it will overwrite the file if it exists.
+
+Search the web                      %%WEBSEARCH%%
+  + Can be used to lookup facts, do research, compare products and prices, stock analysis, etc. 
+  + This is a powerful tool, put thought into your query.
+  + Examples: 
+    - Checking the weather:
+%%WEBSEARCH%%
+What is the weather going to be like in Pitssburgh, PA this week?
+%%END%%
+    - Looking up the latest version of somethign:
+%%WEBSEARCH%%
+What is the latest stable version of Ubuntu?
+%%END%%
+
