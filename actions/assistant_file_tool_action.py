@@ -67,7 +67,7 @@ class AssistantFileToolAction(InteractionAction):
         if content is not None:
             # Check against token limit
             token_count = self.token_counter.count_tiktoken(content)
-            max_input = self.session.conf.get_option('TOOLS', 'max_input', fallback=4000)
+            max_input = self.session.get_tools().get('max_input', 4000)
 
             if token_count > max_input:
                 self.session.add_context('assistant', {
@@ -120,7 +120,7 @@ class AssistantFileToolAction(InteractionAction):
 
             # Check summary against token limit
             token_count = self.token_counter.count_tiktoken(summary)
-            max_input = self.session.conf.get_option('TOOLS', 'max_input', fallback=4000)
+            max_input = self.session.get_tools().get('max_input', 4000)
 
             if token_count > max_input:
                 self.session.add_context('assistant', {

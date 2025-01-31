@@ -99,6 +99,10 @@ class UserCommandsAction(InteractionAction):
                 "description": "List all settings",
                 "function": {"type": "action", "name": "show", "args": "settings"},
             },
+            "show settings tools": {
+                "description": "List all settings for tools",
+                "function": {"type": "action", "name": "show", "args": "tool-settings"},
+            },
             "show models": {
                 "description": "List all models",
                 "function": {"type": "action", "name": "show", "args": "models"},
@@ -118,6 +122,14 @@ class UserCommandsAction(InteractionAction):
             "set option": {
                 "description": "Set an option",
                 "function": {"type": "action", "name": "set_option"},
+            },
+            "set option tools": {
+                "description": "Set a tool related option",
+                "function": {"type": "action", "name": "set_option", "args": "tools"},
+            },
+            "set search": {
+                "description": "Set the web search model",
+                "function": {"type": "action", "name": "assistant_websearch_tool", "method": "set_search_model"}
             },
             "save chat": {
                 "description": "Save the current chat",
@@ -196,7 +208,11 @@ class UserCommandsAction(InteractionAction):
 
                 if command_info["function"]["type"] == "action":
                     action = self.session.get_action(command_info["function"]["name"])
-                    action.run(all_args)
+                    if "method" in command_info["function"]:
+                        method = getattr(action.__class__, command_info["function"]["method"])
+                        method(self.session, *all_args if all_args else [])
+                    else:
+                        action.run(all_args)
                 else:
                     method = getattr(self, command_info["function"]["name"])
                     method(*all_args)

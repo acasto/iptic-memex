@@ -189,6 +189,17 @@ class ConfigHandler:
             if model == key or model == value['model_name']:
                 return {option: self.fix_values(value[option]) for option in self.models.options(key)}
 
+    def get_all_options_from_section(self, section):
+        """
+        Get all the options from the specified config section
+        :param section: the section name
+        :return: dict of options and their values for the section
+        """
+        if self.conf.has_section(section):
+            return {option: self.fix_values(self.conf.get(section, option))
+                    for option in self.conf.options(section)}
+        return {}
+
     def get_default_prompt(self) -> str:
         """
         gets the prompt as a string either from user specified, <prompt_dir>/default.txt, or the fallback prompt

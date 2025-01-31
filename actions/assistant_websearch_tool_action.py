@@ -6,15 +6,51 @@ class AssistantWebsearchToolAction(InteractionAction):
     """
     Action for handling web search operations
     """
+    SEARCH_MODELS = {
+        'basic': 'sonar',
+        'pro': 'sonar-pro',
+        'reason': 'sonar-reasoning',
+        'sonar': 'sonar',
+        'sonar-pro': 'sonar-pro',
+        'sonar-reasoning': 'sonar-reasoning'
+    }
+
+    @staticmethod
+    def set_search_model(session, model_name=None):
+        """Set the search model in session tools"""
+        if not model_name:
+            print("\nAvailable search models:")
+            print("1. basic (sonar) - Basic web search")
+            print("2. pro (sonar-pro) - Advanced web search")
+            print("3. reason (sonar-reasoning) - Reasoning-focused search")
+
+            choice = input("\nSelect model (1-3): ").strip()
+            model_map = {'1': 'basic', '2': 'pro', '3': 'reason'}
+            model_name = model_map.get(choice)
+            if not model_name:
+                print("Invalid selection")
+                return False
+
+        model_name = model_name.lower()
+        if model_name not in AssistantWebsearchToolAction.SEARCH_MODELS:
+            print(f"Invalid model: {model_name}")
+            return False
+
+        full_name = AssistantWebsearchToolAction.SEARCH_MODELS[model_name]
+        session.get_tools()['search_model'] = full_name
+        print(f"\nSearch model set to: {full_name}")
+        print()
+        return True
+
     def __init__(self, session):
         self.session = session
-        self._search_prompt = self.session.conf.get_option('TOOLS', 'search_prompt', fallback=None)
-        self._basic_model = self.session.conf.get_option('TOOLS', 'search_model', fallback="sonar")
-        # self._basic_model = 'sonar'
-        # self._advanced_model = 'sonar-pro'
-        # self._advanced_model = 'sonar-reasoning'
+        self._search_prompt = self.session.get_tools().get('search_prompt', None)
+        self._search_model = self.session.get_tools().get('search_model', "sonar")
 
     def run(self, args: dict, content: str = ""):
+        # We can take args from the assistant command here (e.g., recency, query) but
+        # for simplicity we're currently juts getting the query from content. Leaving
+        # this here in case we want to expand the args in the future though.
         query = args.get('query', '')
         if content:
             query = f"{query} {content}".strip()
@@ -26,12 +62,8 @@ class AssistantWebsearchToolAction(InteractionAction):
             })
             return
 
-        mode = self.session.get_params().get('mode', 'basic').lower()
         recency = args.get('recency')
         params = {}
-
-        # Select model based on mode
-        search_model = self._advanced_model if mode == 'advanced' else self._basic_model
 
         # Add optional params if specified
         if recency:
@@ -46,7 +78,7 @@ class AssistantWebsearchToolAction(InteractionAction):
         final_query = f"{self._search_prompt}\n\n{query}" if self._search_prompt else query
 
         try:
-            model_args = f"-m {search_model}"
+            model_args = f"-m {self._search_model}"
             for k, v in params.items():
                 if isinstance(v, list):
                     v = f"'{','.join(v)}'"

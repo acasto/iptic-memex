@@ -51,7 +51,7 @@ class ProcessContextsAction(InteractionAction):
 
             # Check total tokens against max_input if auto_submit is True
             if auto_submit and total_tokens > 0:
-                max_input = self.session.conf.get_option('TOOLS', 'max_input', fallback=4000)
+                max_input = self.session.get_tools().get('max_input', 4000)
                 if total_tokens > max_input:
                     output.write(f"\nWarning: Total tokens ({total_tokens}) exceed maximum ({max_input}). Auto-submit disabled.")
                     self.session.set_flag('auto_submit', False)

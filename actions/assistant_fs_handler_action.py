@@ -15,7 +15,7 @@ class AssistantFsHandlerAction(InteractionAction):
         self.fs = session.utils.fs
 
         # Get base directory configuration
-        base_dir = session.conf.get_option('TOOLS', 'base_directory', fallback='working')
+        base_dir = session.get_tools().get('base_directory', 'working')
         if base_dir == 'working' or base_dir == '.':
             self._base_dir = os.getcwd()
         else:
@@ -99,7 +99,7 @@ class AssistantFsHandlerAction(InteractionAction):
 
         # Check if file exists and get confirmation if needed
         if os.path.exists(resolved_path):
-            if not force and self.session.conf.get_option('TOOLS', 'write_confirm', fallback=True):
+            if not force and self.session.get_tools().get('write_confirm', True):
                 self.session.utils.output.stop_spinner()
                 mode = "append to" if append else "overwrite"
                 confirm = input(f"File {file_path} exists. Confirm {mode}? [y/N]: ").lower()
@@ -109,7 +109,7 @@ class AssistantFsHandlerAction(InteractionAction):
                         'content': f'File operation cancelled by user'
                     })
                     return False
-        elif not force and self.session.conf.get_option('TOOLS', 'write_confirm', fallback=True):
+        elif not force and self.session.get_tools().get('write_confirm', True):
             self.session.utils.output.stop_spinner()
             confirm = input(f"Confirm write to new file {file_path}? [y/N]: ").lower()
             if confirm != 'y':
@@ -168,7 +168,7 @@ class AssistantFsHandlerAction(InteractionAction):
         if resolved_path is None:
             return False
 
-        if not force and self.session.conf.get_option('TOOLS', 'write_confirm', fallback=True):
+        if not force and self.session.get_tools().get('write_confirm', True):
             self.session.utils.output.stop_spinner()
             confirm = input(f"Confirm delete file {file_path}? [y/N]: ").lower()
             if confirm != 'y':
@@ -186,7 +186,7 @@ class AssistantFsHandlerAction(InteractionAction):
         if resolved_path is None:
             return False
 
-        if not force and self.session.conf.get_option('TOOLS', 'write_confirm', fallback=True):
+        if not force and self.session.get_tools().get('write_confirm', True):
             self.session.utils.output.stop_spinner()
             operation = "recursively delete" if recursive else "delete"
             confirm = input(f"Confirm {operation} directory {dir_path}? [y/N]: ").lower()
@@ -209,7 +209,7 @@ class AssistantFsHandlerAction(InteractionAction):
         if resolved_new is None:
             return False
 
-        if not force and self.session.conf.get_option('TOOLS', 'write_confirm', fallback=True):
+        if not force and self.session.get_tools().get('write_confirm', True):
             self.session.utils.output.stop_spinner()
             confirm = input(f"Confirm rename {old_path} to {new_path}? [y/N]: ").lower()
             if confirm != 'y':
@@ -231,7 +231,7 @@ class AssistantFsHandlerAction(InteractionAction):
         if resolved_dst is None:
             return False
 
-        if not force and self.session.conf.get_option('TOOLS', 'write_confirm', fallback=True):
+        if not force and self.session.get_tools().get('write_confirm', True):
             self.session.utils.output.stop_spinner()
             confirm = input(f"Confirm copy {src_path} to {dst_path}? [y/N]: ").lower()
             if confirm != 'y':

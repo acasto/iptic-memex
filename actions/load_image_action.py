@@ -59,8 +59,8 @@ class LoadImageAction(InteractionAction):
     def _summarize_image(self, image_path):
         """Helper method to get summary of an image"""
         try:
-            vision_prompt = self.session.conf.get_option('TOOLS', 'vision_prompt')
-            vision_model = self.session.conf.get_option('TOOLS', 'vision_model')
+            vision_prompt = self.session.get_tools().get('vision_prompt')
+            vision_model = self.session.get_tools().get('vision_model')
             if not vision_model:
                 print("No vision model configured")
                 return

@@ -8,18 +8,19 @@ class AssistantDockerToolAction(InteractionAction):
     """
     Command tool that provides a sandboxed Docker environment for command execution
     """
+
     def __init__(self, session):
         self.session = session
         self.token_counter = session.get_action('count_tokens')
         self.fs_handler = session.get_action('assistant_fs_handler')
-        self._default_timeout = float(session.conf.get_option('TOOLS', 'timeout', fallback=15))
+        self._default_timeout = float(session.get_tools().get('timeout', 15))
 
         # Get Docker configuration
-        self.docker_image = session.conf.get_option('TOOLS', 'docker_image', fallback='ubuntu:latest')
-        self.docker_run_options = session.conf.get_option('TOOLS', 'docker_run_options', fallback='')
+        self.docker_image = session.get_tools().get('docker_image', 'ubuntu:latest')
+        self.docker_run_options = session.get_tools().get('docker_run_options', '')
 
         # Get base directory configuration
-        base_dir = session.conf.get_option('TOOLS', 'base_directory', fallback='working')
+        base_dir = session.get_tools().get('base_directory', 'working')
         if base_dir == 'working':
             self.base_dir = os.getcwd()
         elif base_dir == '.':
@@ -34,23 +35,23 @@ class AssistantDockerToolAction(InteractionAction):
 
         # Build the docker command
         docker_cmd = ["docker", "run", "--rm"]
-        
+
         # Add any custom Docker run options
         if self.docker_run_options:
             docker_cmd.extend(shlex.split(self.docker_run_options))
-        
+
         # Mount the current working directory as /workspace in the container
         docker_cmd.extend(["-v", f"{self.base_dir}:/workspace:ro"])
-        
+
         # Set working directory to /workspace
         docker_cmd.extend(["-w", "/workspace"])
-        
+
         # Add the image name
         docker_cmd.append(self.docker_image)
-        
+
         # Add the shell command to run
         docker_cmd.extend(["/bin/bash", "-c", command_str])
-        
+
         return docker_cmd
 
     def execute_command(self, command_str):
@@ -63,7 +64,7 @@ class AssistantDockerToolAction(InteractionAction):
             docker_cmd = self.create_docker_command(command_str)
             if not docker_cmd:
                 return False, "Invalid command"
-            
+
             # Execute the Docker command
             process = subprocess.Popen(
                 docker_cmd,
@@ -106,17 +107,17 @@ class AssistantDockerToolAction(InteractionAction):
             else:
                 # Check output size
                 token_count = self.token_counter.count_tiktoken(output)
-                max_input = self.session.conf.get_option('TOOLS', 'max_input', fallback=4000)
+                max_input = self.session.get_tools().get('max_input', 4000)
 
                 if token_count > max_input:
                     msg = (f"Output exceeds maximum token limit ({max_input}). "
-                          "Try limiting output with head/tail or grep.")
+                           "Try limiting output with head/tail or grep.")
                     self.session.add_context('assistant', {
-                        'name': 'assistant_feedback', 
+                        'name': 'assistant_feedback',
                         'content': msg
                     })
                     # Return truncated output with warning
-                    truncated_output = output[:output.find('\n', len(output)//2)]
+                    truncated_output = output[:output.find('\n', len(output) // 2)]
                     self.session.add_context('assistant', {
                         'name': 'command_output',
                         'content': f"{truncated_output}\n[Output truncated due to length...]"

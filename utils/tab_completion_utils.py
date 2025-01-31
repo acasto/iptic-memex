@@ -97,6 +97,16 @@ class TabCompletionHandler:
         except IndexError:
             return None
 
+    def tools_completer(self, text: str, state: int) -> Optional[str]:
+        """Tab completion for tools options"""
+        if not self._session:
+            return None
+        options = list(self._session.get_tools().keys())
+        try:
+            return [x for x in options if x.startswith(text)][state]
+        except IndexError:
+            return None
+
     @staticmethod
     def image_completer(text, state):
         """Tab completion for image files only"""

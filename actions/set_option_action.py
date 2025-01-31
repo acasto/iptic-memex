@@ -9,9 +9,8 @@ class SetOptionAction(InteractionAction):
         self.tc.set_session(session)
 
     def run(self, args: list = None):
-        print(self.session.get_params())
         if len(args) == 0:
-            self.tc.run('option')
+            self.tc.run('option')  # Default to params mode
             while True:
                 option = input(f"Enter option name (or q to exit): ")
                 if option == 'q':
@@ -27,14 +26,39 @@ class SetOptionAction(InteractionAction):
                     print(f"Option {option} not found.")
             return
 
+        if args[0] == 'tools':
+            self.tc.run('tools')
+            while True:
+                option = input(f"Enter tools option name (or q to exit): ")
+                if option == 'q':
+                    self.tc.run('chat')
+                    break
+                if option in self.session.get_tools():
+                    value = input(f"Enter value for {option}: ")
+                    print()
+                    self.session.set_option(option, value, mode='tools')
+                    self.tc.run('chat')
+                    break
+                else:
+                    print(f"Option {option} not found.")
+            return
+
         if len(args) == 1:  # No value provided
             print(f"Usage: set option {args[0]} <value>")
             return
 
         option, *value = args
-        if option in self.session.get_params():
-            value = ' '.join(value) if value else ''  # Join remaining args into a single value
-            self.session.set_option(option, value)
-            print(f"Option {option} set to {value}\n")
+        value = ' '.join(value) if value else ''  # Join remaining args into a single value
+
+        if args[0] == 'tools':
+            if option in self.session.get_tools():
+                self.session.set_option(option, value, mode='tools')
+                print(f"Tool option {option} set to {value}\n")
+            else:
+                print(f"Tool option {option} not found.")
         else:
-            print(f"Option {option} not found.")
+            if option in self.session.get_params():
+                self.session.set_option(option, value)
+                print(f"Option {option} set to {value}\n")
+            else:
+                print(f"Option {option} not found.")

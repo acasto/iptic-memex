@@ -93,35 +93,39 @@ class SessionHandler:
             "context": {},
             "params": {},
             "provider": None,
+            "tools": {}
         }
         self.user_options = {}
 
-    def set_option(self, key, value):
+    def set_option(self, key: str, value: str, mode: str = 'params'):
         """
-        Set a user option which can be processed later into the session configuration
+        Set a session option in either params or tools mode
         :param key: the key to set
         :param value: the value to set
+        :param mode: which settings to modify ('params' or 'tools')
         """
-        # if we're dealing with the model, make sure it is valid and normalized to the full model name
-        if key == 'model':
-            if not self.conf.valid_model(value):
-                print(f"Invalid model: {value}")
-                quit()
+        if mode == 'params':
+            # Existing params logic
+            if key == 'model':
+                if not self.conf.valid_model(value):
+                    print(f"Invalid model: {value}")
+                    quit()
+                else:
+                    value = self.conf.normalize_model_name(value)
+                self.user_options[key] = value
+                if self.session_state['provider']:
+                    self.configure_session()
             else:
-                value = self.conf.normalize_model_name(value)
-            # save the model to the user_options dict
-            self.user_options[key] = value
-            # if a provider is already set, we need to reconfigure the session
-            if self.session_state['provider']:
-                self.configure_session()
-        else:
-            # if value is a string and looks like it should be a bool then convert it
+                # Convert string booleans
+                if isinstance(value, str) and value.lower() in ['true', 'false']:
+                    value = value.lower() == 'true'
+                self.user_options[key] = value
+                self.session_state['params'][key] = value
+        elif mode == 'tools':
+            # Convert string booleans for tools too
             if isinstance(value, str) and value.lower() in ['true', 'false']:
                 value = value.lower() == 'true'
-            # if we're not dealing with a model change then we can save it to user_options and go
-            # ahead and update the session state.
-            self.user_options[key] = value
-            self.session_state['params'][key] = value
+            self.session_state['tools'][key] = value
 
     def add_context(self, context_type: str, context_data=None):
         """
@@ -309,6 +313,10 @@ class SessionHandler:
         # set the provider
         self.set_provider(provider)
 
+        # Load tool settings from config
+        tool_options = {k: v for k, v in self.conf.get_all_options_from_section('TOOLS').items()}
+        self.session_state['tools'] = tool_options
+
     def set_provider(self, provider):
         """
         Initialize and set an API provider with detailed error reporting
@@ -464,6 +472,13 @@ class SessionHandler:
         Get the parameters from the session
         """
         return self.session_state['params']
+
+    def get_tools(self):
+        """
+        Get the tool settings from the session state
+        :return: dict of tool settings
+        """
+        return self.session_state.get('tools', {})
 
     def get_context(self, context_type=None):
         """
