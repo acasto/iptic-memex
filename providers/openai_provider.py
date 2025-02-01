@@ -83,9 +83,57 @@ class OpenAIProvider(APIProvider):
         try:
             messages = self.assemble_message()
             api_parms = {}
-            for parameter in self.parameters:
+
+            # Check if this is a reasoning model
+            is_reasoning = self.params.get('reasoning', False)
+
+            # Get excluded parameters if any
+            excluded_params = []
+            if is_reasoning:
+                excluded_params = self.params.get('excluded_parameters', [])
+
+            # Filter out excluded parameters from self.parameters
+            valid_params = [p for p in self.parameters if p not in excluded_params]
+
+            # Build parameter dictionary
+            for parameter in valid_params:
                 if parameter in self.params and self.params[parameter] is not None:
                     api_parms[parameter] = self.params[parameter]
+
+            # Handle reasoning model specific logic
+            if is_reasoning:
+                # Initialize or get extra_body
+                extra_body = api_parms.get('extra_body', {})
+                if isinstance(extra_body, str):
+                    # If extra_body is a string, attempt to evaluate it as a dict
+                    try:
+                        extra_body = eval(extra_body)
+                    except (SyntaxError, ValueError, NameError) as e:
+                        print(f"Warning: Could not evaluate extra_body string: {e}")
+                        extra_body = {}
+
+                # Handle max_tokens vs max_completion_tokens
+                max_completion_tokens = self.params.get('max_completion_tokens')
+                max_tokens = self.params.get('max_tokens')
+
+                if max_completion_tokens is not None:
+                    extra_body['max_completion_tokens'] = max_completion_tokens
+                    # Remove max_tokens if it exists in api_parms
+                    api_parms.pop('max_tokens', None)
+                elif max_tokens is not None:
+                    extra_body['max_completion_tokens'] = max_tokens
+                    # Remove max_tokens from api_parms since we're using it as max_completion_tokens
+                    api_parms.pop('max_tokens', None)
+
+                # Handle reasoning_effort
+                reasoning_effort = self.params.get('reasoning_effort')
+                if reasoning_effort is not None:
+                    # Normalize to lowercase
+                    extra_body['reasoning_effort'] = reasoning_effort.lower()
+
+                # Update api_parms with modified extra_body
+                if extra_body:
+                    api_parms['extra_body'] = extra_body
 
             if 'stream' in api_parms and api_parms['stream'] is True:
                 api_parms['stream_options'] = {
@@ -227,7 +275,7 @@ class OpenAIProvider(APIProvider):
         return self.assemble_message()
 
     def _update_usage_stats(self, response):
-        """Update usage tracking with cached token information"""
+        """Update usage tracking with both standard and reasoning-specific metrics"""
         if response.usage:
             self.turn_usage = response.usage
             self.running_usage['total_in'] += response.usage.prompt_tokens
@@ -235,13 +283,35 @@ class OpenAIProvider(APIProvider):
 
             # Handle cached tokens from prompt_tokens_details
             if hasattr(response.usage, 'prompt_tokens_details'):
-                cached = response.usage.prompt_tokens_details.get('cached_tokens', 0)
-                if 'cached_tokens' not in self.running_usage:
-                    self.running_usage['cached_tokens'] = 0
-                self.running_usage['cached_tokens'] += cached
+                prompt_details = getattr(response.usage, 'prompt_tokens_details')
+                if isinstance(prompt_details, dict):
+                    cached = prompt_details.get('cached_tokens', 0)
+                    if 'cached_tokens' not in self.running_usage:
+                        self.running_usage['cached_tokens'] = 0
+                    self.running_usage['cached_tokens'] += cached
+
+            # Handle reasoning-specific metrics
+            if hasattr(response.usage, 'completion_tokens_details'):
+                details = getattr(response.usage, 'completion_tokens_details')
+                if isinstance(details, dict):
+                    # Initialize reasoning metrics in running usage if not present
+                    metrics = [
+                        'reasoning_tokens',
+                        'accepted_prediction_tokens',
+                        'rejected_prediction_tokens'
+                    ]
+
+                    # Initialize any missing metrics
+                    for metric in metrics:
+                        if metric not in self.running_usage:
+                            self.running_usage[metric] = 0
+
+                        # Update running totals safely
+                        if metric in details:
+                            self.running_usage[metric] += details[metric]
 
     def get_usage(self):
-        """Get usage statistics including cache metrics"""
+        """Get usage statistics including both standard and reasoning metrics"""
         stats = {
             'total_in': self.running_usage['total_in'],
             'total_out': self.running_usage['total_out'],
@@ -249,8 +319,20 @@ class OpenAIProvider(APIProvider):
             'total_time': self.running_usage['total_time']
         }
 
+        # Include cached tokens if available
         if 'cached_tokens' in self.running_usage:
             stats['total_cached'] = self.running_usage['cached_tokens']
+
+        # Include reasoning metrics if they exist in running_usage
+        reasoning_metrics = [
+            ('total_reasoning', 'reasoning_tokens'),
+            ('total_accepted_predictions', 'accepted_prediction_tokens'),
+            ('total_rejected_predictions', 'rejected_prediction_tokens')
+        ]
+
+        for stat_name, metric_name in reasoning_metrics:
+            if metric_name in self.running_usage:
+                stats[stat_name] = self.running_usage[metric_name]
 
         if self.turn_usage:
             stats.update({
@@ -259,15 +341,36 @@ class OpenAIProvider(APIProvider):
                 'turn_total': self.turn_usage.total_tokens
             })
 
+            # Handle per-turn cached tokens
             if hasattr(self.turn_usage, 'prompt_tokens_details'):
-                stats['turn_cached'] = self.turn_usage.prompt_tokens_details.get('cached_tokens', 0)
+                prompt_details = getattr(self.turn_usage, 'prompt_tokens_details')
+                if isinstance(prompt_details, dict):
+                    stats['turn_cached'] = prompt_details.get('cached_tokens', 0)
+
+            # Include per-turn reasoning metrics if available
+            if hasattr(self.turn_usage, 'completion_tokens_details'):
+                details = getattr(self.turn_usage, 'completion_tokens_details')
+                if isinstance(details, dict):
+                    turn_metrics = [
+                        ('turn_reasoning', 'reasoning_tokens'),
+                        ('turn_accepted_predictions', 'accepted_prediction_tokens'),
+                        ('turn_rejected_predictions', 'rejected_prediction_tokens')
+                    ]
+                    for stat_name, metric_name in turn_metrics:
+                        if metric_name in details:
+                            stats[stat_name] = details[metric_name]
 
         return stats
 
     def reset_usage(self):
+        """Reset all usage metrics including reasoning-specific ones"""
         self.turn_usage = None
         self.running_usage = {
             'total_in': 0,
             'total_out': 0,
-            'total_time': 0.0
+            'total_time': 0.0,
+            'cached_tokens': 0,
+            'reasoning_tokens': 0,
+            'accepted_prediction_tokens': 0,
+            'rejected_prediction_tokens': 0
         }
