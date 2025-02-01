@@ -15,6 +15,7 @@ class OpenAIProvider(APIProvider):
         self.session = session
         self.params = session.get_params()
         self.last_api_param = None
+        self._last_response = None
 
         # set the options for the OpenAI API client
         options = {}
@@ -143,7 +144,9 @@ class OpenAIProvider(APIProvider):
             api_parms['messages'] = messages
             self.last_api_param = api_parms
 
+            # Make the API call and store the full response
             response = self.client.chat.completions.create(**api_parms)
+            self._last_response = response
 
             if 'stream' in api_parms and api_parms['stream'] is True:
                 return response
@@ -152,6 +155,7 @@ class OpenAIProvider(APIProvider):
                 return response.choices[0].message.content
 
         except Exception as e:
+            self._last_response = None
             error_msg = "An error occurred:\n"
             if isinstance(e, openai.APIConnectionError):
                 error_msg += "The server could not be reached\n"
@@ -273,6 +277,10 @@ class OpenAIProvider(APIProvider):
 
     def get_messages(self):
         return self.assemble_message()
+
+    def get_full_response(self):
+        """Returns the full response object from the last API call"""
+        return self._last_response
 
     def _update_usage_stats(self, response):
         """Update usage tracking with both standard and reasoning-specific metrics"""

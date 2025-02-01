@@ -10,10 +10,11 @@ from session_handler import SessionHandler
 @click.option('-l', '--max-tokens', default='', help='Maximum number of tokens to use for completion')
 @click.option('-s', '--stream', default=False, is_flag=True, help='Stream the completion events')
 @click.option('-v', '--verbose', default=False, is_flag=True, help='Show session parameters')
+@click.option( '-r', '--raw', default=False, is_flag=True, help='Return raw response in completion mode')
 @click.option('-f', '--file', multiple=True, help='File to use for completion')
 # @click.option( '-f', '--file', multiple=True, type=click.File('r'), help='File to use for completion')
 @click.pass_context
-def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file):
+def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw, file):
     """
     the main entry point for the CLI click interface
     :param ctx: the context object that we can use to pass around information
@@ -51,6 +52,10 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file
 
     # In the CLI function, modify the file handling:
     if len(file) > 0:
+        if raw:
+            session.set_option('raw_completion', True)
+            # Disable streaming if raw output is requested
+            session.set_option('stream', False)
         # loop through the files and read them in appending the content to the message
         for f in file:
             if is_image_file(f):
@@ -65,23 +70,6 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, file
     # if no subcommand was invoked, show the help (since we're using invoke_without_command=True)
     if ctx.invoked_subcommand is None:
         raise click.UsageError(cli.get_help(ctx))
-
-
-@cli.command()
-@click.pass_context
-@click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
-def ask(ctx, file):
-    session = ctx.obj['SESSION']
-    # if we have files to read in, do that now
-    if len(file) > 0:
-        # loop through the files and read them in appending the content to the message
-        for f in file:
-            session.add_context('file', f)
-
-    # call the completion handler since we're in ask mode
-    session.start_mode("ask")
-    return
-
 
 @cli.command()
 @click.pass_context

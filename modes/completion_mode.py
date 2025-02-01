@@ -32,16 +32,24 @@ class CompletionMode(InteractionMode):
             self.chat.add("", 'user', contexts)
 
     def start(self):
-        """
-        Start the completion mode interaction
-        """
-        if self.params['stream'] is True:
-            response = self.session.get_provider().stream_chat()
-            if response:
-                for i, event in enumerate(response):
-                    print(event, end='', flush=True)
-                    if 'stream_delay' in self.params:
-                        time.sleep(float(self.params['stream_delay']))
-            print()
+        """Start the completion mode interaction"""
+        if self.params.get('raw_completion'):
+            # Force disable streaming for raw output
+            self.params['stream'] = False
+            # Get response but don't print it
+            self.session.get_provider().chat()
+            # Get and print the raw response
+            raw_response = self.session.get_provider().get_full_response()
+            print(raw_response)
         else:
-            print(self.session.get_provider().chat())
+            # Existing completion logic
+            if self.params['stream'] is True:
+                response = self.session.get_provider().stream_chat()
+                if response:
+                    for i, event in enumerate(response):
+                        print(event, end='', flush=True)
+                        if 'stream_delay' in self.params:
+                            time.sleep(float(self.params['stream_delay']))
+                print()
+            else:
+                print(self.session.get_provider().chat())

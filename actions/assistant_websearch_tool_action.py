@@ -106,9 +106,45 @@ class AssistantWebsearchToolAction(InteractionAction):
                     v = f"'{','.join(v)}'"
                 model_args += f" --{k} {v}"
 
+            # Check if citations should be included (default to True)
+            include_citations = self.session.get_tools().get('sonar_citations', True)
+
+            # Add raw flag if we want to parse citations
+            if include_citations:
+                model_args += ' -r'
+
             result = subprocess.run(f'echo "{final_query}" | memex {model_args} -f -',
                                     shell=True, capture_output=True, text=True)
-            summary = result.stdout if result.returncode == 0 else f"Error: {result.stderr}"
+
+            if result.returncode != 0:
+                summary = f"Error: {result.stderr}"
+            else:
+                summary = result.stdout
+                # Parse citations if enabled
+                if include_citations:
+                    try:
+                        # The response is a string representation of a ChatCompletion object
+                        # Look for the content and citations using string parsing
+                        import re
+
+                        # Extract content using regex
+                        content_match = re.search(r"content='([^']*)'", summary)
+                        content = content_match.group(1) if content_match else summary
+
+                        # Extract citations list using regex
+                        citations_match = re.search(r"citations=\[(.*?)\]", summary)
+                        if citations_match:
+                            # Split the citations string and clean up each citation
+                            citations = [c.strip(" '") for c in citations_match.group(1).split(',')]
+                            # Append citations to the content
+                            citation_text = "\n\nCitations:\n" + "\n".join(citations)
+                            summary = content + citation_text
+                        else:
+                            summary = content
+
+                    except Exception as e:
+                        print(f"Error parsing raw response: {str(e)}")
+                        summary = result.stdout
 
             self.session.add_context('assistant', {
                 'name': 'Search Results',
