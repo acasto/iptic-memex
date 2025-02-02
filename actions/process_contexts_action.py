@@ -49,12 +49,18 @@ class ProcessContextsAction(InteractionAction):
                     else:
                         output.write(f"In context: [{idx}] {context_data.get('name', 'unnamed')} ({tokens} tokens)")
 
-            # Check total tokens against max_input if auto_submit is True
+            # Check total tokens against large_input_limit if auto_submit is True
             if auto_submit and total_tokens > 0:
-                max_input = self.session.get_tools().get('max_input', 4000)
-                if total_tokens > max_input:
-                    output.write(f"\nWarning: Total tokens ({total_tokens}) exceed maximum ({max_input}). Auto-submit disabled.")
-                    self.session.set_flag('auto_submit', False)
+                limit = int(self.session.get_tools().get('large_input_limit', 4000))
+                if total_tokens > limit:
+                    if self.session.get_tools().get('confirm_large_input', True):
+                        output.write(f"\nWarning: Total tokens ({total_tokens}) exceed limit ({limit}). Auto-submit disabled.")
+                        self.session.set_flag('auto_submit', False)
+                    else:
+                        self.session.add_context('assistant', {
+                            'name': 'assistant_feedback',
+                            'content': f"Warning: Input size ({total_tokens} tokens) exceeds recommended limit ({limit})."
+                        })
 
             output.write()
 

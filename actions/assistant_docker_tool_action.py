@@ -195,20 +195,21 @@ class AssistantDockerToolAction(InteractionAction):
                 })
             else:
                 token_count = self.token_counter.count_tiktoken(output)
-                max_input = self.session.get_tools().get('max_input', 4000)
+                limit = int(self.session.get_tools().get('large_input_limit', 4000))
 
-                if token_count > max_input:
-                    msg = (f"Output exceeds maximum token limit ({max_input}). "
-                           "Try limiting output with head/tail or grep.")
-                    self.session.add_context('assistant', {
-                        'name': 'assistant_feedback',
-                        'content': msg
-                    })
-                    truncated_output = output[:output.find('\n', len(output) // 2)]
-                    self.session.add_context('assistant', {
-                        'name': 'command_output',
-                        'content': f"{truncated_output}\n[Output truncated due to length...]"
-                    })
+                if token_count > limit:
+                    if self.session.get_tools().get('confirm_large_input', True):
+                        self.session.set_flag('auto_submit', False)
+                        self.session.utils.output.write(f"File exceeds token limit ({limit}) for assistant. Auto-submit disabled.")
+                        self.session.add_context('assistant', {
+                            'name': 'command_output',
+                            'content': output
+                        })
+                    else:
+                        self.session.add_context('assistant', {
+                            'name': 'command_error',
+                            'content': f"Output size ({token_count} tokens) exceeds limit of {limit}."
+                        })
                 else:
                     self.session.add_context('assistant', {
                         'name': 'command_output',

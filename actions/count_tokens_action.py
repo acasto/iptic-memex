@@ -41,11 +41,11 @@ class CountTokensAction(InteractionAction):
 
             if isinstance(messages, str):
                 # If messages is a string, simply encode and count
-                num_tokens = len(encoding.encode(messages))
+                num_tokens = len(encoding.encode(messages, disallowed_special=()))
             elif isinstance(messages, dict):
                 # If messages is a dictionary, convert it to a string and count
                 messages_str = json.dumps(messages)
-                num_tokens = len(encoding.encode(messages_str))
+                num_tokens = len(encoding.encode(messages_str, disallowed_special=()))
             elif isinstance(messages, list):
                 # If messages is a list, process each message
                 for message in messages:
@@ -54,7 +54,7 @@ class CountTokensAction(InteractionAction):
                         if isinstance(value, dict):
                             # If the value is a dictionary, convert it to a string
                             value = json.dumps(value)
-                        num_tokens += len(encoding.encode(str(value)))
+                        num_tokens += len(encoding.encode(str(value), disallowed_special=()))
                         if key == "role":
                             num_tokens += tokens_per_name
                 num_tokens += 3  # every reply is primed with <|start|>assistant<|message|>

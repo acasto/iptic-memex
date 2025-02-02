@@ -2,6 +2,7 @@ from session_handler import InteractionAction
 import subprocess
 import shlex
 import os
+from typing import Optional
 
 
 class AssistantCmdToolAction(InteractionAction):
@@ -13,7 +14,7 @@ class AssistantCmdToolAction(InteractionAction):
         self.temp_file_runner = session.get_action('assistant_cmd_handler')
         self.token_counter = session.get_action('count_tokens')
         self.fs_handler = session.get_action('assistant_fs_handler')
-        self._default_timeout = float(session.conf.get_option('TOOLS', 'timeout', fallback=15))
+        self._default_timeout = float(session.get_tools().get('timeout', 15))
 
         # Get base directory configuration
         base_dir = session.conf.get_option('TOOLS', 'base_directory', fallback='working')
@@ -105,6 +106,9 @@ class AssistantCmdToolAction(InteractionAction):
 
     def execute_pipeline(self, pipeline):
         """Execute a validated command pipeline"""
+        if not pipeline:  # Add check for empty pipeline
+            return False, "Empty pipeline"
+
         processes = []
         prev_process = None
 
@@ -133,10 +137,13 @@ class AssistantCmdToolAction(InteractionAction):
                 prev_process = process
 
             # Get final output from last process with timeout
+            if not processes:  # Add check for empty processes list
+                return False, "No processes created"
+
             try:
                 output, error = processes[-1].communicate(timeout=self._default_timeout)
                 if processes[-1].returncode != 0:
-                    return False, error
+                    return False, error or "Process failed with no error message"
                 return True, output
             except subprocess.TimeoutExpired:
                 for p in processes:
@@ -152,7 +159,7 @@ class AssistantCmdToolAction(InteractionAction):
                 except (OSError, subprocess.SubprocessError):
                     continue
 
-    def run(self, args: dict, content: str = ""):
+    def run(self, args: Optional[dict] = None, content: str = "") -> None:
         """Main entry point for command execution"""
         command = args.get('command', '').strip()
         raw_args = args.get('arguments', '').strip()
@@ -169,12 +176,28 @@ class AssistantCmdToolAction(InteractionAction):
         if success:
             # Check output size
             token_count = self.token_counter.count_tiktoken(output)
-            max_input = self.session.conf.get_option('TOOLS', 'max_input', fallback=4000)
+            limit = int(self.session.get_tools().get('large_input_limit', 4000))
 
-            if token_count > max_input:
-                msg = f"Output exceeds maximum token limit ({max_input}). Try limiting output with head/tail."
-                self.session.add_context('assistant', {'name': 'assistant_feedback', 'content': msg})
+            if token_count > limit:
+                if self.session.get_tools().get('confirm_large_input', True):
+                    self.session.set_flag('auto_submit', False)
+                    self.session.utils.output.write(f"File exceeds token limit ({limit}) for assistant. Auto-submit disabled.")
+                    self.session.add_context('assistant', {
+                        'name': 'command_output',
+                        'content': output
+                    })
+                else:
+                    self.session.add_context('assistant', {
+                        'name': 'command_error',
+                        'content': f"Output size ({token_count} tokens) exceeds limit of {limit}."
+                    })
             else:
-                self.session.add_context('assistant', {'name': 'command_output', 'content': output})
+                self.session.add_context('assistant', {
+                    'name': 'command_output',
+                    'content': output
+                })
         else:
-            self.session.add_context('assistant', {'name': 'command_error', 'content': f"Error: {output}"})
+            self.session.add_context('assistant', {
+                'name': 'command_error',
+                'content': f"Error: {output}"
+            })

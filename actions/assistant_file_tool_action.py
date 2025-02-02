@@ -65,16 +65,19 @@ class AssistantFileToolAction(InteractionAction):
     def _handle_read(self, filename):
         content = self.fs_handler.read_file(filename)
         if content is not None:
-            # Check against token limit
             token_count = self.token_counter.count_tiktoken(content)
-            max_input = self.session.get_tools().get('max_input', 4000)
+            limit = int(self.session.get_tools().get('large_input_limit', 4000))
 
-            if token_count > max_input:
-                self.session.add_context('assistant', {
-                    'name': 'file_tool_error',
-                    'content': f'File exceeds maximum token limit ({max_input}). Consider using head/tail commands instead.'
-                })
-                return
+            if token_count > limit:
+                if self.session.get_tools().get('confirm_large_input', True):
+                    self.session.set_flag('auto_submit', False)
+                    self.session.utils.output.write(f"File exceeds token limit ({limit}) for assistant. Auto-submit disabled.")
+                else:
+                    self.session.add_context('assistant', {
+                        'name': 'file_tool_error',
+                        'content': f'File exceeds token limit ({limit}). Consider using head/tail commands instead.'
+                    })
+                    return
 
             self.session.add_context('file', filename)
         else:
@@ -120,13 +123,16 @@ class AssistantFileToolAction(InteractionAction):
 
             # Check summary against token limit
             token_count = self.token_counter.count_tiktoken(summary)
-            max_input = self.session.get_tools().get('max_input', 4000)
+            limit = int(self.session.get_tools().get('large_input_limit', 4000))
 
-            if token_count > max_input:
-                self.session.add_context('assistant', {
-                    'name': 'file_tool_error',
-                    'content': f'Summary exceeds maximum token limit ({max_input}). Try using a different summarization approach.'
-                })
+            if token_count > limit:
+                if self.session.get_tools().get('confirm_large_input', True):
+                    self.session.set_flag('auto_submit', False)
+                else:
+                    self.session.add_context('assistant', {
+                        'name': 'file_tool_error',
+                        'content': f'Summary exceeds token limit ({limit}). Try using a different summarization approach.'
+                    })
                 return
 
             self.session.add_context('assistant', {
