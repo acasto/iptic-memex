@@ -261,8 +261,7 @@ class GoogleProvider(APIProvider):
                             parts.insert(0, {'text': text_context})
 
                 # Add message text
-                if turn['message']:
-                    parts.append({'text': turn['message']})
+                parts.append({'text': turn['message']})
 
                 if parts:
                     message.append({'role': turn['role'], 'parts': parts})

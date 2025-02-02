@@ -104,15 +104,14 @@ class AnthropicProvider(APIProvider):
                             })
 
             message = turn.get('message')
-            if message:
-                block = {
-                    'type': 'text',
-                    'text': message
-                }
-                # Add cache_control to the last message if caching is enabled
-                if i == len(chat_turns) - 1 and self._is_caching_enabled():
-                    block['cache_control'] = {"type": "ephemeral"}
-                content_blocks.append(block)
+            block = {
+                'type': 'text',
+                'text': message
+            }
+            # Add cache_control to the last message if caching is enabled
+            if i == len(chat_turns) - 1 and self._is_caching_enabled():
+                block['cache_control'] = {"type": "ephemeral"}
+            content_blocks.append(block)
 
             if content_blocks:
                 messages.append({

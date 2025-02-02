@@ -246,8 +246,7 @@ class OpenAIProvider(APIProvider):
                 turn_contexts = []
 
                 # Handle message text
-                if turn['message']:
-                    content.append({'type': 'text', 'text': turn['message']})
+                content.append({'type': 'text', 'text': turn['message']})
 
                 # Process contexts
                 if 'context' in turn and turn['context']:
