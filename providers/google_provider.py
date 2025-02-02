@@ -295,6 +295,37 @@ class GoogleProvider(APIProvider):
         """Reset usage statistics"""
         self.usage = None
 
+    def get_cost(self) -> dict:
+        """Calculate cost specifically for Google's caching model"""
+        usage = self.get_usage()
+        if not usage:
+            return {'total_cost': 0.0}
+
+        try:
+            price_unit = float(self.params.get('price_unit', 1000000))
+            price_in = float(self.params.get('price_in', 0))
+            price_out = float(self.params.get('price_out', 0))
+
+            # Regular costs
+            input_cost = (usage['total_in'] / price_unit) * price_in
+            output_cost = (usage['total_out'] / price_unit) * price_out
+
+            result = {
+                'input_cost': round(input_cost, 6),
+                'output_cost': round(output_cost, 6),
+                'total_cost': round(input_cost + output_cost, 6)
+            }
+
+            # Only include cache savings if there are actually cached tokens
+            if 'cached_tokens' in usage and usage['cached_tokens'] > 0:
+                cache_tokens = usage['cached_tokens']
+                cache_savings = round((cache_tokens / price_unit) * price_in, 6)
+                result['cache_savings'] = cache_savings
+
+            return result
+        except (ValueError, TypeError):
+            return None
+
     def cleanup(self):
         """Clean up resources and cached content"""
         if self._cached_content:

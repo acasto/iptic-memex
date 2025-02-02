@@ -381,3 +381,25 @@ class OpenAIProvider(APIProvider):
             'accepted_prediction_tokens': 0,
             'rejected_prediction_tokens': 0
         }
+
+    def get_cost(self) -> dict:
+        """Calculate cost for OpenAI API usage"""
+        usage = self.get_usage()
+        if not usage:
+            return None
+
+        try:
+            price_unit = float(self.params.get('price_unit', 1000000))
+            price_in = float(self.params.get('price_in', 0))
+            price_out = float(self.params.get('price_out', 0))
+
+            input_cost = (usage['total_in'] / price_unit) * price_in
+            output_cost = (usage['total_out'] / price_unit) * price_out
+
+            return {
+                'input_cost': round(input_cost, 6),
+                'output_cost': round(output_cost, 6),
+                'total_cost': round(input_cost + output_cost, 6)
+            }
+        except (ValueError, TypeError):
+            return None

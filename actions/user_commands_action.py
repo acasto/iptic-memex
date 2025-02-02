@@ -115,6 +115,10 @@ class UserCommandsAction(InteractionAction):
                 "description": "Show usage statistics",
                 "function": {"type": "action", "name": "show", "args": "usage"},
             },
+            "show cost": {
+                "description": "Show cost estimates",
+                "function": {"type": "action", "name": "show", "args": "cost"},
+            },
             "show contexts": {
                 "description": "List all contexts",
                 "function": {"type": "action", "name": "show", "args": "contexts"},

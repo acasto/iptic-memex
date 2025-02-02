@@ -257,3 +257,9 @@ class LlamaCppProvider(APIProvider):
             'total_out': 0,
             'total_time': 0.0
         }
+
+    def get_cost(self):
+        return {
+            'total': 0.0,
+            'turn': 0.0
+        }

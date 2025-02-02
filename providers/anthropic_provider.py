@@ -272,3 +272,40 @@ class AnthropicProvider(APIProvider):
     def reset_usage(self) -> Any:
         self.current_usage = Usage()
         self.total_usage = Usage()
+
+    def get_cost(self) -> dict:
+        """Calculate cost specifically for Anthropic's caching model"""
+        usage = self.get_usage()
+        if not usage:
+            return {'total_cost': 0.0}
+
+        try:
+            price_unit = float(self.params.get('price_unit', 1000000))
+            price_in = float(self.params.get('price_in', 0))
+            price_out = float(self.params.get('price_out', 0))
+
+            # Regular token costs
+            input_cost = (usage['total_in'] / price_unit) * price_in
+            output_cost = (usage['total_out'] / price_unit) * price_out
+
+            result = {
+                'input_cost': round(input_cost, 6),
+                'output_cost': round(output_cost, 6),
+                'total_cost': round(input_cost + output_cost, 6)
+            }
+
+            # Handle Anthropic's separate cache write/read tracking
+            if 'total_cache_writes' in usage:
+                cache_write_tokens = usage['total_cache_writes']
+                cache_write_cost = round((cache_write_tokens / price_unit) * price_in, 6)
+                result['cache_write_cost'] = cache_write_cost
+                result['total_cost'] = round(result['total_cost'] + cache_write_cost, 6)
+
+            if 'total_cache_hits' in usage:
+                cache_hits = usage['total_cache_hits']
+                cache_savings = round((cache_hits / price_unit) * price_in, 6)
+                result['cache_savings'] = cache_savings
+
+            return result
+        except (ValueError, TypeError):
+            return None

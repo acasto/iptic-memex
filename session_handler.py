@@ -40,6 +40,11 @@ class APIProvider(ABC):
     def reset_usage(self) -> Any:
         pass
 
+    @abstractmethod
+    def get_cost(self) -> dict:
+        """Calculate cost based on token usage and model pricing"""
+        pass
+
 
 # The InteractionMode class is an abstract class that defines the methods that interactions modes
 # like chat, ask, and completion must implement to work.

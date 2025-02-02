@@ -10,6 +10,7 @@ class ChatMode(InteractionMode):
         session.add_context('chat')
         self.chat = session.get_context('chat')
         self.process_contexts = session.get_action('process_contexts')
+        self._budget_warning_shown = False
 
     def get_user_input(self):
         """
@@ -64,12 +65,36 @@ class ChatMode(InteractionMode):
         self.session.get_action('assistant_commands').run(response)
         return response
 
+    def check_budget(self):
+        """Check if session budget exists and has been exceeded"""
+        if self._budget_warning_shown:
+            return
+
+        session_budget = self.params.get('session_budget')
+        if not session_budget:
+            return
+
+        try:
+            budget = float(session_budget)
+            cost = self.session.get_provider().get_cost()
+            if cost and cost.get('total_cost', 0) > budget:
+                self.utils.output.warning(
+                    f"Budget warning: Session cost (${cost['total_cost']:.4f}) exceeds budget (${budget:.4f})",
+                    spacing=[0, 1]
+                )
+                self._budget_warning_shown = True
+        except (ValueError, TypeError):
+            pass
+
     def start(self):
         """Start the chat interaction loop"""
         self.utils.tab_completion.run('chat')
         self.utils.tab_completion.set_session(self.session)
 
         while True:
+            # Check budget before processing contexts
+            self.check_budget()
+
             if self.session.get_flag('auto_submit'):
                 contexts = self.process_contexts.process_contexts_for_user(auto_submit=True)
             else:

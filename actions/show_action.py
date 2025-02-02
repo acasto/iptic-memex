@@ -49,11 +49,6 @@ class ShowAction(InteractionAction):
                 print(message)
                 print()
 
-        if args[0] == 'usage':
-            usage = self.session.get_provider().get_usage()
-            print(usage)
-            print()
-
         if args[0] == 'contexts':
             contexts = self.session.get_action('process_contexts').get_contexts(self.session)
             if len(contexts) == 0:
@@ -63,4 +58,31 @@ class ShowAction(InteractionAction):
             for idx, context in enumerate(contexts):
                 print(f"[{idx}] {context['context'].get()['name']}")
                 print(f"Content: {context['context'].get()['content']}")
+            print()
+
+        if args[0] == 'usage':
+            usage = self.session.get_provider().get_usage()
+            for key, value in usage.items():
+                print(f"{key}: {value}")
+            print()
+
+        if args[0] == 'cost':
+            cost = self.session.get_provider().get_cost()
+            if not cost:
+                print("Cost calculation not available for this model")
+                return
+
+            input_cost = cost.get('input_cost', 0)
+            output_cost = cost.get('output_cost', 0)
+
+            print(f"input_cost: ${input_cost:.4f}")
+            print(f"output_cost: ${output_cost:.4f}")
+
+            if input_cost == 0 and output_cost == 0:
+                print()
+                return
+
+            for key, value in cost.items():
+                if key not in ['input_cost', 'output_cost']:
+                    print(f"{key}: ${value:.4f}")
             print()
