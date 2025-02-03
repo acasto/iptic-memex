@@ -195,6 +195,8 @@ class AnthropicProvider(APIProvider):
 
     def stream_chat(self) -> Generator[str, None, None]:
         self.current_usage = Usage()
+        initial_usage = None  # to store usage from message_start which includes input_tokens
+        final_usage = None  # will be updated later with message_delta usage info
         response = self.chat()
 
         if isinstance(response, str):
@@ -204,12 +206,37 @@ class AnthropicProvider(APIProvider):
         try:
             for event in response:
                 if event.type == "message_start" and event.message and event.message.usage:
-                    self._update_usage_from_event(event.message.usage)
+                    # Capture initial usage info with input_tokens
+                    initial_usage = event.message.usage
+                    final_usage = event.message.usage
                 elif event.type == "content_block_delta":
                     yield event.delta.text
-
+                elif event.type == "message_delta":
+                    # Update final_usage if usage info is provided (likely only output_tokens)
+                    if hasattr(event, 'usage') and event.usage:
+                        final_usage = event.usage
+                # Ignore ping or message_stop events.
         except Exception as e:
             yield self._format_error(e)
+
+        if final_usage:
+            # Merge initial input tokens if missing in final_usage.
+            input_tokens = (
+                initial_usage.input_tokens
+                if initial_usage and hasattr(initial_usage, 'input_tokens')
+                else 0
+            )
+            output_tokens = getattr(final_usage, 'output_tokens', 0)
+            cache_writes = getattr(final_usage, 'cache_creation_input_tokens', 0)
+            cache_hits = getattr(final_usage, 'cache_read_input_tokens', 0)
+            # Create a merged usage object.
+            merged_usage = Usage(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cache_writes=cache_writes,
+                cache_hits=cache_hits,
+            )
+            self._update_usage_from_event(merged_usage)
 
     def get_full_response(self):
         """Returns the full response object from the last API call"""
@@ -247,8 +274,9 @@ class AnthropicProvider(APIProvider):
             self.total_usage.update(self.current_usage)
 
     def _update_usage_from_event(self, usage: Any) -> None:
-        self.current_usage.input_tokens = usage.input_tokens
-        self.current_usage.output_tokens = usage.output_tokens
+        # Only update input_tokens if present; otherwise, keep the existing value.
+        self.current_usage.input_tokens = getattr(usage, 'input_tokens', self.current_usage.input_tokens)
+        self.current_usage.output_tokens = getattr(usage, 'output_tokens', self.current_usage.output_tokens)
 
         if hasattr(usage, 'cache_creation_input_tokens'):
             self.current_usage.cache_writes = usage.cache_creation_input_tokens
