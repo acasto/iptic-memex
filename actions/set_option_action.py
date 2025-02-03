@@ -8,6 +8,28 @@ class SetOptionAction(InteractionAction):
         self.tc = session.utils.tab_completion
         self.tc.set_session(session)
 
+    def _convert_value(self, option: str, value: str):
+        """Convert value to appropriate type based on parameter."""
+        # Type mappings for common parameters
+        type_mappings = {
+            'max_tokens': int,
+            'temperature': float,
+            'top_p': float,
+            'frequency_penalty': float,
+            'presence_penalty': float,
+            'stream': lambda x: x.lower() == 'true',
+            'highlighting': lambda x: x.lower() == 'true',
+            'colors': lambda x: x.lower() == 'true'
+        }
+
+        try:
+            if option in type_mappings:
+                return type_mappings[option](value)
+            return value
+        except (ValueError, TypeError):
+            print(f"Invalid value type for {option}. Using default string value.")
+            return value
+
     def run(self, args: list = None):
         if len(args) == 0:
             self.tc.run('option')  # Default to params mode
@@ -19,7 +41,8 @@ class SetOptionAction(InteractionAction):
                 if option in self.session.get_params():
                     value = input(f"Enter value for {option}: ")
                     print()
-                    self.session.set_option(option, value)
+                    converted_value = self._convert_value(option, value)
+                    self.session.set_option(option, converted_value)
                     self.tc.run('chat')
                     break
                 else:
