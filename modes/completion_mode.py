@@ -12,6 +12,7 @@ class CompletionMode(InteractionMode):
     def __init__(self, session):
         self.session = session
         self.params = session.get_params()
+        self.session.set_flag('completion_mode', True)
 
         contexts = self.session.get_action('process_contexts').get_contexts(self.session)
         stdin_context = next((c for c in contexts if c['context'].get()['name'] == 'stdin'), None)

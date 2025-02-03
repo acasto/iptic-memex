@@ -14,7 +14,8 @@ class GoogleProvider(APIProvider):
         self.session = session
         self.params = session.get_params()
         self.token_counter = session.get_action('count_tokens')
-        
+        self._last_response = None
+
         # List of parameters that can be passed to the Google API
         self.parameters = [
             'model',
@@ -41,13 +42,15 @@ class GoogleProvider(APIProvider):
         self._first_turn = True
 
     def _initialize_client(self, first_turn_context=None):
-        """Initialize client with optional caching on first turn"""
+        """Initialize client with optional caching"""
         if not self._should_enable_caching():
             # Standard initialization without caching
-            self.client = genai.GenerativeModel(
-                model_name=self.params['model'],
-                system_instruction=self._get_system_prompt()
-            )
+            init_params = {'model_name': self.params['model']}
+            system_prompt = self._get_system_prompt()
+            if system_prompt:
+                init_params['system_instruction'] = system_prompt
+
+            self.client = genai.GenerativeModel(**init_params)
             self.gchat = self.client.start_chat(history=[])
             return
 
@@ -143,9 +146,9 @@ class GoogleProvider(APIProvider):
             if self.client is None:
                 first_turn_context = self._get_first_turn_context(messages)
                 self._initialize_client(first_turn_context)
-                
-                # If we're caching, remove context from messages to avoid duplication
-                if self._cached_content and len(messages) > 1:
+
+                # Only modify messages for multi-turn chat mode
+                if self._cached_content and len(messages) > 1 and not self.session.get_flag('completion_mode'):
                     messages = [messages[0]] + messages[2:]
 
             # Process generation parameters
@@ -171,6 +174,7 @@ class GoogleProvider(APIProvider):
                 generation_config=genai.GenerationConfig(**gen_params),
                 safety_settings=safety_settings
             )
+            self._last_response = response
 
             # Mark first turn complete
             self._first_turn = False
@@ -261,12 +265,15 @@ class GoogleProvider(APIProvider):
                             parts.insert(0, {'text': text_context})
 
                 # Add message text
-                parts.append({'text': turn['message']})
+                parts.append({'text': turn['message'].strip()})
 
                 if parts:
                     message.append({'role': turn['role'], 'parts': parts})
-
         return message
+
+    def get_full_response(self):
+        """Returns the full response object from the last API call"""
+        return self._last_response
 
     def get_messages(self):
         """Return assembled messages"""

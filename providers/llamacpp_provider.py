@@ -18,6 +18,8 @@ class LlamaCppProvider(APIProvider):
         self.session = session
         self.params = self.session.get_params()
         self.last_api_param = None
+        self._last_response = None
+
 
         # Extract or set defaults for llama-cpp
         model_path = self.params.get('model_path', './models/7B/llama-model.gguf')
@@ -127,6 +129,7 @@ class LlamaCppProvider(APIProvider):
             # Call llama-cpp create_chat_completion
             # Note: create_chat_completion returns a dict like OpenAI API
             response = self.llm.create_chat_completion(**api_parms)
+            self._last_response = None
 
             # if in stream mode chain the generator, else return the text response
             if 'stream' in api_parms and api_parms['stream'] is True:
@@ -232,6 +235,10 @@ class LlamaCppProvider(APIProvider):
 
     def get_messages(self):
         return self.assemble_message()
+
+    def get_full_response(self):
+        """Returns the full response object from the last API call"""
+        return self._last_response
 
     def get_usage(self):
         stats = {

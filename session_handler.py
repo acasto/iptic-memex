@@ -33,6 +33,10 @@ class APIProvider(ABC):
         pass
 
     @abstractmethod
+    def get_full_response(self) -> Any:
+        pass
+
+    @abstractmethod
     def get_usage(self) -> Any:
         pass
 

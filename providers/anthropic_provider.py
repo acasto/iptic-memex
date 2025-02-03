@@ -30,6 +30,7 @@ class AnthropicProvider(APIProvider):
         self.client = self._initialize_client()
         self.current_usage = Usage()
         self.total_usage = Usage()
+        self._last_response = None
 
         self.parameters = {
             'model', 'max_tokens', 'system', 'messages', 'stop_sequences',
@@ -177,6 +178,7 @@ class AnthropicProvider(APIProvider):
         try:
             params = self._prepare_api_parameters()
             response = self.client.messages.create(**params)
+            self._last_response = response
 
             if params.get('stream'):
                 return response
@@ -208,6 +210,10 @@ class AnthropicProvider(APIProvider):
 
         except Exception as e:
             yield self._format_error(e)
+
+    def get_full_response(self):
+        """Returns the full response object from the last API call"""
+        return self._last_response
 
     def get_messages(self) -> Any:
         chat = self.session.get_context('chat')
