@@ -104,15 +104,22 @@ class AnthropicProvider(APIProvider):
                             })
 
             message = turn.get('message')
-            block = {
-                'type': 'text',
-                'text': message
-            }
-            # Add cache_control to the last message if caching is enabled
-            if i == len(chat_turns) - 1 and self._is_caching_enabled():
-                block['cache_control'] = {"type": "ephemeral"}
-            content_blocks.append(block)
+            is_last_turn = (i == len(chat_turns) - 1)
 
+            # Handle the message block if present
+            if message:
+                block = {
+                    'type': 'text',
+                    'text': message
+                }
+                if is_last_turn and self._is_caching_enabled():
+                    block['cache_control'] = {"type": "ephemeral"}
+                content_blocks.append(block)
+            # If no message but last turn, add cache control to last context block
+            elif is_last_turn and self._is_caching_enabled() and content_blocks:
+                content_blocks[-1]['cache_control'] = {"type": "ephemeral"}
+
+            # Add the turn to messages if we have any content blocks
             if content_blocks:
                 messages.append({
                     'role': turn['role'],
@@ -273,7 +280,7 @@ class AnthropicProvider(APIProvider):
         self.current_usage = Usage()
         self.total_usage = Usage()
 
-    def get_cost(self) -> dict:
+    def get_cost(self) -> Dict[str, float]:
         """Calculate cost specifically for Anthropic's caching model"""
         usage = self.get_usage()
         if not usage:
