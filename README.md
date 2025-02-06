@@ -1,216 +1,188 @@
-# Description
+# Iptic Memex: Your Command Line Assistant
 
-Iptic Memex is a Python program that offers a straight-forward CLI interface for interacting with LLM providers through their APIs. Input can be piped in from the command line or entered interactively through 'ask' and 'chat' modes. Chat mode features the ability to save conversations in a human-readable conversation format with a configurable extension for use with external applications such as Obsidian.
+Iptic Memex is a Python-based CLI assistant that brings the power of large language models (LLMs) directly to your terminal. Combining advanced conversation handling with a suite of integrated tools—from file management, web research, and code execution to running system commands—Memex is designed to be your personal digital assistant for work, research, and development.
 
-The name is a reference to the Memex, a device described by Vannevar Bush in his 1945 essay "As We May Think" which he
-envisioned a device that would compress and store all of their knowledge. https://en.wikipedia.org/wiki/Memex
+Inspired by Vannevar Bush’s vision of the Memex, this tool helps you augment your knowledge and streamline your workflow from the command line.
 
-![Imgur Image](https://i.imgur.com/XLJ4AuY.gif)
+![Iptic Memex Demo](https://i.imgur.com/XLJ4AuY.gif)
 
-# Features
+---
 
-- **Multiple Interaction Modes**:
-  - [x] CLI mode for quick questions or scripting
-  - [x] Chat mode for extended conversations
-  - [x] Ask mode for single questions
-  - [x] Completion mode for processing files or stdin
+## Features
 
-- **Context Management**:
-  - [x] Load text files into context in chat and ask modes
-  - [x] Load PDF/XLSX/DOCX files into context in chat mode
-  - [x] Fetch and include content from the web
-  - [x] Search the web and load results into context
-  - [x] Easily add multi-line content
-  - [x] Select and import parts of Python files
-  - [x] Add a project context for encapsulating other contexts
+- **Multiple Interaction Modes**
+  - **Interactive 'chat' mode**: Engage in extended, multi-turn conversations with full context management and conversation history.
+  - **Completion Mode**: For simple, one-shot queries, pipe your input directly into Memex.
+  - **Completion Mode with Raw Response**: Get raw responses from an LLM provider, useful for debugging or when you need to access additional parts of the response object such as citations.   
+    
+- **Advanced Context Management**
+  - Load content from text files, PDFs, DOCX, XLSX, and even images (for supported models).
+  - For models without vision support you can load a summary of an image as describe by a model with vision support.
+  - Fetch and integrate web content using simplified extraction (Trafilatura) or raw scraping (BeautifulSoup).
+  - Add multiline text, code snippets, or specific segments from files into your conversation context.
+  - Organize multiple content sources under a unified project view for focused sessions.
 
-- **Provider Flexibility**:
-  - [x] Supports multiple LLM providers. Currently:
-      - OpenAI
-      - Anthropic
-      - Google Gemini
-      - OpenRouter
-      - Perplexity
-      - Groq
-      - Mistral 
-      - DeepSeek
-      - Cohere
-      - Fireworks AI
-      - Together AI
-      - Llama.cpp via API
-  - [x] OpenAI compatibile providers can be added through configs, no code changes needed
-  - [x] Easy configuration of providers and models through config files
-  - [x] Switch between providers and models on the fly
-  - [x] Providers can be aliased in the config file for per provider or model settings
+- **Broad LLM Provider Support**
+  - Works seamlessly with providers such as OpenAI, Anthropic, Google Gemini, OpenRouter, Perplexity, Groq, Mistral, DeepSeek, Cohere, Fireworks AI, Together AI, and local Llama.cpp instances.
+  - Easily add any OpenAI-compatible provider through configuration—no code changes required.
+  - Define and switch between different models and settings on the fly.
+  - Session usage stats and cost tracking with configurable session budget notification.
 
-- **Conversation Handling**:
-  - [x] Save and load conversations in human-readable formats
-  - [x] Export conversations to various formats (markdown, txt, pdf)
-  - [x] Context management for optimizing token usage
-  - [x] Token usage tracking and management where applicable
-  - [x] Easily save code blocks from responses to files
+- **Smart Conversation Handling**
+  - Save, load, and export entire chats in human-readable formats (Markdown, plain text, PDF).
+  - Extract and save code blocks directly from responses, with the option to execute them (after confirmation).
+  - Manage conversaton history with basic commands.
 
-- **Enhanced User Experience**:
-  - [x] Streaming support for real-time responses
-  - [x] Syntax highlighting for code blocks in chat
-  - [x] Token usage tracking and context management
-  - [x] Tab completion for file paths, commands, and settings
-  - [x] Run code blocks from responses and capture the output
-  - [x] Run your own shell commands and capture the output
+- **Powerful Integrated Assistant Tools**
+  - **File System Access (%%FILE%%)**: Read, write, append, rename, delete, and even summarize file content directly from your conversation.
+  - **Shell Commands (%%CMD%%)**: Execute commands straight from Memex. The %%CMD%% tool is fully configurable—it can run commands locally or use a Docker container based on your settings.
+  - **Web Search (%%WEBSEARCH%%)**: Perform web searches via Perplexity Sonar and get cited, summarized results integrated into your context.
+  - **Math Calculator (%%MATH%%)**: Tackle complex calculations using bc behind the scenes
+  - **Memory (%%MEMORY%%)**: Store and recall facts or context across sessions in SQLite with support for project-specific memory.
 
-- **Extensibility**:
-  - [x] Modular action system for easy feature additions
-  - [x] Custom context handlers for various input types
+- **Enhanced User Experience**
+  - Real-time response streaming with syntax highlighting in code blocks.
+  - Intelligent tab completion for file paths, commands, and settings.
+  - Nested prompts and flexible templating support for sophisticated query design.
+  - Prompt templating support from basic {{date}} to more advanced custom template actions. 
+  - A modular design that lets you easily extend or customize functionalities.
 
-# Installation & Usage
+---
 
-## Basic Usage
+## Installation & Usage
 
-*The program is still in development and may have bugs or issues. Please report any problems you encounter.*
+### Getting Started
 
-- Clone the repository
-`git clone https://github.com/acasto/iptic-memex.git`
-- Install the dependencies
-`pip install -r requirements.txt`
-- Then run the program with `python main.py`
-- Configuration can be done through
+#### 1. **Clone the Repository**
+```bash
+   git clone https://github.com/acasto/iptic-memex.git
+   cd iptic-memex
+```
+
+#### 2. **Install Dependencies**
+```bash
+   pip install -r requirements.txt
+```
+#### 3. **Configuration**
+- **Global Settings**:
   - `config.ini` in the project directory
-  - `~/.config/iptic-memex/config.ini` in the user directory
-  - via custom .ini file with `-c` or `--conf` flag
-- Model configuration can be done through
+  - `~/.config/iptic-memex/config.ini` for user-specific settings
+  - Or specify a custom config file using the `-c` or `--conf` flag.
+- **Models & Providers**:
   - `models.ini` in the project directory
-  - `~/.config/iptic-memex/models.ini` in the user directory
-- API key can be set in the config file as `api_key` or via environment variables. (e.g. `OPENAI_API_KEY`)
-- Usage is well documented with click and can be accessed with `python main.py --help` or `<subcommand> --help`
+  - `~/.config/iptic-memex/models.ini` for user-level configuration.
+- **API Keys**:  
+  Set keys in `config.ini` (e.g., `api_key`) or via environment variables like `OPENAI_API_KEY`.
+
+#### 4. **Run Memex**
+```bash
+   python main.py chat
+   ```
+
+5. **Explore Help**
+
+   For full usage details, run:
+
+```bash
+   python main.py --help
+   python main.py <subcommand> --help
+   <within chat mode> help
+   ```
+---
 
 ## Key Commands
 
-- `python main.py --help`: Display general help
-- `python main.py <subcommand> --help`: Show help for a specific subcommand
-- `python main.py chat`: Enter chat mode
-- `python main.py ask`: Enter ask mode
-- `python main.py chat -f <filename>`: Chat about a specific file
+- **General CLI Commands**
+  - `python main.py --help`  
+    Display overall help and list available subcommands.
+  - `python main.py <subcommand> --help`  
+    Get detailed help for specific commands (e.g., `chat`).
 
-## Chat Mode Commands
 
-While in chat mode, you can use the following commands:
+- **Interactive Mode**
+  - `python main.py chat`  
+    Launch interactive chat mode.
 
-- `help`: Display a list of available commands
-- `quit` or `exit`: Exit the chat mode
-- `load project`: Load a project into the context
-- `load file`: Load a file into the context
-- 'load pdf': Load a PDF file into the context
-- 'load doc': Load a DOCX file into the context
-- 'load sheet': Load an XLSX file into the context
-- `load code`: Load code snippets into the context
-- `load multiline`: Load multiple lines of text into the context
-- `load web`: Load content from a web page into the context
-- `load soup`: Fetch content from a web page using BeautifulSoup
-- `load search`: Perform a web search and load results
-- `clear context`: Clear a specific item from the context
-- `clear chat`: Reset the entire conversation state
-- `clear last [n]`: Remove the last n messages from the chat history
-- `clear first [n]`: Remove the first n messages from the chat history
-- `clear`: Clear the screen
-- `reprint`: Reprint the entire conversation
-- `show settings`: Display all current settings
-- `show models`: List all available models
-- `show messages`: Display all messages in the current chat
-- `show usage`: Show token usage statistics
-- `set option`: Modify a specific option or setting
-- `save chat`: Save the current chat session
-- `save last`: Save only the last message of the chat
-- `save full`: Save the full conversation including context
-- `save code`: Extract and save code blocks from the conversation
-- `run code`: Extract and run code blocks from the conversation
-- `run command`: Run a shell command and optionally capture the output
-- `load chat`: Load a previously saved chat session
-- `list chats`: Display a list of all saved chat sessions
-- `export chat`: Export the current chat in a specified format
 
-These commands provide extensive control over the chat environment, allowing you to manage context, manipulate the conversation history, adjust settings, and interact with external resources seamlessly.
+- **Completion Mode**:  
+  Pipe a one-shot query directly into Memex. For example:
 
-## Configuration
+```bash
+    echo "What is PI?" | memex -f -
+ ```
 
-- `config.ini`: Main configuration file
-- `models.ini`: Detailed model information and settings
-- User-specific configurations can be added in `~/.config/iptic-memex/config.ini` and `~/.config/iptic-memex/models.ini`
+- **Chat Mode Quick Reference**
+  - **Context Loading**
+    - `load file`, `load pdf`, `load doc`, `load sheet`, `load code`, `load multiline`, `load image` Import content from various file types or multiline text.
+    - `load web`, `load soup`, `load search`  Add web content or perform a web search with summarized results.
+    - `load raw` Load unformatted text into your conversation, useful for loading saved 'full' conversations to avoid double formatting.
+    - `clear context` Clear the current turn context. 
+  - **Chat Management**
+    - `clear chat` Reset the current chat session.  
+      Remove specific items or reset the complete conversation context.
+    - `clear last`, `clear last n`, `clear first`, `clear first n`  
+      Clear the last or first n messages from the chat history.
+    - `reprint` Redisplay the entire chat history.
+  - **Settings & Utility**
+    - `show settings`, `show settings tools`, `show models`, `show messages`, `show usage`, `show cost` 
+      Inspect current configuration, active models, message history, token usage, and costs.
+    - `set option`, `set option tools` Dynamically modify settings (including tool options such as the %%CMD%% configuration).
+  - **Saving & Loading Conversations**
+    - `save chat`, `save last`, `save full` Save the current conversation or specific parts of it.
+    - `load chat` or `list chats` Manage saved chat sessions.
+    - `export chat <format> <filename>` Export the chat to a chosen format (Markdown, TXT, PDF).
+  - **Integrated Tools**
+    - `run code` Extract and execute code blocks (Python or Bash) from the assistant’s response (requires confirmation).
+    - `save code` Save code blocks from the assistant’s response to a file.
+    - `run command` Run an arbitrary shell command from the user side to include the output for the assistant.
 
-## Add an OpenAI compatible provider
+---
 
-To add a new OpenAI compatible provider, just add a section to config.ini in the following format along with any other settings you may want to override. 
-```
-[provider_name]
+## Configuration Details
+
+### Adding OpenAI-Compatible Providers
+
+To add a new OpenAI-compatible provider, add a section in your `config.ini` file:
+```ini
+[my_new_provider]
 alias = OpenAI
-base_url = <the provider's base URL>
+base_url = <provider endpoing url>
+api_key = <Your API Key or leave blank to use env variable>
+extra_body = { ... }  ; Optional, for provider-specific parameters
 ```
-Then you just need to add the models to models.ini like so:
-```
-[model short name]
-provider = <the provider you setup>
-model_name = <the full official model name>
-context_size = 4096
+Then, define your models in `models.ini`:
+```ini
+[my_model_short_name]
+provider = my_new_provider
+model_name = <official model name>
+context_size = 8192
 response_label = "> My Model: "
-```
-### Extra body parameters
-
-You can add additional parameters to the body of the quest by using the `extra_body` setting with a provider in config.ini or a model in models.ini. 
-
-Examples:
-
-Set a preferred order of provider when using OpenRouter:
-```
-extra_body = {provider: { order: [Together, Lepton] } }
-```
-Turn on prompt caching and set stop tokens via llama.cpp API:
-```
-extra_body = {cache_prompt:true, stop:[<|im_end|>,<|im_start|>,<end_of_turn>,<|end|>]}
+extra_body = { ... }  ; Optional, for model-specific settings
 ```
 
-### Chat about a file or URL
 
-![Imgur Image](https://i.imgur.com/XGxn7my.gif)
+---
 
-One of the more useful ways to use this program is to chat or ask questions about a file or URL. This can be done by 
-supplying one or more `--file` (`-f`) to the `chat` or `ask` subcommands. The file(s) will be loaded into the context through the prompt and available for you to ask questions about. Web context has been moved to the chat mode and can be accessed with the `load web`, `load soup`, and `load search` commands. 
+## Changelog
 
-For example:
-- `python main.py chat -f problem_code.py`
-- `python main.py ask -f code.txt -f logfile.txt`
-- From within chat mode: `load file`, `load web`, or `load soup`
-
-Note: `load web` uses the trafilatura library to retrieve a more simplified version of the web page, while `load soup` uses BeautifulSoup to scrape the raw HTML. Evenually these will probably be merged into a single more robust command. 
-
-### Search the web
-
-The `load search` action is currently based on the Breave Search API **summarization** endpoint and gets added to the context the same as others (e.g. chatting with a file). The API key is set the same as other providers. Support will eventually be added for other search providers and configurations. 
-
-### Multiline Input
-The `load multiline` command allows you to add multiple lines of text to the context. This can be useful for adding code snippets, error messages, or other multi-line content.
-
-### Saving code blocks
-
-Now that LLMs are getting better at producing functional code, the ability to save a code block instead of just copying it out is useful. The `save code` command will extract code blocks from the most recent assistant reponse and provide a file save dialog. (`save code <n>` can be used to parse the last-n responses). If multiple code blocks are present you will be presented with a choice of which to save.
-
-![Imgur Image](https://i.imgur.com/U8Tzg4Y.png)
-
-### Running code blocks
-
-⚠️ BE CAREFUL WITH THIS COMMAND
-
-The `run code` command will extract code blocks from the most recent assistant response and run them in the current Python environment. It currently supports Python or Bash code blocks and will ask for confirmation before running. (`run code <n>` can be used to parse the last-n responses). If multiple code blocks are present you will be presented with a choice of which to run.
-
-After running the command you will have the option to capture the output to a multiline context to feed back to the model for iterative troubleshooting. 
-
-### Running commands
-
-The `run command` command lets you run shell commands from within the chat mode and capture the output into the context for use in the conversaton. This can be useful for running scripts or referencing system information.
-
-### Projects
-
-The project context (`load project`) causes the other contexts (e.g. file, web, multiline, etc.) to be wrapped in a common project context tags with a project name and project notes. You can add these other contexts from the `load project` dialog.
-
-# Changelog
+### 2.1.0 (02/06/2025) Current
+- Major changes, not all listed here, REAMDE will be constantly updated
+- Added vision/image support for OpenAI, Anthropic, and Google providers
+- Added context caching where supported
+- Added llama.cpp bindings provider for running models directly
+- Added pseduo-tool implementation for assistant tool calling
+  - Added math tool
+  - Added file tool
+  - Added a local and docker based command tool
+  - Added websearch tool that utilizes Perplexity Sonar
+- Moved core utiltiy functions to a new utils handler
+- Added a spinner and new output handler 
+- Added a separate 'tools' argument for 'show settings, and 'set option' for tooling specific settings
+- Added cost tracking and per session budget notification
+- Added completion mode with raw response for debugging and raw response access
+- Removed ask mode in favor of completion mode
+- Removed various default models and updated OpenAI, Anthropic, and Goolge ones
+- Various bug fixes
 
 ### 2.0.4 (09/03/2024)
 - Added models/providers to models.ini
@@ -219,7 +191,7 @@ The project context (`load project`) causes the other contexts (e.g. file, web, 
 - Added timeout setting for OpenAI provider
 - Added a 'load raw' context for unwrapped context
 - Added 'load sheet', 'load doc', and 'load pdf'
-- Fixed minor bugs 
+- Fixed minor bugs
 
 ### 2.0.3 (07/20/2024) Current
 - Added the `run command` command to run shell commands and capture the output
@@ -229,7 +201,7 @@ The project context (`load project`) causes the other contexts (e.g. file, web, 
 
 ### 2.0.2 (07/16/2024)
 - Added the `run code` command with the ability to capture the output for iterative troubleshooting
- 
+
 ### 2.0.1 (07/15/2024)
 - Minor bug fixes and improvements in error handling
 - Updated README with new features and examples
@@ -243,10 +215,10 @@ The project context (`load project`) causes the other contexts (e.g. file, web, 
 - Removed the URL command line arguments in favor of more robust context management in chat mode
 
 ### 1.3.0 (05/29/2024)
-- Added support for Anthropic and Google Gemini models 
-- Removed OpenRouter support temporarily  
+- Added support for Anthropic and Google Gemini models
+- Removed OpenRouter support temporarily
 - Added models.ini for storing detailed model information
-- Changed how model information is loaded and displayed 
+- Changed how model information is loaded and displayed
 
 ### 1.2.4 (04/15/2023)
 - Added ability to track token usage in chat mode with tiktoken
@@ -259,10 +231,9 @@ The project context (`load project`) causes the other contexts (e.g. file, web, 
 - Added ability to scrape text from a URL to be added into context for both chat and ask modes
 - Scraped text can be filtered by ID or Class
 
-### 1.1.0 (04/03/2023) 
+### 1.1.0 (04/03/2023)
 - Added ability to accept multiple '-f' options for all modes
 
 # License
 
-This project is licensed under the terms of the MIT license. 
-
+This project is licensed under the terms of the MIT license.
