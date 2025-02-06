@@ -205,17 +205,25 @@ class AnthropicProvider(APIProvider):
 
         try:
             for event in response:
+                event_usage = None
                 if event.type == "message_start" and event.message and event.message.usage:
-                    # Capture initial usage info with input_tokens
-                    initial_usage = event.message.usage
-                    final_usage = event.message.usage
+                    event_usage = event.message.usage
+                    initial_usage = event_usage
+                    final_usage = event_usage
                 elif event.type == "content_block_delta":
                     yield event.delta.text
                 elif event.type == "message_delta":
-                    # Update final_usage if usage info is provided (likely only output_tokens)
                     if hasattr(event, 'usage') and event.usage:
-                        final_usage = event.usage
-                # Ignore ping or message_stop events.
+                        event_usage = event.usage
+                        final_usage = event_usage
+
+                # Update cache metrics whenever they appear
+                if event_usage:
+                    if hasattr(event_usage, 'cache_creation_input_tokens'):
+                        self.current_usage.cache_writes = event_usage.cache_creation_input_tokens
+                    if hasattr(event_usage, 'cache_read_input_tokens'):
+                        self.current_usage.cache_hits = event_usage.cache_read_input_tokens
+
         except Exception as e:
             yield self._format_error(e)
 
@@ -315,7 +323,10 @@ class AnthropicProvider(APIProvider):
         self.total_usage = Usage()
 
     def get_cost(self) -> Dict[str, float]:
-        """Calculate cost specifically for Anthropic's caching model"""
+        """
+        Calculate costs for regular token usage and cache operations.
+        Returns costs broken down by type and total cost.
+        """
         usage = self.get_usage()
         if not usage:
             return {'total_cost': 0.0}
@@ -324,29 +335,40 @@ class AnthropicProvider(APIProvider):
             price_unit = float(self.params.get('price_unit', 1000000))
             price_in = float(self.params.get('price_in', 0))
             price_out = float(self.params.get('price_out', 0))
+            price_cache_in = float(self.params.get('price_cache_in', price_in))
+            price_cache_out = float(self.params.get('price_cache_out', price_out))
+
+            # Calculate base token costs
+            total_cost = 0.0
+            result = {}
 
             # Regular token costs
             input_cost = (usage['total_in'] / price_unit) * price_in
             output_cost = (usage['total_out'] / price_unit) * price_out
+            result['input_cost'] = round(input_cost, 6)
+            result['output_cost'] = round(output_cost, 6)
+            total_cost += input_cost + output_cost
 
-            result = {
-                'input_cost': round(input_cost, 6),
-                'output_cost': round(output_cost, 6),
-                'total_cost': round(input_cost + output_cost, 6)
-            }
+            # Cache write costs (if present)
+            if 'total_cache_writes' in usage and usage['total_cache_writes'] > 0:
+                cache_write_cost = (usage['total_cache_writes'] / price_unit) * price_cache_in
+                result['cache_write_cost'] = round(cache_write_cost, 6)
+                total_cost += cache_write_cost
 
-            # Handle Anthropic's separate cache write/read tracking
-            if 'total_cache_writes' in usage:
-                cache_write_tokens = usage['total_cache_writes']
-                cache_write_cost = round((cache_write_tokens / price_unit) * price_in, 6)
-                result['cache_write_cost'] = cache_write_cost
-                result['total_cost'] = round(result['total_cost'] + cache_write_cost, 6)
+            # Cache read costs (if present)
+            if 'total_cache_hits' in usage and usage['total_cache_hits'] > 0:
+                cache_read_cost = (usage['total_cache_hits'] / price_unit) * price_cache_out
+                result['cache_read_cost'] = round(cache_read_cost, 6)
+                total_cost += cache_read_cost
 
-            if 'total_cache_hits' in usage:
-                cache_hits = usage['total_cache_hits']
-                cache_savings = round((cache_hits / price_unit) * price_in, 6)
-                result['cache_savings'] = cache_savings
+                # Calculate theoretical cost without caching for comparison
+                theoretical_cost = (usage['total_cache_hits'] / price_unit) * price_in
+                cache_savings = theoretical_cost - cache_read_cost
+                if cache_savings > 0:
+                    result['cache_savings'] = round(cache_savings, 6)
 
+            result['total_cost'] = round(total_cost, 6)
             return result
+
         except (ValueError, TypeError):
-            return None
+            return {'total_cost': 0.0}
