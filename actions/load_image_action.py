@@ -14,15 +14,17 @@ class LoadImageAction(InteractionAction):
 
     def run(self, args: list = None):
         """Load and optionally summarize image file(s)"""
-        # Check if this is a summary request
-        do_summary = args and args[0] == "summary"
-        if do_summary:
-            args = args[1:] if len(args) > 1 else None
+        # Check if this is a summary request or if we should fall back to summary
+        model = self.session.get_params().get('model')
+        force_summary = args and args[0] == "summary"
+        use_summary = force_summary or not (model and self.session.conf.get_option_from_model('vision', model))
 
-        # If no args, prompt for image
+        if use_summary:
+            args = args[1:] if force_summary and len(args) > 1 else args
+
+        # Rest of the file loading logic...
         if not args:
             self.tc.run('image')
-
             while True:
                 filename = self.session.utils.input.get_input(
                     prompt="Enter image filename (or q to exit): ",
@@ -35,7 +37,7 @@ class LoadImageAction(InteractionAction):
                     break
 
                 if os.path.isfile(filename):
-                    if do_summary:
+                    if use_summary:
                         self._summarize_image(filename)
                     else:
                         self.session.add_context('image', filename)
@@ -44,17 +46,6 @@ class LoadImageAction(InteractionAction):
                 else:
                     print(f"Image file '{filename}' not found.")
             return
-
-        # If args provided, try to load the image
-        filename = ' '.join(args)
-        if os.path.isfile(filename):
-            if do_summary:
-                self._summarize_image(filename)
-            else:
-                self.session.add_context('image', filename)
-            self.tc.run('chat')
-        else:
-            print(f"Image file '{filename}' not found.")
 
     def _summarize_image(self, image_path):
         """Helper method to get summary of an image"""
@@ -86,7 +77,14 @@ class LoadImageAction(InteractionAction):
 
     @staticmethod
     def can_run(session) -> bool:
+        """Check if either vision or summary capabilities are available"""
+        # Check if a vision model is configured for summaries
+        if session.get_tools().get('vision_model'):
+            return True
+
+        # Check if current model supports direct vision
         model = session.get_params().get('model')
-        if not model:
-            return False
-        return bool(session.conf.get_option_from_model('vision', model))
+        if model and session.conf.get_option_from_model('vision', model):
+            return True
+
+        return False
