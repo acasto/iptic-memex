@@ -12,7 +12,8 @@ class AssistantWebsearchToolAction(InteractionAction):
         'reason': 'sonar-reasoning',
         'sonar': 'sonar',
         'sonar-pro': 'sonar-pro',
-        'sonar-reasoning': 'sonar-reasoning'
+        'sonar-reasoning': 'sonar-reasoning',
+        'sonar-reasoning-pro': 'sonar-reasoning-pro'
     }
 
     @staticmethod
@@ -22,7 +23,8 @@ class AssistantWebsearchToolAction(InteractionAction):
             print("\nAvailable search models:")
             print("1. basic (sonar) - Basic web search")
             print("2. pro (sonar-pro) - Advanced web search")
-            print("3. reason (sonar-reasoning) - Reasoning-focused search")
+            print("3. reasoning (sonar-reasoning) - Reasoning-focused search")
+            print("4. reasoning-pro (sonar-reasoning-pro) - Advanced reasoning-focused search")
 
             choice = input("\nSelect model (1-3): ").strip()
             model_map = {'1': 'basic', '2': 'pro', '3': 'reason'}
@@ -132,7 +134,7 @@ class AssistantWebsearchToolAction(InteractionAction):
                         content = content_match.group(1) if content_match else summary
 
                         # Extract citations list using regex
-                        citations_match = re.search(r"citations=\[(.*?)\]", summary)
+                        citations_match = re.search(r"citations=\[(.*?)]", summary)
                         if citations_match:
                             # Split the citations string and clean up each citation
                             citations = [c.strip(" '") for c in citations_match.group(1).split(',')]
