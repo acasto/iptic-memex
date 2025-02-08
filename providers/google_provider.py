@@ -37,7 +37,13 @@ class GoogleProvider(APIProvider):
         # Defer client initialization until first turn to handle caching
         self.client = None
         self.gchat = None
-        self.usage = None
+        self.turn_usage = None
+        self.total_usage = {
+            'prompt_tokens': 0,
+            'completion_tokens': 0,
+            'total_tokens': 0,
+            'cached_tokens': 0
+        }
         self._cached_content = None
         self._first_turn = True
 
@@ -185,12 +191,18 @@ class GoogleProvider(APIProvider):
             else:
                 # Store usage metrics if available
                 if hasattr(response, 'usage_metadata'):
-                    self.usage = {
+                    self.turn_usage = {
                         'prompt_tokens': response.usage_metadata.prompt_token_count,
                         'completion_tokens': response.usage_metadata.candidates_token_count,
                         'total_tokens': response.usage_metadata.total_token_count,
                         'cached_tokens': getattr(response.usage_metadata, 'cached_content_token_count', 0)
                     }
+                    # Update total usage
+                    self.total_usage['prompt_tokens'] += self.turn_usage['prompt_tokens']
+                    self.total_usage['completion_tokens'] += self.turn_usage['completion_tokens']
+                    self.total_usage['total_tokens'] += self.turn_usage['total_tokens']
+                    self.total_usage['cached_tokens'] += self.turn_usage['cached_tokens']
+
                 if hasattr(response, 'parts'):
                     text_parts = [part.text for part in response.parts]
                     return ' '.join(text_parts)
@@ -217,12 +229,17 @@ class GoogleProvider(APIProvider):
 
             # Capture usage from final chunk
             if final_chunk and hasattr(final_chunk, 'usage_metadata'):
-                self.usage = {
+                self.turn_usage = {
                     'prompt_tokens': final_chunk.usage_metadata.prompt_token_count,
                     'completion_tokens': getattr(final_chunk.usage_metadata, 'candidates_token_count', 0),
                     'total_tokens': final_chunk.usage_metadata.total_token_count,
                     'cached_tokens': getattr(final_chunk.usage_metadata, 'cached_content_token_count', 0)
                 }
+                # Update total usage
+                self.total_usage['prompt_tokens'] += self.turn_usage['prompt_tokens']
+                self.total_usage['completion_tokens'] += self.turn_usage['completion_tokens']
+                self.total_usage['total_tokens'] += self.turn_usage['total_tokens']
+                self.total_usage['cached_tokens'] += self.turn_usage['cached_tokens']
 
         except Exception as e:
             yield f"Stream error: {str(e)}"
@@ -281,26 +298,32 @@ class GoogleProvider(APIProvider):
 
     def get_usage(self):
         """Return usage statistics including cache metrics"""
-        if not self.usage:
+        if not self.total_usage:
             return {}
 
         stats = {
-            'total_in': self.usage['prompt_tokens'],
-            'total_out': self.usage['completion_tokens'],
-            'total_tokens': self.usage['total_tokens'],
-            'turn_in': self.usage['prompt_tokens'],
-            'turn_out': self.usage['completion_tokens'],
-            'turn_total': self.usage['total_tokens']
+            'total_in': self.total_usage['prompt_tokens'],
+            'total_out': self.total_usage['completion_tokens'],
+            'total_tokens': self.total_usage['total_tokens'],
+            'turn_in': self.turn_usage['prompt_tokens'] if self.turn_usage else 0,
+            'turn_out': self.turn_usage['completion_tokens'] if self.turn_usage else 0,
+            'turn_total': self.turn_usage['total_tokens'] if self.turn_usage else 0
         }
 
-        if 'cached_tokens' in self.usage:
-            stats['cached_tokens'] = self.usage['cached_tokens']
+        if self.total_usage['cached_tokens'] > 0:
+            stats['cached_tokens'] = self.total_usage['cached_tokens']
 
         return stats
 
     def reset_usage(self):
         """Reset usage statistics"""
-        self.usage = None
+        self.turn_usage = None
+        self.total_usage = {
+            'prompt_tokens': 0,
+            'completion_tokens': 0,
+            'total_tokens': 0,
+            'cached_tokens': 0
+        }
 
     def get_cost(self) -> dict:
         """Calculate cost specifically for Google's caching model"""
