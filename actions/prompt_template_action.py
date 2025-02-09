@@ -54,8 +54,8 @@ class PromptTemplateAction(InteractionAction):
             return str(value) if value is not None else None
 
         elif namespace == "date":
-            if len(parts) == 2:
-                return datetime.now().strftime(parts[1])
+            if len(parts) > 1:
+                return datetime.now().strftime(":".join(parts[1:]))
             return datetime.now().isoformat()
 
         elif namespace == "session" and len(parts) == 2:
