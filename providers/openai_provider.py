@@ -211,10 +211,12 @@ class OpenAIProvider(APIProvider):
 
                     # Handle cached tokens
                     if hasattr(chunk.usage, 'prompt_tokens_details'):
-                        cached = chunk.usage.prompt_tokens_details.get('cached_tokens', 0)
-                        if 'cached_tokens' not in self.running_usage:
-                            self.running_usage['cached_tokens'] = 0
-                        self.running_usage['cached_tokens'] += cached
+                        prompt_details = chunk.usage.prompt_tokens_details
+                        if hasattr(prompt_details, 'cached_tokens'):
+                            cached = prompt_details.cached_tokens
+                            if 'cached_tokens' not in self.running_usage:
+                                self.running_usage['cached_tokens'] = 0
+                            self.running_usage['cached_tokens'] += cached
 
         except Exception as e:
             error_msg = "Stream interrupted:\n"
@@ -291,8 +293,8 @@ class OpenAIProvider(APIProvider):
             # Handle cached tokens from prompt_tokens_details
             if hasattr(response.usage, 'prompt_tokens_details'):
                 prompt_details = getattr(response.usage, 'prompt_tokens_details')
-                if isinstance(prompt_details, dict):
-                    cached = prompt_details.get('cached_tokens', 0)
+                if hasattr(prompt_details, 'cached_tokens'):  # New check
+                    cached = prompt_details.cached_tokens
                     if 'cached_tokens' not in self.running_usage:
                         self.running_usage['cached_tokens'] = 0
                     self.running_usage['cached_tokens'] += cached
@@ -351,8 +353,8 @@ class OpenAIProvider(APIProvider):
             # Handle per-turn cached tokens
             if hasattr(self.turn_usage, 'prompt_tokens_details'):
                 prompt_details = getattr(self.turn_usage, 'prompt_tokens_details')
-                if isinstance(prompt_details, dict):
-                    stats['turn_cached'] = prompt_details.get('cached_tokens', 0)
+                if hasattr(prompt_details, 'cached_tokens'):  # New check
+                    stats['turn_cached'] = prompt_details.cached_tokens
 
             # Include per-turn reasoning metrics if available
             if hasattr(self.turn_usage, 'completion_tokens_details'):
