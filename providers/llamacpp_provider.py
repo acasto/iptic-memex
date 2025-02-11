@@ -20,7 +20,6 @@ class LlamaCppProvider(APIProvider):
         self.last_api_param = None
         self._last_response = None
 
-
         # Extract or set defaults for llama-cpp
         model_path = self.params.get('model_path', './models/7B/llama-model.gguf')
         # Example: you can allow specifying n_ctx or other llama-specific params:
@@ -85,8 +84,7 @@ class LlamaCppProvider(APIProvider):
             'top_p',
             'tools',          # If using function calling / tools
             'tool_choice',    # If using function calling / tools
-            'user',
-            'extra_body'
+            'user'
         ]
 
         # Track usage similar to OpenAI
