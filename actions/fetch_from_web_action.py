@@ -83,7 +83,7 @@ class FetchFromWebAction(InteractionAction):
                                       config=self.trafilatura_config,
                                       include_links=False,
                                       include_images=False,
-                                      output_format='text')
+                                      output_format='txt')  # Changed 'text' to 'txt'
         if content:
             content_str = str(content)
             token_count = self.token_counter.count_tiktoken(content_str)
@@ -103,6 +103,7 @@ class FetchFromWebAction(InteractionAction):
                                       favor_recall=True
                                       )
         if content:
+            # Ensure content is properly converted to string
             content_str = str(content)
             token_count = self.token_counter.count_tiktoken(content_str)
             return content_str, token_count

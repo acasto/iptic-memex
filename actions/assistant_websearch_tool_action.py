@@ -10,10 +10,14 @@ class AssistantWebsearchToolAction(InteractionAction):
         'basic': 'sonar',
         'pro': 'sonar-pro',
         'reason': 'sonar-reasoning',
+        'reasoning': 'sonar-reasoning',  # Adding an alias for clarity
+        'reasoning-pro': 'sonar-reasoning-pro',
+        'deep-research': 'sonar-deep-research',  # Add the new model
         'sonar': 'sonar',
         'sonar-pro': 'sonar-pro',
         'sonar-reasoning': 'sonar-reasoning',
-        'sonar-reasoning-pro': 'sonar-reasoning-pro'
+        'sonar-reasoning-pro': 'sonar-reasoning-pro',
+        'sonar-deep-research': 'sonar-deep-research'  # Add the new model
     }
 
     @staticmethod
@@ -25,9 +29,10 @@ class AssistantWebsearchToolAction(InteractionAction):
             print("2. pro (sonar-pro) - Advanced web search")
             print("3. reasoning (sonar-reasoning) - Reasoning-focused search")
             print("4. reasoning-pro (sonar-reasoning-pro) - Advanced reasoning-focused search")
+            print("5. deep-research (sonar-deep-research) - Comprehensive research & analysis")
 
-            choice = input("\nSelect model (1-3): ").strip()
-            model_map = {'1': 'basic', '2': 'pro', '3': 'reason'}
+            choice = input("\nSelect model (1-5): ").strip()
+            model_map = {'1': 'basic', '2': 'pro', '3': 'reason', '4': 'reasoning-pro', '5': 'deep-research'}
             model_name = model_map.get(choice)
             if not model_name:
                 print("Invalid selection")

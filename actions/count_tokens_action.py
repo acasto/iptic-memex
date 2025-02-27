@@ -42,27 +42,34 @@ class CountTokensAction(InteractionAction):
             if isinstance(messages, str):
                 # If messages is a string, simply encode and count
                 num_tokens = len(encoding.encode(messages, disallowed_special=()))
-                # num_tokens = len(encoding.encode(messages, allowed_special="all"))
             elif isinstance(messages, dict):
-                # If messages is a dictionary, convert it to a string and count
-                messages_str = json.dumps(messages)
-                num_tokens = len(encoding.encode(messages_str, disallowed_special=()))
-                # num_tokens = len(encoding.encode(messages, allowed_special="all"))
+                try:
+                    # If messages is a dictionary, convert it to a string and count
+                    messages_str = json.dumps(messages)
+                    num_tokens = len(encoding.encode(messages_str, disallowed_special=()))
+                except TypeError:
+                    # If JSON serialization fails, convert to string first
+                    messages_str = str(messages)
+                    num_tokens = len(encoding.encode(messages_str, disallowed_special=()))
             elif isinstance(messages, list):
                 # If messages is a list, process each message
                 for message in messages:
                     num_tokens += tokens_per_message
                     for key, value in message.items():
                         if isinstance(value, dict):
-                            # If the value is a dictionary, convert it to a string
-                            value = json.dumps(value)
+                            try:
+                                # If the value is a dictionary, convert it to a string
+                                value = json.dumps(value)
+                            except TypeError:
+                                # If JSON serialization fails, convert to string first
+                                value = str(value)
                         num_tokens += len(encoding.encode(str(value), disallowed_special=()))
-                        # num_tokens = len(encoding.encode(messages, allowed_special="all"))
                         if key == "role":
                             num_tokens += tokens_per_name
                 num_tokens += 3  # every reply is primed with <|start|>assistant<|message|>
             else:
-                raise ValueError("Input must be a string, a dictionary, or a list of message dictionaries")
+                # For any other type, convert to string
+                num_tokens = len(encoding.encode(str(messages), disallowed_special=()))
         else:
             num_tokens = 0
 

@@ -1,10 +1,11 @@
 # Iptic Memex: Your Command Line Assistant
 
-Iptic Memex is a Python-based CLI assistant that brings the power of large language models (LLMs) directly to your terminal. Combining advanced conversation handling with a suite of integrated tools—from file management, web research, and code execution to running system commands—Memex is designed to be your personal digital assistant for work, research, and development.
+Iptic Memex is a Python program that offers a straight-forward CLI interface for interacting with large language models (LLMs). Input can be piped in from the command line or entered interactively in 'chat' mode. Chat mode features the ability to save conversations in a human-readable conversation format with a configurable extension for use with external applications such as Obsidian.
 
-Inspired by Vannevar Bush’s vision of the Memex, this tool helps you augment your knowledge and streamline your workflow from the command line.
+The name is a reference to the Memex, a device described by Vannevar Bush in his 1945 essay "As We May Think" which he
+envisioned a device that would compress and store all of their knowledge. https://en.wikipedia.org/wiki/Memex
 
-![Iptic Memex Demo](https://i.imgur.com/XLJ4AuY.gif)
+![Imgur Image](https://i.imgur.com/XLJ4AuY.gif)
 
 ---
 
@@ -12,11 +13,11 @@ Inspired by Vannevar Bush’s vision of the Memex, this tool helps you augment y
 
 - **Multiple Interaction Modes**
   - **Interactive 'chat' mode**: Engage in extended, multi-turn conversations with full context management and conversation history.
-  - **Completion Mode**: For simple, one-shot queries, pipe your input directly into Memex.
-  - **Completion Mode with Raw Response**: Get raw responses from an LLM provider, useful for debugging or when you need to access additional parts of the response object such as citations.   
-    
+  - **Completion Mode**: For simple, one-shot queries, pipe your input directly into Memex. Useful for scripting and building LLM powered tools (e.g., summarize a file, describe an image)
+  - **Completion Mode with Raw Response**: Get raw responses from an LLM provider, useful for debugging or when you need to access additional parts of the response object such as citations.
+  
 - **Advanced Context Management**
-  - Load content from text files, PDFs, DOCX, XLSX, and even images (for supported models).
+  - Load content from text files, PDFs, DOCX, XLSX, and even images.
   - For models without vision support you can load a summary of an image as describe by a model with vision support.
   - Fetch and integrate web content using simplified extraction (Trafilatura) or raw scraping (BeautifulSoup).
   - Add multiline text, code snippets, or specific segments from files into your conversation context.
@@ -43,9 +44,11 @@ Inspired by Vannevar Bush’s vision of the Memex, this tool helps you augment y
 - **Enhanced User Experience**
   - Real-time response streaming with syntax highlighting in code blocks.
   - Intelligent tab completion for file paths, commands, and settings.
-  - Nested prompts and flexible templating support for sophisticated query design.
-  - Prompt templating support from basic {{date}} to more advanced custom template actions. 
+  - Chained prompts and flexible templating support for sophisticated query design.
+  - Prompt templating support from basic {{date}} to more advanced custom template actions.
   - A modular design that lets you easily extend or customize functionalities.
+  - Support for user actions that can override or extend core actions, register user or assistant commands, and more.
+  - An extensible SQLite persistence layer (currently used for stats and memories). 
 
 ---
 
@@ -116,21 +119,19 @@ Inspired by Vannevar Bush’s vision of the Memex, this tool helps you augment y
     - `load file`, `load pdf`, `load doc`, `load sheet`, `load code`, `load multiline`, `load image` Import content from various file types or multiline text.
     - `load web`, `load soup`, `load search`  Add web content or perform a web search with summarized results.
     - `load raw` Load unformatted text into your conversation, useful for loading saved 'full' conversations to avoid double formatting.
-    - `clear context` Clear the current turn context. 
+    - `clear context` Clear the current turn context.
   - **Chat Management**
+    - `save chat`, `save last`, `save full` Save the current conversation or specific parts of it.
+    - `load chat` or `list chats` Manage saved chat sessions.
+    - `export chat` Export the chat to a chosen format (Markdown, TXT, PDF).
     - `clear chat` Reset the current chat session.  
       Remove specific items or reset the complete conversation context.
     - `clear last`, `clear last n`, `clear first`, `clear first n`  
       Clear the last or first n messages from the chat history.
     - `reprint` Redisplay the entire chat history.
   - **Settings & Utility**
-    - `show settings`, `show settings tools`, `show models`, `show messages`, `show usage`, `show cost` 
-      Inspect current configuration, active models, message history, token usage, and costs.
-    - `set option`, `set option tools` Dynamically modify settings (including tool options such as the %%CMD%% configuration).
-  - **Saving & Loading Conversations**
-    - `save chat`, `save last`, `save full` Save the current conversation or specific parts of it.
-    - `load chat` or `list chats` Manage saved chat sessions.
-    - `export chat <format> <filename>` Export the chat to a chosen format (Markdown, TXT, PDF).
+    - `show settings`, `show settings tools`, `show models`, `show messages`, `show usage`, `show cost` Inspect current configuration, active models, message history, token usage, and costs.
+    - `set option`, `set option tools` Dynamically modify core settings and tool settings. 
   - **Integrated Tools**
     - `run code` Extract and execute code blocks (Python or Bash) from the assistant’s response (requires confirmation).
     - `save code` Save code blocks from the assistant’s response to a file.
@@ -170,13 +171,19 @@ extra_body = { ... }  ; Optional, for model-specific settings
 - Added vision/image support for OpenAI, Anthropic, and Google providers
 - Added context caching where supported
 - Added llama.cpp bindings provider for running models directly
+- Added an SQLite persistence layer for stats and memories
 - Added pseduo-tool implementation for assistant tool calling
   - Added math tool
   - Added file tool
+  - Added a memory tool
   - Added a local and docker based command tool
   - Added websearch tool that utilizes Perplexity Sonar
 - Moved core utiltiy functions to a new utils handler
-- Added a spinner and new output handler 
+- Added prompt chaining so you can have a prompt of prompts
+- Added prompt templating with chaining for using multiple template handlers
+- Added user action support for overriding core actions and ability to register usre or assistant commands
+- Added an auto-submit capability for certain assistant commands to complete the next turn and get the results
+- Added a spinner and new output handler
 - Added a separate 'tools' argument for 'show settings, and 'set option' for tooling specific settings
 - Added cost tracking and per session budget notification
 - Added completion mode with raw response for debugging and raw response access
