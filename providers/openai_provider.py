@@ -243,36 +243,62 @@ class OpenAIProvider(APIProvider):
 
         chat = self.session.get_context('chat')
         if chat is not None:
+            # Check if provider uses simple message format
+            use_simple_format = self.params.get('use_simple_message_format', False)
+
             for idx, turn in enumerate(chat.get()):
-                content = []
-                turn_contexts = []
+                # For simple format, we'll use a single string for content
+                if use_simple_format:
+                    turn_content = ""
 
-                # Handle message text
-                content.append({'type': 'text', 'text': turn['message']})
+                    # Process contexts if any exist
+                    if 'context' in turn and turn['context']:
+                        turn_contexts = []
+                        for ctx in turn['context']:
+                            # Image context is not supported in simple format
+                            if ctx['type'] != 'image':
+                                turn_contexts.append(ctx)
 
-                # Process contexts
-                if 'context' in turn and turn['context']:
-                    for ctx in turn['context']:
-                        if ctx['type'] == 'image':
-                            img_data = ctx['context'].get()
-                            # Format image data for OpenAI's API
-                            content.append({
-                                'type': 'image_url',
-                                'image_url': {
-                                    'url': f"data:image/{img_data['mime_type'].split('/')[-1]};base64,{img_data['content']}"
-                                }
-                            })
-                        else:
-                            # Accumulate non-image contexts
-                            turn_contexts.append(ctx)
+                        # Add text contexts
+                        if turn_contexts:
+                            text_context = ProcessContextsAction.process_contexts_for_assistant(turn_contexts)
+                            if text_context:
+                                turn_content += text_context + "\n\n"
 
-                    # Add text contexts if any exist
-                    if turn_contexts:
-                        text_context = ProcessContextsAction.process_contexts_for_assistant(turn_contexts)
-                        if text_context:
-                            content.insert(0, {'type': 'text', 'text': text_context})
+                    # Add the message text
+                    turn_content += turn['message']
+                    message.append({'role': turn['role'], 'content': turn_content})
+                else:
+                    # Modern format with content array
+                    content = []
+                    turn_contexts = []
 
-                message.append({'role': turn['role'], 'content': content})
+                    # Handle message text
+                    content.append({'type': 'text', 'text': turn['message']})
+
+                    # Process contexts
+                    if 'context' in turn and turn['context']:
+                        for ctx in turn['context']:
+                            if ctx['type'] == 'image':
+                                img_data = ctx['context'].get()
+                                # Format image data for OpenAI's API
+                                content.append({
+                                    'type': 'image_url',
+                                    'image_url': {
+                                        'url': f"data:image/{img_data['mime_type'].split('/')[-1]};base64,{img_data['content']}"
+                                    }
+                                })
+                            else:
+                                # Accumulate non-image contexts
+                                turn_contexts.append(ctx)
+
+                        # Add text contexts if any exist
+                        if turn_contexts:
+                            text_context = ProcessContextsAction.process_contexts_for_assistant(turn_contexts)
+                            if text_context:
+                                content.insert(0, {'type': 'text', 'text': text_context})
+
+                    message.append({'role': turn['role'], 'content': content})
 
         return message
 
