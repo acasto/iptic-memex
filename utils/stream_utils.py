@@ -2,14 +2,6 @@ from __future__ import annotations
 
 import time
 from typing import Generator, Any, Optional, Callable
-from dataclasses import dataclass
-
-
-@dataclass
-class StreamConfig:
-    """Container for stream processing configuration"""
-    delay: float = 0.0  # Delay between tokens
-    buffer_size: int = 0  # Size of buffer for analysis (0 = no buffering)
 
 
 class StreamHandler:
@@ -23,14 +15,8 @@ class StreamHandler:
         """
         self.config = config
         self.output = output_handler
-        self._stream_config = self._get_stream_config()
-
-    def _get_stream_config(self) -> StreamConfig:
-        """Load stream configuration from config."""
-        return StreamConfig(
-            delay=float(self.config.get_option('DEFAULT', 'stream_delay', fallback=0.0)),
-            buffer_size=int(self.config.get_option('DEFAULT', 'stream_buffer', fallback=0))
-        )
+        self.delay = float(self.config.get_option('DEFAULT', 'stream_delay', fallback=0.0))
+        self.buffer_size = int(self.config.get_option('DEFAULT', 'stream_buffer', fallback=0))
 
     def process_stream(
             self,
@@ -89,15 +75,15 @@ class StreamHandler:
                 accumulated += token
 
                 # Handle buffering if configured
-                if self._stream_config.buffer_size > 0 and on_buffer:
+                if self.buffer_size > 0 and on_buffer:
                     buffer += token
-                    if len(buffer) >= self._stream_config.buffer_size:
+                    if len(buffer) >= self.buffer_size:
                         on_buffer(buffer)
                         buffer = ''  # Clear buffer after processing
 
                 # Apply configured delay
-                if self._stream_config.delay > 0:
-                    time.sleep(self._stream_config.delay)
+                if self.delay > 0:
+                    time.sleep(self.delay)
 
             # Process any remaining buffer content
             if buffer and on_buffer:

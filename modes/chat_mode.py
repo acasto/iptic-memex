@@ -50,7 +50,9 @@ class ChatMode(InteractionMode):
                 stream = self.session.get_provider().stream_chat()
                 if not stream:
                     return None
-                response = self.utils.stream.process_stream(stream, spinner_message="")
+                # response = self.utils.stream.process_stream(stream, spinner_message="")
+                output_processor = self.session.get_action('assistant_output')
+                response = output_processor.run(stream, spinner_message="")
             else:
                 response = self.session.get_provider().chat()
                 if response is None:
