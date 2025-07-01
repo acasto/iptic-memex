@@ -32,12 +32,9 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw,
     session = SessionHandler(conf)  # start up a session handler
     ctx.obj['SESSION'] = session
 
-    # if user specified a prompt file, check if we need to read it from stdin and then pass to ConfigHandler
-    if prompt:
-        session.add_context('prompt', prompt)
-
     # Update session parameters only if they are provided
     if prompt:
+        session.set_option('prompt', prompt)
         session.add_context('prompt', prompt)
     if model:
         session.set_option('model', model)

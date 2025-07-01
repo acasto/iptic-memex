@@ -17,8 +17,8 @@ class CompletionMode(InteractionMode):
         contexts = self.session.get_action('process_contexts').get_contexts(self.session)
         stdin_context = next((c for c in contexts if c['context'].get()['name'] == 'stdin'), None)
 
-        # Only remove prompt if stdin is present
-        if stdin_context:
+        # Only remove prompt if stdin is present and prompt wasn't explicitly set by user
+        if stdin_context and 'prompt' not in session.user_options:
             session.remove_context_type('prompt')
             # Remove stdin from contexts
             contexts.remove(stdin_context)

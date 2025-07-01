@@ -6,3 +6,7 @@ sessions/*
 venv
 temp
 user-config
+uv.lock
+pyproject.toml
+.python-version
+CLAUDE.md
