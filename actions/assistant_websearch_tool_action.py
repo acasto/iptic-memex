@@ -8,6 +8,7 @@ class AssistantWebsearchToolAction(InteractionAction):
     """
     SEARCH_MODELS = {
         'basic': 'sonar',
+        'advanced': 'reasoning-pro',
         'pro': 'sonar-pro',
         'reason': 'sonar-reasoning',
         'reasoning': 'sonar-reasoning',  # Adding an alias for clarity
@@ -76,10 +77,19 @@ class AssistantWebsearchToolAction(InteractionAction):
         self._search_model = self.validate_search_model(initial_model)
 
     def run(self, args: dict, content: str = ""):
-        # Recheck search model at runtime in case it was changed
-        current_model = self.session.get_tools().get('search_model', self._search_model)
-        self._search_model = self.validate_search_model(current_model)
+        # Check if a mode is specified
+        mode = args.get('mode')
+        if mode:
+            search_model = self.validate_search_model(mode)
+        else:
+            # Recheck search model at runtime in case it was changed
+            current_model = self.session.get_tools().get('search_model', self._search_model)
+            search_model = self.validate_search_model(current_model)
+        
+        # Update the search model
+        self._search_model = search_model
 
+        # Get query from args or content
         query = args.get('query', '')
         if content:
             query = f"{query} {content}".strip()
