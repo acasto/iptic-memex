@@ -10,7 +10,7 @@ from session_handler import SessionHandler
 @click.option('-l', '--max-tokens', default='', help='Maximum number of tokens to use for completion')
 @click.option('-s', '--stream', default=False, is_flag=True, help='Stream the completion events')
 @click.option('-v', '--verbose', default=False, is_flag=True, help='Show session parameters')
-@click.option( '-r', '--raw', default=False, is_flag=True, help='Return raw response in completion mode')
+@click.option('-r', '--raw', default=False, is_flag=True, help='Return raw response in completion mode')
 @click.option('-f', '--file', multiple=True, help='File to use for completion')
 # @click.option( '-f', '--file', multiple=True, type=click.File('r'), help='File to use for completion')
 @click.pass_context
@@ -25,6 +25,7 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw,
     :param max_tokens: maximum number of tokens to use
     :param stream: stream the completion events
     :param verbose: show session parameters
+    :param raw: return raw response in completion mode
     :param file: file to use for completion (file mode)
     :return: none (this is a click entry point)
     """
@@ -67,6 +68,7 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw,
     # if no subcommand was invoked, show the help (since we're using invoke_without_command=True)
     if ctx.invoked_subcommand is None:
         raise click.UsageError(cli.get_help(ctx))
+
 
 @cli.command()
 @click.pass_context
@@ -162,7 +164,7 @@ def list_prompts(ctx):
 
 
 def is_image_file(filename: str) -> bool:
-    """Check if a file is an image based on extension"""
+    """Check if a file is an image based on the extension"""
     image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif')
     return filename.lower().endswith(image_extensions)
 
