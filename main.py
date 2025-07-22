@@ -35,6 +35,7 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw,
 
     # Update session parameters only if they are provided
     if prompt:
+        # Create a temporary PromptContext to resolve the chain
         session.set_option('prompt', prompt)
         session.add_context('prompt', prompt)
     if model:

@@ -428,6 +428,16 @@ class SessionHandler:
                         resolved_contents.append(resolved)
                 return '\n\n'.join(resolved_contents)
 
+            # Check if source contains commas (comma-separated prompts from command line)
+            if ',' in source:
+                resolved_contents = []
+                # Split and recursively resolve each part
+                for part in (p.strip() for p in source.split(',')):
+                    resolved = resolve_single_prompt(part)
+                    if resolved:
+                        resolved_contents.append(resolved)
+                return '\n\n'.join(resolved_contents)
+
             # Check prompt directory for file
             prompt_dir = self.utils.fs.resolve_directory_path(
                 self.conf.get_option('DEFAULT', 'prompt_directory')
