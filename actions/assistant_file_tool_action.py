@@ -1,6 +1,17 @@
 from session_handler import InteractionAction
 import subprocess
 import os
+import tempfile
+import difflib
+
+
+def _is_memex_available():
+    """Check if the 'memex' command is available in the system's PATH."""
+    try:
+        subprocess.run(['memex', '--version'], capture_output=True, check=True)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
 
 
 class AssistantFileToolAction(InteractionAction):
@@ -11,6 +22,7 @@ class AssistantFileToolAction(InteractionAction):
     - append: Append content to file
     - summary: Run command through subprocess on file
     """
+
     def __init__(self, session):
         self.session = session
         self.fs_handler = session.get_action('assistant_fs_handler')
@@ -27,35 +39,27 @@ class AssistantFileToolAction(InteractionAction):
             })
             return
 
-        if mode == 'read':
-            self._handle_read(filename)
-        elif mode == 'write':
-            self._handle_write(filename, content)
-        elif mode == 'append':
-            self._handle_append(filename, content)
-        elif mode == 'summarize':
-            self._handle_summary(filename)
-        elif mode == 'delete':
-            recursive = args.get('recursive', '').lower() == 'true'
-            self._handle_delete(filename, recursive)
-        elif mode == 'rename':
-            new_name = args.get('new_name')
-            if not new_name:
+        mode_handlers = {
+            'read': self._handle_read,
+            'write': lambda f: self._handle_write(f, content),
+            'edit': lambda f: self._handle_edit(f, content),
+            'append': lambda f: self._handle_append(f, content),
+            'summarize': self._handle_summary,
+            'delete': lambda f: self._handle_delete(f, args.get('recursive', '').lower() == 'true'),
+            'rename': lambda f: self._handle_rename(f, args.get('new_name')),
+            'copy': lambda f: self._handle_copy(f, args.get('new_name')),
+        }
+
+        handler = mode_handlers.get(mode)
+        if handler:
+            # For rename and copy, we need to check for new_name before calling the handler
+            if mode in ['rename', 'copy'] and not args.get('new_name'):
                 self.session.add_context('assistant', {
                     'name': 'file_tool_error',
-                    'content': 'New name required for rename operation'
+                    'content': f'New name required for {mode} operation'
                 })
                 return
-            self._handle_rename(filename, new_name)
-        elif mode == 'copy':
-            new_name = args.get('new_name')
-            if not new_name:
-                self.session.add_context('assistant', {
-                    'name': 'file_tool_error',
-                    'content': 'New name required for copy operation'
-                })
-                return
-            self._handle_copy(filename, new_name)
+            handler(filename)
         else:
             self.session.add_context('assistant', {
                 'name': 'file_tool_error',
@@ -71,7 +75,8 @@ class AssistantFileToolAction(InteractionAction):
             if token_count > limit:
                 if self.session.get_tools().get('confirm_large_input', True):
                     self.session.set_flag('auto_submit', False)
-                    self.session.utils.output.write(f"File exceeds token limit ({limit}) for assistant. Auto-submit disabled.")
+                    self.session.utils.output.write(
+                        f"File exceeds token limit ({limit}) for assistant. Auto-submit disabled.")
                 else:
                     self.session.add_context('assistant', {
                         'name': 'file_tool_error',
@@ -107,9 +112,17 @@ class AssistantFileToolAction(InteractionAction):
         if resolved_path is None:
             return
 
+        # Check if the memex command is available
+        if not _is_memex_available():
+            self.session.add_context('assistant', {
+                'name': 'file_tool_error',
+                'content': 'The \'memex\' command is not available. Please ensure it is installed and in your PATH.'
+            })
+            return
+
         try:
-            summary_prompt = self.session.conf.get_option('TOOLS', 'summary_prompt')
-            summary_model = self.session.conf.get_option('TOOLS', 'summary_model')
+            summary_prompt = self.session.get_tools().get('summary_prompt')
+            summary_model = self.session.get_tools().get('summary_model')
             if not summary_model:
                 self.session.add_context('assistant', {
                     'name': 'file_tool_error',
@@ -175,3 +188,145 @@ class AssistantFileToolAction(InteractionAction):
             'name': 'file_tool_result',
             'content': msg
         })
+
+    def _handle_edit(self, filename, edit_request):
+        """Handle file editing with LLM assistance"""
+        original_content = self.fs_handler.read_file(filename)
+        if original_content is None:
+            self.session.add_context('assistant', {
+                'name': 'file_tool_error',
+                'content': f'Failed to read file or empty: {filename}'
+            })
+            return
+
+        edit_model = self.session.get_tools().get('edit_model')
+        if not edit_model:
+            self.session.add_context('assistant', {
+                'name': 'file_tool_error',
+                'content': 'No edit model configured'
+            })
+            return
+
+        conversation_history = self._get_formatted_conversation_history()
+        prompt_content = self._build_edit_prompt(original_content, conversation_history, edit_request)
+        # write prompt_content to a file for debugging
+
+        edited_content = self._run_edit_subprocess(edit_model, prompt_content)
+
+        if edited_content is not None:
+            self._process_and_confirm_edit(filename, original_content, edited_content)
+
+    def _run_edit_subprocess(self, edit_model, prompt_content):
+        """Runs the edit LLM as a subprocess and returns the output."""
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as temp_file:
+                temp_file.write(prompt_content)
+                temp_path = temp_file.name
+
+            result = subprocess.run(['memex', '-m', edit_model, '-f', temp_path],
+                                    capture_output=True, text=True, check=True)
+            return result.stdout.strip()
+        except subprocess.CalledProcessError as e:
+            self.session.add_context('assistant', {
+                'name': 'file_tool_error',
+                'content': f'Edit LLM failed: {e.stderr}'
+            })
+            return None
+        except Exception as e:
+            self.session.add_context('assistant', {
+                'name': 'file_tool_error',
+                'content': f'An unexpected error occurred during edit subprocess: {str(e)}'
+            })
+            return None
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+
+    def _process_and_confirm_edit(self, filename, original_content, edited_content):
+        """Generates a diff, asks for confirmation, and applies the edit."""
+        if not edited_content:
+            return
+
+        diff_lines = list(difflib.unified_diff(
+            original_content.splitlines(keepends=True),
+            edited_content.splitlines(keepends=True),
+            fromfile=f'{filename} (original)',
+            tofile=f'{filename} (edited)'
+        ))
+
+        if not diff_lines:
+            self.session.add_context('assistant', {
+                'name': 'file_tool_result',
+                'content': 'No changes detected in edited file'
+            })
+            return
+
+        diff_text = ''.join(diff_lines)
+        self.session.utils.output.write(f"Proposed changes for {filename}:\n{diff_text}")
+
+        edit_confirm = self.session.get_tools().get('edit_confirm', True)
+        if edit_confirm:
+            self.session.utils.output.stop_spinner()
+            # if not self.session.utils.input.get_bool("Apply these changes? [y/N]", default=False):
+            #     self.session.add_context('assistant', {
+            #         'name': 'file_tool_result',
+            #         'content': 'Edit operation cancelled by user'
+            #     })
+            #     return
+
+        self._handle_write(filename, edited_content)
+
+    def _get_formatted_conversation_history(self):
+        """Get the last few turns of conversation history, formatted for the prompt."""
+        chat_context = self.session.get_context('chat')
+        if not chat_context:
+            return "## Conversation History\nNo conversation history available."
+
+        # Get the last 4 messages
+        history = chat_context.get('all')[-4:]
+        if not history:
+            return "## Conversation History\nNo conversation history available."
+
+        # Format the conversation history
+        formatted_history = ['## Conversation History']
+        for msg in history:
+            role = msg.get('role', 'unknown').capitalize()
+            message = msg.get('message', '')
+            formatted_history.append(f"[{role}]: {message}")
+
+        return '\n'.join(formatted_history)
+
+    @staticmethod
+    def _build_edit_prompt(original_content, conversation_history, edit_request):
+        """Build the prompt content for the edit LLM"""
+        prompt = """You are a code editor. Your task is to apply the requested changes to the provided file and output the complete modified file.
+        
+You will receive:
+1. The content of the original file.
+2. A few turns of conversation history between the user and the assistant if clarification is needed regarding context.
+3. The requested changes to be applied to the oringinal file.
+
+=== ORIGINAL FILE ===
+{original_content}
+=== END ORIGINAL FILE ===
+
+=== CONVERSATION CONTEXT ===
+{conversation_history}
+=== END CONVERSATION CONTEXT ===
+
+=== REQUESTED CHANGES ===
+{edit_request}
+=== END REQUESTED CHANGES ===
+
+=== INSTRUCTIONS ===
+Output ONLY the complete modified file with the requested changes applied. Do not include any explanations, comments about the changes, or additional formatting or adjustments. Be sure to preserve original whitespace, newlines, and indentation. Just return the raw file content with edits applied."""
+
+        return prompt.format(
+            original_content=original_content,
+            conversation_history=conversation_history,
+            edit_request=edit_request
+        )
