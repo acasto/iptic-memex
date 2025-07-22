@@ -40,7 +40,7 @@ class InputHandler:
 
     def __init__(self, config: Any, output_handler: Optional[Any] = None) -> None:
         """
-        Initialize input handler with user configuration.
+        Initialize the input handler with user configuration.
         Optionally accepts an output handler for error messaging.
         """
         self.config = config
@@ -62,7 +62,7 @@ class InputHandler:
             bool: InputValidator(
                 type_check=self._convert_to_bool,
                 constraints=lambda x: isinstance(x, bool),
-                error_message="Please enter yes/no or true/false"
+                error_message="Please enter y/n, yes/no, or true/false"
             )
         }
 
@@ -100,11 +100,11 @@ class InputHandler:
         Args:
             prompt: The input prompt to display to the user
             validator: Optional InputValidator to validate and/or convert the input
-            default: If the user just presses enter (i.e. empty string),
+            default: If the user just presses enter (i.e., empty string),
                      this default value will be returned
             allow_empty: Whether to allow empty input (no re-prompt if empty)
             spacing: Controls blank lines before/after the prompt.
-                     If int: prints that many blank lines before & after
+                     If int: prints that many blank lines before and after
                      If list[int]: prints [before, after] lines
                      If None: no extra spacing
             multiline: If True, allow multiline entry. The user continues to
@@ -113,7 +113,7 @@ class InputHandler:
             continuation_char: Character (default: backslash) used for multiline
                                continuation.
             retry_on_failure: If True, will keep prompting on validation error
-                              until user provides valid input. If False, a
+                              until the user provides valid input. If False, a
                               validation error will return an empty string (or
                               throw an exception, depending on usage).
         """
@@ -130,7 +130,7 @@ class InputHandler:
         # Print spacing before prompt
         self._print_spacing(before_spacing)
 
-        # Repeatedly prompt if validation fails and user wants to retry
+        # Repeatedly prompt if validation fails and the user wants to retry
         while True:
             # Construct the visible prompt string
             full_prompt = prompt
@@ -140,13 +140,13 @@ class InputHandler:
             # Gather raw input (single line or multiline)
             value = self._gather_input(full_prompt, multiline, continuation_char)
 
-            # If user provided nothing and there's a default, use it
+            # If the user provided nothing and there's a default, use it
             if not value.strip() and default is not None:
                 value = str(default)
 
-            # If still empty, handle according to allow_empty
+            # If still empty, handle, according to allow_empty
             if not value.strip() and not allow_empty and default is None:
-                # Provide an error if user cannot provide empty
+                # Provide an error if the user cannot provide empty
                 if self.output:
                     self.output.error("Empty input is not allowed.")
                 if retry_on_failure:
@@ -158,7 +158,7 @@ class InputHandler:
             # Perform validation if requested
             if validator and self.validation_level != InputLevel.RAW:
                 if not self._attempt_validation(value, validator, retry_on_failure):
-                    # If validation fails and user wants to keep trying, continue
+                    # If validation fails and the user wants to keep trying, continue
                     if retry_on_failure:
                         continue
                     else:
@@ -181,7 +181,7 @@ class InputHandler:
         (or a line that is solely that char) until we hit a termination line.
         """
         if not multiline:
-            # Single line input
+            # Single-line input
             try:
                 return input(prompt)
             except EOFError:
@@ -209,7 +209,7 @@ class InputHandler:
                 if line.strip() == continuation_char:
                     # Could break with an empty line or continue with partial lines
                     break
-                # If line ends with the continuation char, append without it
+                # If the line ends with the continuation char, append without it
                 # and keep going
                 elif line.endswith(continuation_char):
                     lines.append(line[:-1])
@@ -255,13 +255,13 @@ class InputHandler:
     @staticmethod
     def _convert_to_bool(value: str) -> bool:
         """
-        Convert a string to boolean, supporting yes/no, true/false, 1/0.
+        Convert a string to boolean, supporting y/n, yes/no, true/false, 1/0.
         Raises ValueError if it doesn't match known patterns.
         """
         val_lower = value.strip().lower()
-        if val_lower in ('yes', 'true', '1'):
+        if val_lower in ('y', 'yes', 'true', '1'):
             return True
-        elif val_lower in ('no', 'false', '0'):
+        elif val_lower in ('n', 'no', 'false', '0'):
             return False
         else:
             raise ValueError("Invalid boolean input")
