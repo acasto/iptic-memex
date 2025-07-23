@@ -8,7 +8,7 @@ class LoadRawAction(InteractionAction):
     def __init__(self, session):
         self.session = session
         self.tc = session.utils.tab_completion
-        self.tc = set_session(session)
+        self.tc.set_session(session)
 
     def run(self, args: list = None):
         if not args:
