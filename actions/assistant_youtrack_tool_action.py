@@ -1,30 +1,67 @@
 import requests
 from session_handler import InteractionAction
 
+# Centralized configuration and endpoints
+DEFAULT_CONFIG = {
+    'state_field_name': 'Status',
+    'priority_field_name': 'Priority',
+    'type_field_name': 'Type',
+    'assignee_field_name': 'Assignee',
+    'default_state_filter': 'status:Open',
+    'default_get_issues_query': 'project:{project_short_name} {query_filter}'
+}
+
+ENDPOINTS = {
+    'get_projects': 'admin/projects',
+    'get_issues': 'issues',
+    'get_issue_details': 'issues/{issue_id}',
+    'create_issue': 'issues',
+    'update_issue': 'issues/{issue_id}',
+    'assign_issue': 'issues/{issue_id}',
+    'update_state': 'issues/{issue_id}',
+    'update_priority': 'issues/{issue_id}',
+    'update_type': 'issues/{issue_id}',
+    'add_comment': 'issues/{issue_id}/comments'
+}
+
 
 class AssistantYoutrackToolAction(InteractionAction):
-    """
-    Action for interacting with the YouTrack API.
-    """
-
     def __init__(self, session):
         self.session = session
         self.base_url = self.session.conf.get_option('YOUTRACK', 'base_url')
         self.api_key = self.session.conf.get_option('YOUTRACK', 'api_key')
 
-        # Get configurable field mappings and defaults
-        self.default_state_filter = self.session.conf.get_option('YOUTRACK', 'default_state_filter',
-                                                                 fallback='state:Open')
-        self.state_field_name = self.session.conf.get_option('YOUTRACK', 'state_field_name', fallback='State')
-        self.priority_field_name = self.session.conf.get_option('YOUTRACK', 'priority_field_name', fallback='Priority')
-        self.type_field_name = self.session.conf.get_option('YOUTRACK', 'type_field_name', fallback='Type')
-        self.assignee_field_name = self.session.conf.get_option('YOUTRACK', 'assignee_field_name', fallback='Assignee')
+        # Merge the default configuration with user-defined settings from config.ini
+        self.config = DEFAULT_CONFIG.copy()
+        self.config['state_field_name'] = self.session.conf.get_option('YOUTRACK', 'state_field_name', fallback=self.config['state_field_name'])
+        self.config['priority_field_name'] = self.session.conf.get_option('YOUTRACK', 'priority_field_name', fallback=self.config['priority_field_name'])
+        self.config['type_field_name'] = self.session.conf.get_option('YOUTRACK', 'type_field_name', fallback=self.config['type_field_name'])
+        self.config['assignee_field_name'] = self.session.conf.get_option('YOUTRACK', 'assignee_field_name', fallback=self.config['assignee_field_name'])
+        self.config['default_state_filter'] = self.session.conf.get_option('YOUTRACK', 'default_state_filter', fallback=self.config['default_state_filter'])
 
         self.headers = {
             'Authorization': f'Bearer {self.api_key}',
             'Content-Type': 'application/json',
             'Accept': 'application/json',
         }
+
+    def _construct_url(self, endpoint, **kwargs):
+        """Constructs the full URL for the API request."""
+        return f'{self.base_url}/api/{endpoint.format(**kwargs)}'
+
+    def _make_request(self, method, url, params=None, data=None):
+        """Makes an HTTP request to the YouTrack API."""
+        try:
+            response = requests.request(method, url, headers=self.headers, params=params, json=data)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            error_message = f'Failed to {method} {url}: {e}. Params: {params}, Data: {data}'
+            self.session.add_context('assistant', {
+                'name': 'youtrack_tool_error',
+                'content': error_message
+            })
+            return None
 
     def run(self, args: dict, content: str = ""):
         mode = args.get('mode', '').lower()
@@ -57,85 +94,55 @@ class AssistantYoutrackToolAction(InteractionAction):
 
     def _get_projects(self, args, content):
         """Retrieves all projects from YouTrack."""
-        url = f'{self.base_url}/api/admin/projects'
+        url = self._construct_url(ENDPOINTS['get_projects'])
         params = {'fields': 'id,name,shortName'}
+        response = self._make_request('GET', url, params=params)
+        if response is None:
+            return  # Error already handled in _make_request
 
-        try:
-            response = requests.get(url, headers=self.headers, params=params)
-            response.raise_for_status()
-            projects = response.json()
-
-            # Format the projects for display with both name and shortName
-            formatted_projects = []
-            for project in projects:
-                formatted_projects.append(
-                    f"- {project['name']} (ID: {project['id']}, ShortName: {project['shortName']})"
-                )
-
-            self.session.add_context('assistant', {
-                'name': 'youtrack_projects',
-                'content': '\n'.join(formatted_projects)
-            })
-
-        except requests.exceptions.RequestException as e:
-            self.session.add_context('assistant', {
-                'name': 'youtrack_tool_error',
-                'content': f'Failed to get projects: {e}'
-            })
+        formatted_projects = [
+            f"- {project['name']} (ID: {project['shortName']})"
+            for project in response
+        ]
+        self.session.add_context('assistant', {
+            'name': 'youtrack_projects',
+            'content': '\n'.join(formatted_projects)
+        })
 
     def _get_issues(self, args, content):
-        """Retrieves issues for a specific project."""
-        project_id = args.get('project_id')
-        if not project_id:
+        """Retrieves issues for a specific project using its short name."""
+        project_short_name = args.get('project_id')
+        if not project_short_name:
             self.session.add_context('assistant', {
                 'name': 'youtrack_tool_error',
-                'content': 'Project ID (shortName) is required to get issues.'
+                'content': 'Project short name is required to get issues.'
             })
             return
 
-        # For queries, we need to use shortName. Handle spaces by wrapping in curly braces
-        project_query = f'{{{project_id}}}' if ' ' in project_id else project_id
+        query_filter = args.get('query', self.config['default_state_filter'])
+        full_query = self.config['default_get_issues_query'].format(project_short_name=project_short_name, query_filter=query_filter)
 
-        query_filter = args.get('query', self.default_state_filter)
-        # Build the full query
-        if query_filter:
-            full_query = f'project:{project_query} {query_filter}'
-        else:
-            full_query = f'project:{project_query}'
-
-        url = f'{self.base_url}/api/issues'
+        url = self._construct_url(ENDPOINTS['get_issues'])
         params = {
             'query': full_query,
             'fields': 'idReadable,summary,state'
         }
+        response = self._make_request('GET', url, params=params)
+        if response is None:
+            return  # Error already handled in _make_request
 
-        try:
-            response = requests.get(url, headers=self.headers, params=params)
-            response.raise_for_status()
-            issues = response.json()
+        formatted_issues = []
+        if response:
+            for issue in response:
+                state = issue.get('state', {}).get('name', 'Unknown') if isinstance(issue.get('state'), dict) else str(issue.get('state', 'Unknown'))
+                formatted_issues.append(f"- {issue['summary']} (ID: {issue['idReadable']}, State: {state})")
+        else:
+            formatted_issues.append(f"No issues found for project '{project_short_name}'.")
 
-            # Format the issues for display
-            formatted_issues = []
-            if issues:
-                for issue in issues:
-                    state = issue.get('state', {}).get('name', 'Unknown') if isinstance(issue.get('state'),
-                                                                                        dict) else str(
-                        issue.get('state', 'Unknown'))
-                    formatted_issues.append(f"- {issue['summary']} (ID: {issue['idReadable']}, State: {state})")
-            else:
-                formatted_issues.append(
-                    f"No issues found for project '{project_id}'. Note: Use project shortName, not ID.")
-
-            self.session.add_context('assistant', {
-                'name': f'issues_in_{project_id}',
-                'content': '\n'.join(formatted_issues)
-            })
-
-        except requests.exceptions.RequestException as e:
-            self.session.add_context('assistant', {
-                'name': 'youtrack_tool_error',
-                'content': f'Failed to get issues for project "{project_id}": {e}. Make sure to use project shortName, not numerical ID.'
-            })
+        self.session.add_context('assistant', {
+            'name': f'issues_in_{project_short_name}',
+            'content': '\n'.join(formatted_issues)
+        })
 
     def _get_issue_details(self, args, content):
         """Retrieves detailed information for a single issue."""
@@ -147,112 +154,87 @@ class AssistantYoutrackToolAction(InteractionAction):
             })
             return
 
-        url = f'{self.base_url}/api/issues/{issue_id}'
+        url = self._construct_url(ENDPOINTS['get_issue_details'], issue_id=issue_id)
         params = {
             'fields': 'idReadable,summary,description,reporter,created,updated,state,customFields'
         }
+        response = self._make_request('GET', url, params=params)
+        if response is None:
+            return  # Error already handled in _make_request
 
-        try:
-            response = requests.get(url, headers=self.headers, params=params)
-            response.raise_for_status()
-            issue = response.json()
+        details = [
+            f"ID: {response.get('idReadable')}",
+            f"Summary: {response.get('summary')}",
+            f"Description: {response.get('description', 'No description')}"
+        ]
 
-            # Format the issue details for display
-            details = [
-                f"ID: {issue.get('idReadable')}",
-                f"Summary: {issue.get('summary')}",
-                f"Description: {issue.get('description', 'No description')}"
-            ]
+        reporter = response.get('reporter')
+        if reporter:
+            reporter_name = reporter.get('login') or reporter.get('name', 'Unknown')
+            details.append(f"Reporter: {reporter_name}")
 
-            # Handle reporter safely
-            reporter = issue.get('reporter')
-            if reporter:
-                reporter_name = reporter.get('login') or reporter.get('name', 'Unknown')
-                details.append(f"Reporter: {reporter_name}")
+        if response.get('created'):
+            details.append(f"Created: {response.get('created')}")
+        if response.get('updated'):
+            details.append(f"Updated: {response.get('updated')}")
 
-            # Handle dates
-            if issue.get('created'):
-                details.append(f"Created: {issue.get('created')}")
-            if issue.get('updated'):
-                details.append(f"Updated: {issue.get('updated')}")
+        state = response.get('state')
+        if state:
+            state_name = state.get('name') if isinstance(state, dict) else str(state)
+            details.append(f"State: {state_name}")
 
-            # Handle state
-            state = issue.get('state')
-            if state:
-                state_name = state.get('name') if isinstance(state, dict) else str(state)
-                details.append(f"State: {state_name}")
+        custom_fields = response.get('customFields', [])
+        if custom_fields:
+            details.append("Custom Fields:")
+            for field in custom_fields:
+                field_name = field.get('name')
+                field_value = field.get('value')
 
-            # Add custom fields safely
-            custom_fields = issue.get('customFields', [])
-            if custom_fields:
-                details.append("Custom Fields:")
-                for field in custom_fields:
-                    field_name = field.get('name')
-                    field_value = field.get('value')
+                if field_value:
+                    if isinstance(field_value, dict):
+                        value_str = field_value.get('name') or field_value.get('value', str(field_value))
+                    elif isinstance(field_value, list):
+                        value_str = ', '.join([str(v.get('name', v)) if isinstance(v, dict) else str(v) for v in field_value])
+                    else:
+                        value_str = str(field_value)
 
-                    # Handle different value types
-                    if field_value:
-                        if isinstance(field_value, dict):
-                            value_str = field_value.get('name') or field_value.get('value', str(field_value))
-                        elif isinstance(field_value, list):
-                            value_str = ', '.join(
-                                [str(v.get('name', v)) if isinstance(v, dict) else str(v) for v in field_value])
-                        else:
-                            value_str = str(field_value)
+                    details.append(f"  {field_name}: {value_str}")
 
-                        details.append(f"  {field_name}: {value_str}")
-
-            self.session.add_context('assistant', {
-                'name': f'issue_details_{issue_id}',
-                'content': '\n'.join(details)
-            })
-
-        except requests.exceptions.RequestException as e:
-            self.session.add_context('assistant', {
-                'name': 'youtrack_tool_error',
-                'content': f'Failed to get issue details: {e}'
-            })
+        self.session.add_context('assistant', {
+            'name': f'issue_details_{issue_id}',
+            'content': '\n'.join(details)
+        })
 
     def _create_issue(self, args, content):
         """Creates a new issue in a project."""
-        project_id = args.get('project_id')  # This should be the project shortName
+        project_short_name = args.get('project_id')
         summary = args.get('summary')
 
-        if not project_id or not summary:
+        if not project_short_name or not summary:
             self.session.add_context('assistant', {
                 'name': 'youtrack_tool_error',
-                'content': 'Project ID (shortName) and summary are required to create an issue.'
+                'content': 'Project short name and summary are required to create an issue.'
             })
             return
 
-        url = f'{self.base_url}/api/issues'
+        url = self._construct_url(ENDPOINTS['create_issue'])
         data = {
-            'project': {'shortName': project_id},
+            'project': {'shortName': project_short_name},
             'summary': summary
         }
 
-        # Add description if provided
         if content:
             data['description'] = content
 
-        try:
-            response = requests.post(url, headers=self.headers, json=data)
-            response.raise_for_status()
-            issue = response.json()
+        response = self._make_request('POST', url, data=data)
+        if response is None:
+            return  # Error already handled in _make_request
 
-            # YouTrack create response may not include idReadable, so handle gracefully
-            issue_id = issue.get('idReadable') or issue.get('id', 'Unknown ID')
-
-            self.session.add_context('assistant', {
-                'name': 'youtrack_issue_created',
-                'content': f"Successfully created issue: {issue_id}"
-            })
-
-        except requests.exceptions.RequestException as e:
-            self.session.add_context('assistant', {
-                'name': 'youtrack_tool_error',
-                'content': f'Failed to create issue: {e}'
-            })
+        issue_id = response.get('idReadable') or response.get('id', 'Unknown ID')
+        self.session.add_context('assistant', {
+            'name': 'youtrack_issue_created',
+            'content': f"Successfully created issue: {issue_id}"
+        })
 
     def _update_issue(self, args, content):
         """Updates an existing issue."""
@@ -267,7 +249,6 @@ class AssistantYoutrackToolAction(InteractionAction):
             })
             return
 
-        # Build update data
         data = {}
         if summary:
             data['summary'] = summary
@@ -281,23 +262,15 @@ class AssistantYoutrackToolAction(InteractionAction):
             })
             return
 
-        url = f'{self.base_url}/api/issues/{issue_id}'
+        url = self._construct_url(ENDPOINTS['update_issue'], issue_id=issue_id)
+        response = self._make_request('POST', url, data=data)
+        if response is None:
+            return  # Error already handled in _make_request
 
-        try:
-            # Use POST for YouTrack (it uses POST for updates, not PATCH)
-            response = requests.post(url, headers=self.headers, json=data)
-            response.raise_for_status()
-
-            self.session.add_context('assistant', {
-                'name': 'youtrack_issue_updated',
-                'content': f"Successfully updated issue: {issue_id}"
-            })
-
-        except requests.exceptions.RequestException as e:
-            self.session.add_context('assistant', {
-                'name': 'youtrack_tool_error',
-                'content': f'Failed to update issue: {e}'
-            })
+        self.session.add_context('assistant', {
+            'name': 'youtrack_issue_updated',
+            'content': f"Successfully updated issue: {issue_id}"
+        })
 
     def _assign_issue(self, args, content):
         """Assigns an issue to a user."""
@@ -311,30 +284,24 @@ class AssistantYoutrackToolAction(InteractionAction):
             })
             return
 
-        url = f'{self.base_url}/api/issues/{issue_id}'
+        url = self._construct_url(ENDPOINTS['assign_issue'], issue_id=issue_id)
         data = {
             'customFields': [
                 {
-                    'name': self.assignee_field_name,
+                    'name': self.config['assignee_field_name'],
                     'value': {'login': assignee}
                 }
             ]
         }
 
-        try:
-            response = requests.post(url, headers=self.headers, json=data)
-            response.raise_for_status()
+        response = self._make_request('POST', url, data=data)
+        if response is None:
+            return  # Error already handled in _make_request
 
-            self.session.add_context('assistant', {
-                'name': 'youtrack_issue_assigned',
-                'content': f"Successfully assigned issue {issue_id} to {assignee}"
-            })
-
-        except requests.exceptions.RequestException as e:
-            self.session.add_context('assistant', {
-                'name': 'youtrack_tool_error',
-                'content': f'Failed to assign issue: {e}'
-            })
+        self.session.add_context('assistant', {
+            'name': 'youtrack_issue_assigned',
+            'content': f"Successfully assigned issue {issue_id} to {assignee}"
+        })
 
     def _update_state(self, args, content):
         """Updates the state/status of an issue."""
@@ -348,26 +315,19 @@ class AssistantYoutrackToolAction(InteractionAction):
             })
             return
 
-        # For state fields, use direct state property instead of customFields
-        url = f'{self.base_url}/api/issues/{issue_id}'
+        url = self._construct_url(ENDPOINTS['update_state'], issue_id=issue_id)
         data = {
             'state': {'name': state}
         }
 
-        try:
-            response = requests.post(url, headers=self.headers, json=data)
-            response.raise_for_status()
+        response = self._make_request('POST', url, data=data)
+        if response is None:
+            return  # Error already handled in _make_request
 
-            self.session.add_context('assistant', {
-                'name': 'youtrack_state_updated',
-                'content': f"Successfully updated issue {issue_id} state to {state}"
-            })
-
-        except requests.exceptions.RequestException as e:
-            self.session.add_context('assistant', {
-                'name': 'youtrack_tool_error',
-                'content': f'Failed to update state: {e}. Check that "{state}" is a valid state and workflow allows this transition.'
-            })
+        self.session.add_context('assistant', {
+            'name': 'youtrack_state_updated',
+            'content': f"Successfully updated issue {issue_id} state to {state}"
+        })
 
     def _update_priority(self, args, content):
         """Updates the priority of an issue."""
@@ -381,30 +341,24 @@ class AssistantYoutrackToolAction(InteractionAction):
             })
             return
 
-        url = f'{self.base_url}/api/issues/{issue_id}'
+        url = self._construct_url(ENDPOINTS['update_priority'], issue_id=issue_id)
         data = {
             'customFields': [
                 {
-                    'name': self.priority_field_name,
+                    'name': self.config['priority_field_name'],
                     'value': {'name': priority}
                 }
             ]
         }
 
-        try:
-            response = requests.post(url, headers=self.headers, json=data)
-            response.raise_for_status()
+        response = self._make_request('POST', url, data=data)
+        if response is None:
+            return  # Error already handled in _make_request
 
-            self.session.add_context('assistant', {
-                'name': 'youtrack_priority_updated',
-                'content': f"Successfully updated issue {issue_id} priority to {priority}"
-            })
-
-        except requests.exceptions.RequestException as e:
-            self.session.add_context('assistant', {
-                'name': 'youtrack_tool_error',
-                'content': f'Failed to update priority: {e}'
-            })
+        self.session.add_context('assistant', {
+            'name': 'youtrack_priority_updated',
+            'content': f"Successfully updated issue {issue_id} priority to {priority}"
+        })
 
     def _update_type(self, args, content):
         """Updates the type of an issue."""
@@ -418,30 +372,24 @@ class AssistantYoutrackToolAction(InteractionAction):
             })
             return
 
-        url = f'{self.base_url}/api/issues/{issue_id}'
+        url = self._construct_url(ENDPOINTS['update_type'], issue_id=issue_id)
         data = {
             'customFields': [
                 {
-                    'name': self.type_field_name,
+                    'name': self.config['type_field_name'],
                     'value': {'name': issue_type}
                 }
             ]
         }
 
-        try:
-            response = requests.post(url, headers=self.headers, json=data)
-            response.raise_for_status()
+        response = self._make_request('POST', url, data=data)
+        if response is None:
+            return  # Error already handled in _make_request
 
-            self.session.add_context('assistant', {
-                'name': 'youtrack_type_updated',
-                'content': f"Successfully updated issue {issue_id} type to {issue_type}"
-            })
-
-        except requests.exceptions.RequestException as e:
-            self.session.add_context('assistant', {
-                'name': 'youtrack_tool_error',
-                'content': f'Failed to update type: {e}'
-            })
+        self.session.add_context('assistant', {
+            'name': 'youtrack_type_updated',
+            'content': f"Successfully updated issue {issue_id} type to {issue_type}"
+        })
 
     def _add_comment(self, args, content):
         """Adds a comment to an issue."""
@@ -461,22 +409,16 @@ class AssistantYoutrackToolAction(InteractionAction):
             })
             return
 
-        url = f'{self.base_url}/api/issues/{issue_id}/comments'
+        url = self._construct_url(ENDPOINTS['add_comment'], issue_id=issue_id)
         data = {
             'text': content
         }
 
-        try:
-            response = requests.post(url, headers=self.headers, json=data)
-            response.raise_for_status()
+        response = self._make_request('POST', url, data=data)
+        if response is None:
+            return  # Error already handled in _make_request
 
-            self.session.add_context('assistant', {
-                'name': 'youtrack_comment_added',
-                'content': f"Successfully added comment to issue {issue_id}"
-            })
-
-        except requests.exceptions.RequestException as e:
-            self.session.add_context('assistant', {
-                'name': 'youtrack_tool_error',
-                'content': f'Failed to add comment: {e}'
-            })
+        self.session.add_context('assistant', {
+            'name': 'youtrack_comment_added',
+            'content': f"Successfully added comment to issue {issue_id}"
+        })

@@ -60,7 +60,7 @@ class AssistantCommandsAction(InteractionAction):
                 "function": {"type": "action", "name": search_tool}
             },
             "YOUTRACK": {
-                "args": ["mode", "project_id", "issue_id", "summary", "query", "assignee", "state", "priority", "type"],
+                "args": ["mode", "project_id", "issue_id", "summary", "query", "assignee", "state", "priority", "type", "block"],
                 'auto_submit': True,
                 "function": {"type": "action", "name": "assistant_youtrack_tool"}
             }
