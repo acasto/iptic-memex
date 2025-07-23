@@ -58,6 +58,11 @@ class AssistantCommandsAction(InteractionAction):
                 "args": ["query", "recency"],
                 'auto_submit': True,
                 "function": {"type": "action", "name": search_tool}
+            },
+            "YOUTRACK": {
+                "args": ["mode", "project_id", "issue_id", "summary", "query", "assignee", "state", "priority", "type"],
+                'auto_submit': True,
+                "function": {"type": "action", "name": "assistant_youtrack_tool"}
             }
         }
         # Check for and load user commands
@@ -143,7 +148,7 @@ class AssistantCommandsAction(InteractionAction):
         if not text:
             return {}
 
-        # Pattern to match block identifier line
+        # Pattern to match the block identifier line
         block_id_pattern = r'#\[block:(\w+)\]\s*\n'
 
         # Pattern to match code blocks with optional language
@@ -153,7 +158,7 @@ class AssistantCommandsAction(InteractionAction):
         last_pos = 0
 
         while True:
-            # Find next block identifier
+            # Find the next block identifier
             id_match = re.search(block_id_pattern, text[last_pos:], re.MULTILINE)
             if not id_match:
                 break
@@ -205,20 +210,20 @@ class AssistantCommandsAction(InteractionAction):
             command_info = self.commands.get(command_name, {})
             known_args = command_info.get("args", [])
 
-            # Extract args and content, with clean line handling
+            # Extract args and content with clean line handling
             args, command_content = self.extract_args_and_content(lines, known_args)
 
             command_stack.append({
                 'command': command_name,
                 'args': args,
-                'content': command_content.strip()  # Remove any trailing whitespace from final content
+                'content': command_content.strip()  # Remove any trailing whitespace from the final content
             })
 
         return command_stack
 
     @staticmethod
     def extract_args_and_content(lines, known_args):
-        # Remove trailing %%END%% line if present
+        # Remove the trailing %%END%% line if present
         if lines and lines[-1].strip() == '%%END%%':
             lines = lines[:-1]
 
@@ -243,7 +248,7 @@ class AssistantCommandsAction(InteractionAction):
                 # No argument pairs found
                 return False
 
-            # Reconstruct entire line from pairs to ensure this line is ONLY arguments
+            # Reconstruct the entire line from pairs to ensure this line is ONLY arguments
             reconstructed = []
             for k1, v1, k2, v2 in candidate_pairs:
                 key = k1 if k1 else k2
@@ -253,8 +258,8 @@ class AssistantCommandsAction(InteractionAction):
                     return False
                 # We'll just record it to ensure formatting matches arguments only
                 if ' ' in val:
-                    # If there's a space in val not enclosed in quotes, check if it's from quoted pattern.
-                    # Actually we've matched quotes in the regex, so no further check needed.
+                    # If there's a space in val not enclosed in quotes, check if it's from the quoted pattern.
+                    # Actually, we've matched quotes in the regex, so no further check is needed.
                     pass
                 if k1:
                     reconstructed.append(f'{key}="{val}"')
@@ -281,7 +286,7 @@ class AssistantCommandsAction(InteractionAction):
                     val = v1 if k1 else v2
                     args[key] = val
             else:
-                # This line is not a pure argument line, so treat it and all subsequent lines as content
+                # This line is not a pure argument line, so treat it and all later lines as content
                 content_start = i
                 break
 
