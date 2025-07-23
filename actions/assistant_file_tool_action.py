@@ -285,27 +285,40 @@ class AssistantFileToolAction(InteractionAction):
     @staticmethod
     def _build_edit_prompt(original_content, conversation_history, edit_request):
         """Build the prompt content for the edit LLM"""
-        prompt = """You are a code editor. Your task is to apply the requested changes to the provided file and output the complete modified file.
-        
-You will receive:
-1. The content of the original file.
-2. A few turns of conversation history between the user and the assistant if clarification is needed regarding context.
-3. The requested changes to be applied to the oringinal file.
 
-=== ORIGINAL FILE ===
-{original_content}
-=== END ORIGINAL FILE ===
+        # Define prompt sections
+        intro_section = """You are a code editor. Your task is to apply the requested changes to the provided file and output the complete modified file.
 
-=== CONVERSATION CONTEXT ===
-{conversation_history}
-=== END CONVERSATION CONTEXT ===
+    You will receive:
+    1. The content of the original file.
+    2. A few turns of conversation history between the user and the assistant if clarification is needed regarding context.
+    3. The requested changes to be applied to the oringinal file."""
 
-=== REQUESTED CHANGES ===
-{edit_request}
-=== END REQUESTED CHANGES ===
+        original_file_section = """=== ORIGINAL FILE ===
+    {original_content}
+    === END ORIGINAL FILE ==="""
 
-=== INSTRUCTIONS ===
-Output ONLY the complete modified file with the requested changes applied. Do not include any explanations, comments about the changes, or additional formatting or adjustments. Be sure to preserve original whitespace, newlines, and indentation. Just return the raw file content with edits applied."""
+        conversation_section = """=== CONVERSATION CONTEXT ===
+    {conversation_history}
+    === END CONVERSATION CONTEXT ==="""
+
+        changes_section = """=== REQUESTED CHANGES ===
+    {edit_request}
+    === END REQUESTED CHANGES ==="""
+
+        instructions_section = """=== INSTRUCTIONS ===
+    Output ONLY the complete modified file with the requested changes applied. Do not include any explanations, comments about the changes, or additional formatting or adjustments. Be sure to preserve original whitespace, newlines, and indentation. Just return the raw file content with edits applied."""
+
+        # Assemble the final prompt
+        prompt_parts = [
+            intro_section,
+            original_file_section,
+            # conversation_section,
+            changes_section,
+            instructions_section
+        ]
+
+        prompt = "\n\n".join(prompt_parts)
 
         return prompt.format(
             original_content=original_content,
