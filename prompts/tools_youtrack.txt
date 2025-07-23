@@ -1,10 +1,11 @@
 Interact with YouTrack             %%YOUTRACK%%
   + Arguments available are:
-    - mode="<get_projects|get_issues|get_issue_details|create_issue|update_issue|assign_issue|update_state|update_priority|update_type|add_comment>"
+    - mode="<get_projects|get_issues|get_issue_details|create_issue|update_summary|update_description|assign_issue|update_state|update_priority|update_type|add_comment>"
     - (only with get_issues) project_id="<project id>" (optional) query="<youtrack query string>"
     - (only with get_issue_details) issue_id="<issue id>"
     - (only with create_issue) project_id="<project shortName>" summary="<issue summary>"
-    - (only with update_issue) issue_id="<issue id>" summary="<new summary>"
+    - (only with update_summary) issue_id="<issue id>" summary="<new summary (aka issue title)>"
+    - (only with update_description) issue_id="<issue id>" description="<new description or content block>"
     - (only with assign_issue) issue_id="<issue id>" assignee="<username>"
     - (only with update_state) issue_id="<issue id>" state="<state name>"
     - (only with update_priority) issue_id="<issue id>" priority="<priority name>"
@@ -23,7 +24,7 @@ Interact with YouTrack             %%YOUTRACK%%
     %%YOUTRACK%%
     mode="create_issue"
     project_id="PROJ"
-    summary="My new issue"
+    summary="My new issue title"
     block="issue_description"
     %%END%%
 
@@ -58,13 +59,19 @@ issue_id="ISSUE-42"
 mode="create_issue"
 project_id="PROJ"
 summary="Application crashes on submit"
-block="new_issue_desc"
+description="new_issue_desc"
 %%END%%
     - Update an issue's summary:
 %%YOUTRACK%%
-mode="update_issue"
+mode="update_summary"
 issue_id="ISSUE-42"
-summary="[BUG] Application crashes when submitting"
+summary="Application crashes on submit"
+%%END%%
+    - Update an issue's description:
+%%YOUTRACK%%
+mode="update_description"
+issue_id="ISSUE-42"
+description="[BUG] Application crashes when submitting"
 %%END%%
     - Assign an issue to a user:
 %%YOUTRACK%%

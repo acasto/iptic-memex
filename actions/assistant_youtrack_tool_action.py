@@ -1,5 +1,7 @@
 import requests
 from session_handler import InteractionAction
+import pytz
+from datetime import datetime
 
 # Centralized configuration and endpoints
 DEFAULT_CONFIG = {
@@ -8,7 +10,8 @@ DEFAULT_CONFIG = {
     'type_field_name': 'Type',
     'assignee_field_name': 'Assignee',
     'default_state_filter': 'status:Open',
-    'default_get_issues_query': 'project:{project_short_name} {query_filter}'
+    'default_get_issues_query': 'project:{project_short_name} {query_filter}',
+    'timezone': 'UTC'  # Default timezone
 }
 
 ENDPOINTS = {
@@ -17,10 +20,6 @@ ENDPOINTS = {
     'get_issue_details': 'issues/{issue_id}',
     'create_issue': 'issues',
     'update_issue': 'issues/{issue_id}',
-    'assign_issue': 'issues/{issue_id}',
-    'update_state': 'issues/{issue_id}',
-    'update_priority': 'issues/{issue_id}',
-    'update_type': 'issues/{issue_id}',
     'add_comment': 'issues/{issue_id}/comments'
 }
 
@@ -38,6 +37,7 @@ class AssistantYoutrackToolAction(InteractionAction):
         self.config['type_field_name'] = self.session.conf.get_option('YOUTRACK', 'type_field_name', fallback=self.config['type_field_name'])
         self.config['assignee_field_name'] = self.session.conf.get_option('YOUTRACK', 'assignee_field_name', fallback=self.config['assignee_field_name'])
         self.config['default_state_filter'] = self.session.conf.get_option('YOUTRACK', 'default_state_filter', fallback=self.config['default_state_filter'])
+        self.config['timezone'] = self.session.conf.get_option('YOUTRACK', 'timezone', fallback=self.config['timezone'])
 
         self.headers = {
             'Authorization': f'Bearer {self.api_key}',
@@ -63,8 +63,31 @@ class AssistantYoutrackToolAction(InteractionAction):
             })
             return None
 
+    def _convert_to_local_time(self, timestamp):
+        """Converts a UTC timestamp to the local timezone."""
+        if isinstance(timestamp, int):
+            # Convert milliseconds to seconds
+            timestamp /= 1000.0
+            # Create a timezone-aware UTC datetime object
+            utc_time = datetime.fromtimestamp(timestamp, tz=pytz.UTC)
+        else:
+            # Parse the ISO format timestamp and ensure it is in UTC
+            utc_time = datetime.fromisoformat(timestamp.replace('Z', '+00:00')).replace(tzinfo=pytz.UTC)
+        
+        # Convert to the specified local timezone
+        local_timezone = pytz.timezone(self.config['timezone'])
+        local_time = utc_time.astimezone(local_timezone)
+        
+        return local_time.strftime('%Y-%m-%d %H:%M:%S %Z')
+
     def run(self, args: dict, content: str = ""):
         mode = args.get('mode', '').lower()
+
+        # Debugging: Log the mode and arguments
+        self.session.add_context('assistant', {
+            'name': 'youtrack_debug',
+            'content': f"Mode: {mode}, Arguments: {args}"
+        })
 
         if mode == 'get_projects':
             self._get_projects(args, content)
@@ -74,12 +97,22 @@ class AssistantYoutrackToolAction(InteractionAction):
             self._get_issue_details(args, content)
         elif mode == 'create_issue':
             self._create_issue(args, content)
-        elif mode == 'update_issue':
-            self._update_issue(args, content)
+        elif mode == 'update_summary':
+            self._update_summary(args, content)
+        elif mode == 'update_description':
+            self._update_description(args, content)
         elif mode == 'assign_issue':
             self._assign_issue(args, content)
         elif mode == 'update_state':
-            self._update_state(args, content)
+            issue_id = args.get('issue_id')
+            state = args.get('state')  # Use 'state' instead of 'new_status'
+            if issue_id and state:
+                self._update_issue_status(issue_id, state)
+            else:
+                self.session.add_context('assistant', {
+                    'name': 'youtrack_tool_error',
+                    'content': 'Issue ID and state are required for updating issue status.'
+                })
         elif mode == 'update_priority':
             self._update_priority(args, content)
         elif mode == 'update_type':
@@ -145,7 +178,7 @@ class AssistantYoutrackToolAction(InteractionAction):
         })
 
     def _get_issue_details(self, args, content):
-        """Retrieves detailed information for a single issue."""
+        """Retrieves detailed information for a single issue, including comments."""
         issue_id = args.get('issue_id')
         if not issue_id:
             self.session.add_context('assistant', {
@@ -156,7 +189,7 @@ class AssistantYoutrackToolAction(InteractionAction):
 
         url = self._construct_url(ENDPOINTS['get_issue_details'], issue_id=issue_id)
         params = {
-            'fields': 'idReadable,summary,description,reporter,created,updated,state,customFields'
+            'fields': 'idReadable,summary,description,reporter,created,updated,state,customFields(name,value(name)),comments(text,author,created)'
         }
         response = self._make_request('GET', url, params=params)
         if response is None:
@@ -174,31 +207,27 @@ class AssistantYoutrackToolAction(InteractionAction):
             details.append(f"Reporter: {reporter_name}")
 
         if response.get('created'):
-            details.append(f"Created: {response.get('created')}")
+            local_created_time = self._convert_to_local_time(response.get('created'))
+            details.append(f"Created: {local_created_time}")
         if response.get('updated'):
-            details.append(f"Updated: {response.get('updated')}")
-
-        state = response.get('state')
-        if state:
-            state_name = state.get('name') if isinstance(state, dict) else str(state)
-            details.append(f"State: {state_name}")
+            local_updated_time = self._convert_to_local_time(response.get('updated'))
+            details.append(f"Updated: {local_updated_time}")
 
         custom_fields = response.get('customFields', [])
-        if custom_fields:
-            details.append("Custom Fields:")
-            for field in custom_fields:
-                field_name = field.get('name')
-                field_value = field.get('value')
+        for field in custom_fields:
+            field_name = field.get('name')
+            field_value = field.get('value', {}).get('name', 'Unknown') if field.get('value') else 'Unknown'
+            if field_name in ['Type', 'Priority', 'Status']:
+                details.append(f"{field_name}: {field_value}")
 
-                if field_value:
-                    if isinstance(field_value, dict):
-                        value_str = field_value.get('name') or field_value.get('value', str(field_value))
-                    elif isinstance(field_value, list):
-                        value_str = ', '.join([str(v.get('name', v)) if isinstance(v, dict) else str(v) for v in field_value])
-                    else:
-                        value_str = str(field_value)
-
-                    details.append(f"  {field_name}: {value_str}")
+        comments = response.get('comments', [])
+        if comments:
+            details.append("Comments:")
+            for comment in comments:
+                author = comment.get('author', {}).get('login', 'Unknown')
+                created = self._convert_to_local_time(comment.get('created', 'Unknown'))
+                text = comment.get('text', 'No text')
+                details.append(f"- Author: {author}, Created: {created}, Text: {text}")
 
         self.session.add_context('assistant', {
             'name': f'issue_details_{issue_id}',
@@ -236,40 +265,68 @@ class AssistantYoutrackToolAction(InteractionAction):
             'content': f"Successfully created issue: {issue_id}"
         })
 
-    def _update_issue(self, args, content):
-        """Updates an existing issue."""
+    def _update_summary(self, args, content):
+        """Updates the summary (title) of an issue."""
         issue_id = args.get('issue_id')
-        summary = args.get('summary')
-        description = content if content else args.get('description')
-
         if not issue_id:
             self.session.add_context('assistant', {
                 'name': 'youtrack_tool_error',
-                'content': 'Issue ID is required to update an issue.'
+                'content': 'Issue ID is required to update the summary.'
             })
             return
 
-        data = {}
-        if summary:
-            data['summary'] = summary
-        if description:
-            data['description'] = description
-
-        if not data:
+        summary = content if content else args.get('summary')
+        if not summary:
             self.session.add_context('assistant', {
                 'name': 'youtrack_tool_error',
-                'content': 'Nothing to update. Please provide a summary and/or description.'
+                'content': 'Summary content is required to update the summary.'
             })
             return
 
         url = self._construct_url(ENDPOINTS['update_issue'], issue_id=issue_id)
+        data = {
+            'summary': summary
+        }
+
         response = self._make_request('POST', url, data=data)
         if response is None:
             return  # Error already handled in _make_request
 
         self.session.add_context('assistant', {
-            'name': 'youtrack_issue_updated',
-            'content': f"Successfully updated issue: {issue_id}"
+            'name': 'youtrack_summary_updated',
+            'content': f"Successfully updated summary for issue: {issue_id}"
+        })
+
+    def _update_description(self, args, content):
+        """Updates the description of an issue."""
+        issue_id = args.get('issue_id')
+        if not issue_id:
+            self.session.add_context('assistant', {
+                'name': 'youtrack_tool_error',
+                'content': 'Issue ID is required to update the description.'
+            })
+            return
+
+        description = content if content else args.get('description')
+        if not description:
+            self.session.add_context('assistant', {
+                'name': 'youtrack_tool_error',
+                'content': 'Description content is required to update the description.'
+            })
+            return
+
+        url = self._construct_url(ENDPOINTS['update_issue'], issue_id=issue_id)
+        data = {
+            'description': description
+        }
+
+        response = self._make_request('POST', url, data=data)
+        if response is None:
+            return  # Error already handled in _make_request
+
+        self.session.add_context('assistant', {
+            'name': 'youtrack_description_updated',
+            'content': f"Successfully updated description for issue: {issue_id}"
         })
 
     def _assign_issue(self, args, content):
@@ -284,7 +341,7 @@ class AssistantYoutrackToolAction(InteractionAction):
             })
             return
 
-        url = self._construct_url(ENDPOINTS['assign_issue'], issue_id=issue_id)
+        url = self._construct_url(ENDPOINTS['update_issue'], issue_id=issue_id)
         data = {
             'customFields': [
                 {
@@ -315,7 +372,7 @@ class AssistantYoutrackToolAction(InteractionAction):
             })
             return
 
-        url = self._construct_url(ENDPOINTS['update_state'], issue_id=issue_id)
+        url = self._construct_url(ENDPOINTS['update_issue'], issue_id=issue_id)
         data = {
             'state': {'name': state}
         }
@@ -341,12 +398,16 @@ class AssistantYoutrackToolAction(InteractionAction):
             })
             return
 
-        url = self._construct_url(ENDPOINTS['update_priority'], issue_id=issue_id)
+        url = self._construct_url(ENDPOINTS['update_issue'], issue_id=issue_id)
         data = {
             'customFields': [
                 {
                     'name': self.config['priority_field_name'],
-                    'value': {'name': priority}
+                    '$type': 'SingleEnumIssueCustomField',
+                    'value': {
+                        '$type': 'EnumBundleElement',
+                        'name': priority
+                    }
                 }
             ]
         }
@@ -372,12 +433,16 @@ class AssistantYoutrackToolAction(InteractionAction):
             })
             return
 
-        url = self._construct_url(ENDPOINTS['update_type'], issue_id=issue_id)
+        url = self._construct_url(ENDPOINTS['update_issue'], issue_id=issue_id)
         data = {
             'customFields': [
                 {
                     'name': self.config['type_field_name'],
-                    'value': {'name': issue_type}
+                    '$type': 'SingleEnumIssueCustomField',
+                    'value': {
+                        '$type': 'EnumBundleElement',
+                        'name': issue_type
+                    }
                 }
             ]
         }
@@ -421,4 +486,36 @@ class AssistantYoutrackToolAction(InteractionAction):
         self.session.add_context('assistant', {
             'name': 'youtrack_comment_added',
             'content': f"Successfully added comment to issue {issue_id}"
+        })
+
+    def _update_issue_status(self, issue_id, state):
+        """Updates the status of an issue."""
+        if not issue_id or not state:
+            self.session.add_context('assistant', {
+                'name': 'youtrack_tool_error',
+                'content': 'Issue ID and state are required.'
+            })
+            return
+
+        url = self._construct_url(ENDPOINTS['update_issue'], issue_id=issue_id)
+        data = {
+            "customFields": [
+                {
+                    "name": "Status",
+                    "$type": "StateIssueCustomField",
+                    "value": {
+                        "$type": "StateBundleElement",
+                        "name": state
+                    }
+                }
+            ]
+        }
+
+        response = self._make_request('POST', url, data=data)
+        if response is None:
+            return  # Error already handled in _make_request
+
+        self.session.add_context('assistant', {
+            'name': 'youtrack_issue_status_updated',
+            'content': f"Successfully updated issue {issue_id} status to {state}"
         })
