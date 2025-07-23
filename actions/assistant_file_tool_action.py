@@ -5,13 +5,7 @@ import tempfile
 import difflib
 
 
-def _is_memex_available():
-    """Check if the 'memex' command is available in the system's PATH."""
-    try:
-        subprocess.run(['memex', '--version'], capture_output=True, check=True)
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
+
 
 
 class AssistantFileToolAction(InteractionAction):
@@ -110,14 +104,6 @@ class AssistantFileToolAction(InteractionAction):
     def _handle_summary(self, filename):
         resolved_path = self.fs_handler.resolve_path(filename)
         if resolved_path is None:
-            return
-
-        # Check if the memex command is available
-        if not _is_memex_available():
-            self.session.add_context('assistant', {
-                'name': 'file_tool_error',
-                'content': 'The \'memex\' command is not available. Please ensure it is installed and in your PATH.'
-            })
             return
 
         try:
