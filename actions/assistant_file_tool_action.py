@@ -5,9 +5,6 @@ import tempfile
 import difflib
 
 
-
-
-
 class AssistantFileToolAction(InteractionAction):
     """
     Action for handling file operations with different modes:
@@ -21,6 +18,7 @@ class AssistantFileToolAction(InteractionAction):
         self.session = session
         self.fs_handler = session.get_action('assistant_fs_handler')
         self.token_counter = session.get_action('count_tokens')
+        self.memex_runner = session.get_action('memex_runner')
 
     def run(self, args: dict, content: str = ""):
         mode = args.get('mode', '').lower()
@@ -116,8 +114,7 @@ class AssistantFileToolAction(InteractionAction):
                 })
                 return
 
-            result = subprocess.run(['memex', '-m', summary_model, '-p', summary_prompt, '-f', resolved_path],
-                                    capture_output=True, text=True)
+            result = self.memex_runner.run('-m', summary_model, '-p', summary_prompt, '-f', resolved_path)
             summary = result.stdout if result.returncode == 0 else f"Error: {result.stderr}"
 
             # Check summary against token limit
@@ -210,8 +207,7 @@ class AssistantFileToolAction(InteractionAction):
                 temp_file.write(prompt_content)
                 temp_path = temp_file.name
 
-            result = subprocess.run(['memex', '-m', edit_model, '-f', temp_path],
-                                    capture_output=True, text=True, check=True)
+            result = self.memex_runner.run('-m', edit_model, '-f', temp_path, check=True)
             return result.stdout.strip()
         except subprocess.CalledProcessError as e:
             self.session.add_context('assistant', {
@@ -260,7 +256,7 @@ class AssistantFileToolAction(InteractionAction):
             # if not self.session.utils.input.get_bool("Apply these changes? [y/N]", default=False):
             #     self.session.add_context('assistant', {
             #         'name': 'file_tool_result',
-            #         'content': 'Edit operation cancelled by user'
+            #         'content': 'Edit operation canceled by user'
             #     })
             #     return
 

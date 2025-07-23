@@ -71,6 +71,7 @@ class AssistantWebsearchToolAction(InteractionAction):
     def __init__(self, session):
         self.session = session
         self._search_prompt = self.session.get_tools().get('search_prompt', None)
+        self.memex_runner = session.get_action('memex_runner')
 
         # Validate search model during initialization
         initial_model = self.session.get_tools().get('search_model', "sonar")
@@ -82,7 +83,7 @@ class AssistantWebsearchToolAction(InteractionAction):
         if mode:
             search_model = self.validate_search_model(mode)
         else:
-            # Recheck search model at runtime in case it was changed
+            # Recheck the search model at runtime in case it was changed
             current_model = self.session.get_tools().get('search_model', self._search_model)
             search_model = self.validate_search_model(current_model)
         
@@ -117,21 +118,28 @@ class AssistantWebsearchToolAction(InteractionAction):
         final_query = f"{self._search_prompt}\n\n{query}" if self._search_prompt else query
 
         try:
-            model_args = f"-m {self._search_model}"
-            for k, v in params.items():
-                if isinstance(v, list):
-                    v = f"'{','.join(v)}'"
-                model_args += f" --{k} {v}"
+            # Build the argument list for memex
+            memex_args = ['-m', self._search_model]
+
+            for key, value in params.items():
+                memex_args.append(f'--{key}')
+                if isinstance(value, list):
+                    memex_args.append(','.join(value))
+                else:
+                    memex_args.append(str(value))
 
             # Check if citations should be included (default to True)
             include_citations = self.session.get_tools().get('sonar_citations', True)
 
-            # Add raw flag if we want to parse citations
+            # Add the raw flag if we want to parse citations
             if include_citations:
-                model_args += ' -r'
+                memex_args.append('-r')
 
-            result = subprocess.run(f'echo "{final_query}" | memex {model_args} -f -',
-                                    shell=True, capture_output=True, text=True)
+            # Add the file argument to read from stdin
+            memex_args.extend(['-f', '-'])
+
+            # Run the command using the memex_runner, passing the query as stdin
+            result = self.memex_runner.run(*memex_args, input=final_query, text=True, capture_output=True)
 
             if result.returncode != 0:
                 summary = f"Error: {result.stderr}"
@@ -167,7 +175,7 @@ class AssistantWebsearchToolAction(InteractionAction):
                 'name': 'Search Results',
                 'content': summary
             })
-        except subprocess.SubprocessError as e:
+        except (subprocess.SubprocessError, FileNotFoundError) as e:
             self.session.add_context('assistant', {
                 'name': 'search_error',
                 'content': f'Search failed: {str(e)}'
