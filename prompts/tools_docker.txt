@@ -163,3 +163,118 @@ project="website"
 action="clear"
 id="2"
 %%END%%
+Interact with YouTrack             %%YOUTRACK%%
+  + Arguments available are:
+    - mode="<get_projects|get_issues|get_issue_details|create_issue|update_summary|update_description|assign_issue|update_state|update_priority|update_type|add_comment>"
+    - (only with get_issues) project_id="<project id>" (optional) query="<youtrack query string>"
+    - (only with get_issue_details) issue_id="<issue id>"
+    - (only with create_issue) project_id="<project shortName>" summary="<issue summary>" block="<block label>"
+    - (only with update_summary) issue_id="<issue id>" summary="<new summary (aka issue title)>"
+    - (only with update_description) issue_id="<issue id>" block="<block label>"
+    - (only with assign_issue) issue_id="<issue id>" assignee="<username>"
+    - (only with update_state) issue_id="<issue id>" state="<state name>"
+    - (only with update_priority) issue_id="<issue id>" priority="<priority name>"
+    - (only with update_type) issue_id="<issue id>" type="<type name>"
+    - (only with add_comment) issue_id="<issue id>"
+  + To add a description to a new or updated issue, or add a comment, create a labeled code block:
+
+#[block:issue_description]
+```text
+This is the description of the issue.
+It can be multi-line.
+```
+
+Then reference the description in the `%%YOUTRACK%%` call:
+
+%%YOUTRACK%%
+mode="create_issue"
+project_id="PROJ"
+summary="My new issue title"
+block="issue_description"
+%%END%%
+
++ Examples:
+- Get all projects:
+%%YOUTRACK%%
+mode="get_projects"
+%%END%%
+    - Get open issues for a project (default):
+%%YOUTRACK%%
+mode="get_issues"
+project_id="PROJ"
+%%END%%
+    - Get issues for a project matching a query:
+%%YOUTRACK%%
+mode="get_issues"
+project_id="PROJ"
+query="status:Open and priority:High"
+%%END%%
+    - Get details for a specific issue:
+%%YOUTRACK%%
+mode="get_issue_details"
+issue_id="ISSUE-42"
+%%END%%
+- Create an issue with a description:
+#[block:new_issue_desc]
+```text
+This is a bug report.
+The application crashes when clicking the "Submit" button.
+```
+%%YOUTRACK%%
+mode="create_issue"
+project_id="PROJ"
+summary="Application crashes on submit"
+block="new_issue_desc"
+%%END%%
+    - Update an issue's summary:
+%%YOUTRACK%%
+mode="update_summary"
+issue_id="ISSUE-42"
+summary="Application crashes on submit"
+%%END%%
+    - Update an issue's description:
+#[block:issue_description]
+```text
+This is the updated description of the issue.
+It includes additional details about the bug.
+``
+%%YOUTRACK%%
+mode="update_description"
+issue_id="ISSUE-42"
+block="issue_description"
+%%END%%
+    - Assign an issue to a user:
+%%YOUTRACK%%
+mode="assign_issue"
+issue_id="ISSUE-42"
+assignee="john.doe"
+%%END%%
+    - Update issue state:
+%%YOUTRACK%%
+mode="update_state"
+issue_id="ISSUE-42"
+state="In Progress"
+%%END%%
+    - Update issue priority:
+%%YOUTRACK%%
+mode="update_priority"
+issue_id="ISSUE-42"
+priority="High"
+%%END%%
+    - Update issue type:
+%%YOUTRACK%%
+mode="update_type"
+issue_id="ISSUE-42"
+type="Bug"
+%%END%%
+    - Add a comment to an issue:
+    #[block:issue_comment]
+    ```text
+    This issue has been reproduced on the staging environment.
+    The root cause appears to be a null pointer exception.
+    ```
+%%YOUTRACK%%
+mode="add_comment"
+issue_id="ISSUE-42"
+block="issue_comment"
+%%END%%
