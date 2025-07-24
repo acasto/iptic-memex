@@ -153,12 +153,13 @@ class AssistantYoutrackToolAction(InteractionAction):
             return
 
         query_filter = args.get('query', self.config['default_state_filter'])
-        full_query = self.config['default_get_issues_query'].format(project_short_name=project_short_name, query_filter=query_filter)
+        full_query = self.config['default_get_issues_query'].format(project_short_name=project_short_name,
+                                                                    query_filter=query_filter)
 
         url = self._construct_url(ENDPOINTS['get_issues'])
         params = {
             'query': full_query,
-            'fields': 'idReadable,summary,state'
+            'fields': 'idReadable,summary,customFields(name,value(name))',
         }
         response = self._make_request('GET', url, params=params)
         if response is None:
@@ -167,8 +168,16 @@ class AssistantYoutrackToolAction(InteractionAction):
         formatted_issues = []
         if response:
             for issue in response:
-                state = issue.get('state', {}).get('name', 'Unknown') if isinstance(issue.get('state'), dict) else str(issue.get('state', 'Unknown'))
-                formatted_issues.append(f"- {issue['summary']} (ID: {issue['idReadable']}, State: {state})")
+                custom_fields = issue.get('customFields', [])
+                status = 'Unknown'
+                priority = 'Unknown'
+                for field in custom_fields:
+                    if field.get('name') == self.config['state_field_name']:
+                        status = field.get('value', {}).get('name', 'Unknown')
+                    elif field.get('name') == self.config['priority_field_name']:
+                        priority = field.get('value', {}).get('name', 'Unknown')
+                formatted_issues.append(
+                    f"- {issue['summary']} (ID: {issue['idReadable']}, Status: {status}, Priority: {priority})")
         else:
             formatted_issues.append(f"No issues found for project '{project_short_name}'.")
 
@@ -307,8 +316,8 @@ class AssistantYoutrackToolAction(InteractionAction):
             })
             return
 
-        description = content if content else args.get('description')
-        if not description:
+        # Ensure content is provided
+        if not content:
             self.session.add_context('assistant', {
                 'name': 'youtrack_tool_error',
                 'content': 'Description content is required to update the description.'
@@ -317,7 +326,7 @@ class AssistantYoutrackToolAction(InteractionAction):
 
         url = self._construct_url(ENDPOINTS['update_issue'], issue_id=issue_id)
         data = {
-            'description': description
+            'description': content
         }
 
         response = self._make_request('POST', url, data=data)

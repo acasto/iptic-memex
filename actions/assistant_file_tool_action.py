@@ -192,7 +192,6 @@ class AssistantFileToolAction(InteractionAction):
 
         conversation_history = self._get_formatted_conversation_history()
         prompt_content = self._build_edit_prompt(original_content, conversation_history, edit_request)
-        # write prompt_content to a file for debugging
 
         edited_content = self._run_edit_subprocess(edit_model, prompt_content)
 
