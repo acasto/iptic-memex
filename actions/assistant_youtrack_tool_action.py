@@ -84,10 +84,10 @@ class AssistantYoutrackToolAction(InteractionAction):
         mode = args.get('mode', '').lower()
 
         # Debugging: Log the mode and arguments
-        self.session.add_context('assistant', {
-            'name': 'youtrack_debug',
-            'content': f"Mode: {mode}, Arguments: {args}"
-        })
+        # self.session.add_context('assistant', {
+        #     'name': 'youtrack_debug',
+        #     'content': f"Mode: {mode}, Arguments: {args}"
+        # })
 
         if mode == 'get_projects':
             self._get_projects(args, content)
@@ -128,7 +128,7 @@ class AssistantYoutrackToolAction(InteractionAction):
     def _get_projects(self, args, content):
         """Retrieves all projects from YouTrack."""
         url = self._construct_url(ENDPOINTS['get_projects'])
-        params = {'fields': 'id,name,shortName'}
+        params = {'fields': 'id,name,shortName', 'archived': 'false'}
         response = self._make_request('GET', url, params=params)
         if response is None:
             return  # Error already handled in _make_request
