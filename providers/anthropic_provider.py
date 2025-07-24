@@ -16,11 +16,16 @@ class Usage:
     time_elapsed: float = 0.0
 
     def update(self, other: 'Usage'):
-        self.input_tokens += other.input_tokens
-        self.output_tokens += other.output_tokens
-        self.cache_writes += other.cache_writes
-        self.cache_hits += other.cache_hits
-        self.time_elapsed += other.time_elapsed
+        if other.input_tokens is not None:
+            self.input_tokens += other.input_tokens
+        if other.output_tokens is not None:
+            self.output_tokens += other.output_tokens
+        if other.cache_writes is not None:
+            self.cache_writes += other.cache_writes
+        if other.cache_hits is not None:
+            self.cache_hits += other.cache_hits
+        if other.time_elapsed is not None:
+            self.time_elapsed += other.time_elapsed
 
 
 class AnthropicProvider(APIProvider):
