@@ -239,7 +239,10 @@ class OpenAIProvider(APIProvider):
         if self.session.get_context('prompt'):
             # Use 'system' or 'developer' based on provider configuration
             role = 'system' if self.params.get('use_old_system_role', False) else 'developer'
-            message.append({'role': role, 'content': self.session.get_context('prompt').get()['content']})
+            prompt_content = self.session.get_context('prompt').get()['content']
+            if prompt_content.strip() == '':
+                prompt_content = ' '  # Replace empty content with a space
+            message.append({'role': role, 'content': prompt_content})
 
         chat = self.session.get_context('chat')
         if chat is not None:
@@ -267,6 +270,8 @@ class OpenAIProvider(APIProvider):
 
                     # Add the message text
                     turn_content += turn['message']
+                    if turn_content.strip() == '':
+                        turn_content = ' '  # Replace empty content with a space
                     message.append({'role': turn['role'], 'content': turn_content})
                 else:
                     # Modern format with content array
@@ -274,7 +279,10 @@ class OpenAIProvider(APIProvider):
                     turn_contexts = []
 
                     # Handle message text
-                    content.append({'type': 'text', 'text': turn['message']})
+                    if turn['message'].strip() == '':
+                        content.append({'type': 'text', 'text': ' '})  # Replace empty content with a space
+                    else:
+                        content.append({'type': 'text', 'text': turn['message']})
 
                     # Process contexts
                     if 'context' in turn and turn['context']:
