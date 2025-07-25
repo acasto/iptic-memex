@@ -2,7 +2,6 @@ from session_handler import InteractionAction
 import subprocess
 import os
 import tempfile
-import difflib
 
 
 class AssistantFileToolAction(InteractionAction):
@@ -228,37 +227,19 @@ class AssistantFileToolAction(InteractionAction):
                     pass
 
     def _process_and_confirm_edit(self, filename, original_content, edited_content):
-        """Generates a diff, asks for confirmation, and applies the edit."""
+        """Applies the edit by writing the new content to the file."""
         if not edited_content:
             return
 
-        diff_lines = list(difflib.unified_diff(
-            original_content.splitlines(keepends=True),
-            edited_content.splitlines(keepends=True),
-            fromfile=f'{filename} (original)',
-            tofile=f'{filename} (edited)'
-        ))
-
-        if not diff_lines:
+        # Check if there are actually changes
+        if original_content == edited_content:
             self.session.add_context('assistant', {
                 'name': 'file_tool_result',
                 'content': 'No changes detected in edited file'
             })
             return
 
-        diff_text = ''.join(diff_lines)
-        self.session.utils.output.write(f"Proposed changes for {filename}:\n{diff_text}")
-
-        edit_confirm = self.session.get_tools().get('edit_confirm', True)
-        if edit_confirm:
-            self.session.utils.output.stop_spinner()
-            # if not self.session.utils.input.get_bool("Apply these changes? [y/N]", default=False):
-            #     self.session.add_context('assistant', {
-            #         'name': 'file_tool_result',
-            #         'content': 'Edit operation canceled by user'
-            #     })
-            #     return
-
+        # Write the edited content - the fs_handler will handle diff display and confirmation
         self._handle_write(filename, edited_content)
 
     def _get_formatted_conversation_history(self):

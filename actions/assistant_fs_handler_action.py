@@ -97,18 +97,37 @@ class AssistantFsHandlerAction(InteractionAction):
             if parent_dir is None:
                 return False
 
+        # Show diff if requested and file exists
+        show_diff = self.session.get_tools().get('show_diff_with_confirm', False)
+        if show_diff and os.path.exists(resolved_path) and not binary and not append:
+            try:
+                original_content = self.read_file(file_path, binary=False, encoding=encoding)
+                if original_content is not None:
+                    diff_text = self._generate_diff(original_content, content, file_path)
+                    if diff_text:
+                        self.session.utils.output.write(f"Proposed changes for {file_path}:\n{diff_text}")
+                    else:
+                        self.session.utils.output.write("No changes detected between original and new content")
+            except Exception as e:
+                self.session.add_context('assistant', {
+                    'name': 'fs_error',
+                    'content': f'Error generating diff: {str(e)}'
+                })
+
         # Check if the file exists and get confirmation if needed
+        needs_confirm = show_diff or self.session.get_tools().get('write_confirm', True)
         if os.path.exists(resolved_path):
-            if not force and self.session.get_tools().get('write_confirm', True):
+            if not force and needs_confirm:
                 self.session.utils.output.stop_spinner()
                 mode = "append to" if append else "overwrite"
-                if not self.session.utils.input.get_bool(f"File {file_path} exists. Confirm {mode}? [y/N]: ", default=False):
+                if not self.session.utils.input.get_bool(f"File {file_path} exists. Confirm {mode}? [y/N]: ",
+                                                         default=False):
                     self.session.add_context('assistant', {
                         'name': 'fs_info',
                         'content': f'File operation cancelled by user'
                     })
                     return False
-        elif not force and self.session.get_tools().get('write_confirm', True):
+        elif not force and needs_confirm:
             self.session.utils.output.stop_spinner()
             if not self.session.utils.input.get_bool(f"Confirm write to new file {file_path}? [y/N]: ", default=False):
                 self.session.add_context('assistant', {
@@ -144,6 +163,20 @@ class AssistantFsHandlerAction(InteractionAction):
         return self.fs.write_file(resolved_path, content, binary=binary,
                                   encoding=encoding, create_dirs=create_dirs,
                                   append=append)
+
+    @staticmethod
+    def _generate_diff(original_content: str, new_content: str, file_path: str) -> str:
+        """Generate unified diff between original and new content"""
+        import difflib
+
+        diff_lines = list(difflib.unified_diff(
+            original_content.splitlines(keepends=True),
+            new_content.splitlines(keepends=True),
+            fromfile=f'{file_path} (original)',
+            tofile=f'{file_path} (new)'
+        ))
+
+        return ''.join(diff_lines) if diff_lines else None
 
     def resolve_path(self, path: str, must_exist=True):
         """Resolve and validate a path"""
