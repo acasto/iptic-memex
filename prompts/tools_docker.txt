@@ -163,19 +163,22 @@ project="website"
 action="clear"
 id="2"
 %%END%%
-Interact with YouTrack             %%YOUTRACK%%
+Interact with YouTrack projet management            %%YOUTRACK%%
   + Arguments available are:
     - mode="<get_projects|get_issues|get_issue_details|create_issue|update_summary|update_description|assign_issue|update_state|update_priority|update_type|add_comment>"
     - (only with get_issues) project_id="<project id>" (optional) query="<youtrack query string>"
     - (only with get_issue_details) issue_id="<issue id>"
-    - (only with create_issue) project_id="<project shortName>" summary="<issue summary>" block="<block label>"
+    - (only with create_issue) project_id="<project shortName>" summary="<issue summary>" block="<description block label> (optional) priority="<priority name> (optional) type="<type name>"
+      + The `block` argument is used to reference a labeled code block containing the issue description.
     - (only with update_summary) issue_id="<issue id>" summary="<new summary (aka issue title)>"
-    - (only with update_description) issue_id="<issue id>" block="<block label>"
+    - (only with update_description) issue_id="<issue id>" block="<description block label>"
+      + The `block` argument is used to reference a labeled code block containing the updated issue description.
     - (only with assign_issue) issue_id="<issue id>" assignee="<username>"
     - (only with update_state) issue_id="<issue id>" state="<state name>"
     - (only with update_priority) issue_id="<issue id>" priority="<priority name>"
     - (only with update_type) issue_id="<issue id>" type="<type name>"
-    - (only with add_comment) issue_id="<issue id>"
+    - (only with add_comment) issue_id="<issue id>" block="<comment block label>"
+  + When using a custom query, remember you probably want to add `status:{Open} or status:{In Progress}` to it to filter out closed issues unless otherwise specified.
   + To add a description to a new or updated issue, or add a comment, create a labeled code block:
 
 #[block:issue_description]
@@ -183,9 +186,7 @@ Interact with YouTrack             %%YOUTRACK%%
 This is the description of the issue.
 It can be multi-line.
 ```
-
-Then reference the description in the `%%YOUTRACK%%` call:
-
+Then reference the description in the `%%YOUTRACK%%` call via the 'block' argument:
 %%YOUTRACK%%
 mode="create_issue"
 project_id="PROJ"

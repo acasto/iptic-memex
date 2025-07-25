@@ -9,7 +9,7 @@ DEFAULT_CONFIG = {
     'priority_field_name': 'Priority',
     'type_field_name': 'Type',
     'assignee_field_name': 'Assignee',
-    'default_state_filter': 'status:Open',
+    'default_state_filter': 'status:{Open} or status:{In Progress}',
     'default_get_issues_query': 'project:{project_short_name} {query_filter}',
     'timezone': 'UTC'  # Default timezone
 }
@@ -152,9 +152,27 @@ class AssistantYoutrackToolAction(InteractionAction):
             })
             return
 
-        query_filter = args.get('query', self.config['default_state_filter'])
-        full_query = self.config['default_get_issues_query'].format(project_short_name=project_short_name,
-                                                                    query_filter=query_filter)
+        custom_query = args.get('query', '')
+
+        # Check if custom query contains state/status filters
+        # Look for common state-related keywords in YouTrack queries
+        state_keywords = ['state:', 'status:', 'State:', 'Status:']
+        has_state_filter = any(keyword in custom_query for keyword in state_keywords)
+
+        if custom_query and has_state_filter:
+            # Custom query has state filter, use it as-is
+            query_filter = custom_query
+        elif custom_query:
+            # Custom query exists but no state filter, combine with default
+            query_filter = f"{self.config['default_state_filter']} {custom_query}"
+        else:
+            # No custom query, use default
+            query_filter = self.config['default_state_filter']
+
+        full_query = self.config['default_get_issues_query'].format(
+            project_short_name=project_short_name,
+            query_filter=query_filter
+        )
 
         url = self._construct_url(ENDPOINTS['get_issues'])
         params = {
@@ -264,14 +282,63 @@ class AssistantYoutrackToolAction(InteractionAction):
         if content:
             data['description'] = content
 
+        # Add optional priority and type fields
+        priority = args.get('priority')
+        issue_type = args.get('type')
+
+        custom_fields = []
+        if priority:
+            custom_fields.append({
+                'name': self.config['priority_field_name'],
+                '$type': 'SingleEnumIssueCustomField',
+                'value': {
+                    '$type': 'EnumBundleElement',
+                    'name': priority
+                }
+            })
+        if issue_type:
+            custom_fields.append({
+                'name': self.config['type_field_name'],
+                '$type': 'SingleEnumIssueCustomField',
+                'value': {
+                    '$type': 'EnumBundleElement',
+                    'name': issue_type
+                }
+            })
+
+        if custom_fields:
+            data['customFields'] = custom_fields
+
+        # Create the issue
         response = self._make_request('POST', url, data=data)
         if response is None:
             return  # Error already handled in _make_request
 
-        issue_id = response.get('idReadable') or response.get('id', 'Unknown ID')
+        # Get the initial entity ID
+        entity_id = response.get('id', 'Unknown Entity ID')
+
+        if entity_id == 'Unknown Entity ID':
+            self.session.add_context('assistant', {
+                'name': 'youtrack_tool_error',
+                'content': 'Failed to get the entity ID after creating the issue.'
+            })
+            return
+
+        # Introduce a small delay to allow YouTrack to process the creation
+        # import time
+        # time.sleep(2)  # Wait for 2 seconds
+
+        # Fetch the final issue details to confirm the final ID
+        url = self._construct_url(ENDPOINTS['get_issue_details'], issue_id=entity_id)
+        response = self._make_request('GET', url, params={'fields': 'idReadable'})
+
+        # Get the final, human-readable ID
+        final_issue_id = response.get('idReadable', 'Unknown Readable ID')
+
+        # Return the final ID in the success message
         self.session.add_context('assistant', {
             'name': 'youtrack_issue_created',
-            'content': f"Successfully created issue: {issue_id}"
+            'content': f"Successfully created issue: {final_issue_id}"
         })
 
     def _update_summary(self, args, content):

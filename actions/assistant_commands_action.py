@@ -21,10 +21,13 @@ class AssistantCommandsAction(InteractionAction):
     ```
 
     Parsing Logic:
-    1. Find all code blocks and their identifiers
-    2. Find all command blocks
-    3. If a command references a block, substitute the block content
-    4. Process command normally
+    1. Extract all labeled code blocks from the response and map identifiers to content
+    2. Parse all command blocks and their arguments/content
+    3. For commands with a 'block' argument:
+        * Look up the referenced block content by identifier
+        * Remove the 'block' argument from the args dict
+        * Append the block content to the command's content parameter
+    4. Execute the command with the resolved content
     """
     def __init__(self, session):
         self.session = session
