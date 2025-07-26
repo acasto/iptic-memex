@@ -1,0 +1,23 @@
+Search the web                      %%WEBSEARCH%%
+  + Can be used to lookup facts, do research, compare products and prices, stock analysis, etc.
+  + This is a powerful tool, put thought into your query.
+  + The query will be handled by another AI, so you can ask it what you want in depth, it doesn't have to be like a simple traditional search query.
+  + The search mode defaults to "basic", but you can utilize more complex modes when needed. Modes available are:
+    - basic (default): useful for simple web searches and queries
+    - advanced: can handle more in-depth asks and provides additional citations, useful for analysis, comparison, and research.
+  + If you give the user a citation, output it like an HTML link so they can click on it
+  + Be sure to wait until after you get the results on next turn to start answering
+  + Examples:
+    - Checking the weather:
+%%WEBSEARCH%%
+What is the weather going to be like in Pitssburgh, PA this week?
+%%END%%
+    - Looking up the latest version of somethign:
+%%WEBSEARCH%%
+What is the latest stable version of Ubuntu?
+%%END%%
+    - Doing a stock analysis
+%%WEBSEARCH%%
+mode="advanced"
+Give me an analysis of Nvidia's stock
+%%END%%

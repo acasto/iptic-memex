@@ -84,13 +84,27 @@ class ConfigHandler:
         """
         List the prompts available in the prompt directory, used mostly for output to the user
         """
-        prompt_dir = self.conf['DEFAULT'].get('prompt_directory', None)
-        if prompt_dir is None:
-            return None
-        prompt_dir = ConfigHandler.resolve_directory_path(prompt_dir)
-        if prompt_dir is None:
-            return None
-        return [f for f in os.listdir(prompt_dir) if os.path.isfile(os.path.join(prompt_dir, f))]
+        prompts = set()
+        
+        # Get from default prompt directory
+        prompt_dir_str = self.get_option('DEFAULT', 'prompt_directory', fallback='prompts')
+        if prompt_dir_str:
+            prompt_dir = self.resolve_directory_path(prompt_dir_str)
+            if prompt_dir and os.path.isdir(prompt_dir):
+                for f in os.listdir(prompt_dir):
+                    if os.path.isfile(os.path.join(prompt_dir, f)):
+                        prompts.add(os.path.splitext(f)[0])
+
+        # Get from user prompt directory, overriding defaults
+        user_prompt_dir_str = self.get_option('DEFAULT', 'user_prompt_directory', fallback=None)
+        if user_prompt_dir_str:
+            user_prompt_dir = self.resolve_directory_path(user_prompt_dir_str)
+            if user_prompt_dir and os.path.isdir(user_prompt_dir):
+                for f in os.listdir(user_prompt_dir):
+                    if os.path.isfile(os.path.join(user_prompt_dir, f)):
+                        prompts.add(os.path.splitext(f)[0])
+
+        return sorted(list(prompts)) if prompts else []
 
     def list_models(self, showall=False) -> dict:
         """
@@ -144,6 +158,7 @@ class ConfigHandler:
         for key, value in self.list_models().items():
             if model == key or model == value['model_name']:
                 return value['model_name']
+        return None
 
     def get_option_from_model(self, option, model):
         """
@@ -157,6 +172,7 @@ class ConfigHandler:
             if model == key or model == value['model_name']:
                 if option in value:
                     return self.fix_values(value[option])
+        return None
 
     def get_option_from_provider(self, option, provider):
         """
@@ -168,6 +184,7 @@ class ConfigHandler:
         # should make sure it exists before returning
         if self.conf.has_option(provider, option):
             return self.fix_values(self.conf.get(provider, option))
+        return None
 
     def get_all_options_from_provider(self, provider):
         """
@@ -188,6 +205,7 @@ class ConfigHandler:
         for key, value in self.list_models().items():
             if model == key or model == value['model_name']:
                 return {option: self.fix_values(value[option]) for option in self.models.options(key)}
+        return None
 
     def get_all_options_from_section(self, section):
         """
@@ -206,28 +224,45 @@ class ConfigHandler:
         :return: the prompt string
         """
         try:
+            user_prompt_dir = self.get_option('DEFAULT', 'user_prompt_directory')
+            prompt_dir = self.get_option('DEFAULT', 'prompt_directory')
+
             # if there is a default_prompt in the config file, check and make sure it exists and return it
             if self.conf.has_option('DEFAULT', 'default_prompt'):
-                prompt_file = ConfigHandler.resolve_file_path(self.conf['DEFAULT']['default_prompt'],
-                                                              self.conf['DEFAULT']['prompt_directory'], '.txt')
-                if prompt_file is not None:
+                prompt_name = self.conf['DEFAULT']['default_prompt']
+                # Check user dir first
+                if user_prompt_dir:
+                    prompt_file = ConfigHandler.resolve_file_path(prompt_name, user_prompt_dir, '.txt')
+                    if prompt_file:
+                        with open(prompt_file, 'r') as f:
+                            return f.read()
+                # Then check default dir
+                if prompt_dir:
+                    prompt_file = ConfigHandler.resolve_file_path(prompt_name, prompt_dir, '.txt')
+                    if prompt_file:
+                        with open(prompt_file, 'r') as f:
+                            return f.read()
+
+            # if there is a prompt_directory in the config file, check and make sure it exists and return the default.txt file
+            # Check user dir first
+            if user_prompt_dir:
+                prompt_file = ConfigHandler.resolve_file_path("default.txt", user_prompt_dir)
+                if prompt_file:
+                    with open(prompt_file, 'r') as f:
+                        return f.read()
+            # Then check default dir
+            if prompt_dir:
+                prompt_file = ConfigHandler.resolve_file_path("default.txt", prompt_dir)
+                if prompt_file:
                     with open(prompt_file, 'r') as f:
                         return f.read()
 
-            # if there is a prompt_directory in the config file, check and make sure it exists and return the default.txt file
-            if self.conf.has_option('DEFAULT', 'prompt_directory'):
-                prompt = ConfigHandler.resolve_file_path("default.txt", self.conf['DEFAULT']['prompt_directory'])
-                if prompt is not None:
-                    with open(prompt, 'r') as f:
-                        return f.read()
-
             # if there is a fallback_prompt in the config file, check and make sure it exists and return it
-            if self.conf.has_option('DEFAULT', 'fallback_prompt'):
-                return self.conf['DEFAULT'].get('fallback_prompt', None)
+            return self.get_option('DEFAULT', 'fallback_prompt', fallback='')
 
         except FileNotFoundError:
             print(f'Warning: Could not find the prompt file. Using fallback prompt.')
-            return self.conf['DEFAULT'].get('fallback_prompt', None)
+            return self.get_option('DEFAULT', 'fallback_prompt', fallback='')
 
     def get_option(self, section, option, fallback=None):
         """
@@ -248,7 +283,7 @@ class ConfigHandler:
     @staticmethod
     def fix_values(value):
         """
-        Fix some of the values due to how they are stored and retrieved with ConfigParser
+        Fix some values due to how they are stored and retrieved with ConfigParser
         """
         if isinstance(value, str):
             value = value.strip()

@@ -438,19 +438,29 @@ class SessionHandler:
                         resolved_contents.append(resolved)
                 return '\n\n'.join(resolved_contents)
 
-            # Check prompt directory for file
-            prompt_dir = self.utils.fs.resolve_directory_path(
-                self.conf.get_option('DEFAULT', 'prompt_directory')
-            )
-            if prompt_dir:
-                prompt_file = self.utils.fs.resolve_file_path(source, prompt_dir, '.txt')
-                if prompt_file:
-                    with open(prompt_file, 'r') as f:
-                        return f.read()
+            # Check user prompt directory first
+            user_prompt_dir_str = self.conf.get_option('DEFAULT', 'user_prompt_directory', fallback=None)
+            if user_prompt_dir_str:
+                user_prompt_dir = self.conf.resolve_directory_path(user_prompt_dir_str)
+                if user_prompt_dir:
+                    prompt_file = self.conf.resolve_file_path(source, user_prompt_dir, '.txt')
+                    if prompt_file and os.path.exists(prompt_file):
+                        with open(prompt_file, 'r') as f:
+                            return f.read()
+
+            # Then check default prompt directory for file
+            prompt_dir_str = self.conf.get_option('DEFAULT', 'prompt_directory', fallback=None)
+            if prompt_dir_str:
+                prompt_dir = self.conf.resolve_directory_path(prompt_dir_str)
+                if prompt_dir:
+                    prompt_file = self.conf.resolve_file_path(source, prompt_dir, '.txt')
+                    if prompt_file and os.path.exists(prompt_file):
+                        with open(prompt_file, 'r') as f:
+                            return f.read()
 
             # Check if direct file path
-            prompt_file = self.utils.fs.resolve_file_path(source)
-            if prompt_file:
+            prompt_file = self.conf.resolve_file_path(source)
+            if prompt_file and os.path.exists(prompt_file):
                 with open(prompt_file, 'r') as f:
                     return f.read()
 
@@ -517,6 +527,7 @@ class SessionHandler:
 
         if context_type is None:
             return self.session_state['context']
+        return None
 
     def set_flag(self, flag_name: str, value: bool) -> None:
         """
@@ -543,7 +554,7 @@ class SessionHandler:
         Args:
             prompt: Whether to prompt for confirmation
         Returns:
-            True if exit should proceed, False if cancelled
+            True if exit should proceed, False if canceled
         """
         if prompt:
             try:

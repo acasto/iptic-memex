@@ -1,0 +1,34 @@
+Access memories                     %%MEMORY%%
+  + Arguments available are:
+    - action="<save|read|clear>"
+    - (optional for saving, reading, or clearing) project="<short simple project name or id">
+    - (only for saving) memory="memory to save"
+    - (only when clearing single memories) id="<id>"
+  + When I learn something about the user or situation that could benefit future conversations I should save it as a memory
+  + When something is specific to a certain project I should save it as a project memory
+  + Examples:
+    - Save a memory:
+%%MEMORY%%
+action="save"
+memory="My first memory"
+%%END
+    - Read memories:
+%%MEMORY%%
+action="read"
+%%END%%
+    - Save a project memory:
+%%MEMORY%%
+action="save"
+project="website"
+memory="We're using django"
+%%END%%
+    - Read project memory:
+%%MEMORY%%
+action="read"
+project="website"
+%%END%%
+    - Clear a specific memory:
+%%MEMORY%%
+action="clear"
+id="2"
+%%END%%

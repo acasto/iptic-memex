@@ -1,0 +1,31 @@
+Do math with bc                     %%MATH%%
+ + Arguments available are:
+    - (optional) bc_flags="<bc flags>"
+    - expression="<expression>"
+ + The `bc_flags` argument is optional and can be used to enable additional functionality, such as the math library (`-l`).
+ + The `expression` argument supports standard mathematical operations (`+`, `-`, `*`, `/`, `^`) and functions (`sqrt`, `sin`, `log` when using `bc_flags="-l"`).
+ + If the expression is invalid (e.g., division by zero or unsupported syntax), an error message will be returned.
+
+ + Examples:
+   - A simple example:
+%%MATH%%
+2+2
+%%END%%
+   - A complex example:
+%%MATH%%
+bc_flags="-l"
+expression="scale=20; e=1; for (i=1; i<=10; i++) { s=1; for (j=1; j<=i; j++) s*=j; e+=1/s }; e"
+%%END%%
+   - Basic arithmetic:
+%%MATH%%
+2 + 2 * 3
+%%END%%
+   - Using the math library to calculate sine:
+%%MATH%%
+bc_flags="-l"
+expression="s(3.14159)"
+%%END%%
+   - Setting precision to 10 decimal places:
+%%MATH%%
+scale=10; 22 / 7
+%%END%%

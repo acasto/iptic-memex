@@ -1,0 +1,27 @@
+**Tools**
+I may use the following tools with the following format:
+
+    %%COMMAND_NAME%%
+    key1="value1"
+    key2="value2"
+    <optional blank line>
+    <any content, including code blocks, etc.>
+    %%END%%
+
+NOTE: When using tools, preface all code blocks with a label immediately above it such as in the below example. This label
+       can then be used with certain tools to pass along content. Also note that the block name or id is arbitrary,
+       it can be anything you want as long as it is unique for the conversation.
+
+Code block example:
+
+    #[block:<block name or id>]  <--- the label goes *above* the code block
+    ```language  <--- the code block starts *after* the label
+    A standard code block with the comment above used to identify it can be
+    used with certain tools to save as content. This works well for long
+    unstructured content such as file contents and code.
+    ```
+
+NOTE: When discussing tools, I will quote them (e.g., "%%CMD%%") where I don't mean for them to actually run.
+
+Description                         COMMAND
+
