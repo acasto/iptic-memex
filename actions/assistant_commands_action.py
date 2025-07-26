@@ -147,80 +147,103 @@ class AssistantCommandsAction(InteractionAction):
         """
         Extract labeled code blocks from the text.
         Returns a dict mapping block identifiers to their content.
+
+        Block format:
+        %%BLOCK:identifier%%
+        ...content...
+        %%END%%
         """
         if not text:
             return {}
 
-        # Pattern to match the block identifier line
-        block_id_pattern = r'#\[block:(\w+)\]\s*\n'
-
-        # Pattern to match code blocks with optional language
-        code_block_pattern = r'```\w*\n(.*?)```'
+        # Pattern to match blocks with the new format
+        block_pattern = (
+            r'(?m)'
+            r'^[ \t]*%%BLOCK:(\w+)%%[ \t]*\n'  # Opening line with identifier
+            r'([\s\S]*?)'  # Content (non-greedy)
+            r'^[ \t]*%%END%%[ \t]*$'  # Closing line
+        )
 
         blocks = {}
-        last_pos = 0
 
-        while True:
-            # Find the next block identifier
-            id_match = re.search(block_id_pattern, text[last_pos:], re.MULTILINE)
-            if not id_match:
-                break
-
-            # Adjust position to start of identifier match
-            block_start = last_pos + id_match.end()
-
-            # Find the code block that follows
-            code_match = re.search(code_block_pattern, text[block_start:], re.DOTALL)
-            if not code_match:
-                break
-
-            # Extract identifier and content
-            block_id = id_match.group(1)
-            block_content = code_match.group(1).strip()
-
-            # Store block
+        # Find all blocks in the text
+        for match in re.finditer(block_pattern, text):
+            block_id = match.group(1)
+            block_content = match.group(2).strip()
             blocks[block_id] = block_content
-
-            # Move position past this block
-            last_pos = block_start + code_match.end()
 
         return blocks
 
+    # noinspection PyUnresolvedReferences
     def parse_commands(self, text: str):
         # Normalize line endings first
         text = text.replace('\r\n', '\n')
-
-        # Enhanced pattern that ensures both command and END are on their own lines
-        command_pattern = (
-            r'(?m)(?P<block>'
-            r'^[ \t]*(?<!["\'`])%%(?P<command>[A-Z0-9_]+)%%[ \t]*\n'  # command line
-            r'(?P<content>[\s\S]*?)'                                   # content
-            r'^[ \t]*%%END%%[ \t]*$'                                  # end line
-            r')'
-        )
-        blocks = re.finditer(command_pattern, text)
-
+        lines = text.splitlines()
         command_stack = []
 
-        for match in blocks:
-            command_name = match.group('command')
-            block_content = match.group('content')
+        # Get the list of known, valid command names to look for
+        known_command_names = self.commands.keys()
+        if not known_command_names:
+            return []  # No commands are registered, so nothing to parse.
 
-            # Split content into lines, removing any leading/trailing blank lines
-            lines = [line for line in block_content.splitlines()]
+        # Create a specific regex for just the command start tags
+        command_group = '|'.join(known_command_names)
+        command_start_pattern = re.compile(rf'^[ \t]*%%({command_group})%%[ \t]*$')
 
-            # Get command info and known args
-            command_info = self.commands.get(command_name, {})
-            known_args = command_info.get("args", [])
+        # Create a simple regex for the end tag
+        end_pattern = re.compile(r'^[ \t]*%%END%%[ \t]*$')
 
-            # Extract args and content with clean line handling
-            args, command_content = self.extract_args_and_content(lines, known_args)
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            match = command_start_pattern.match(line)
 
-            command_stack.append({
-                'command': command_name,
-                'args': args,
-                'content': command_content.strip()  # Remove any trailing whitespace from the final content
-            })
+            if match:
+                # Check if this line appears to be quoted or in a code block
+                # Look for quotes or backticks at the start of the line (ignoring whitespace)
+                line_start = line.lstrip()
+                if (line_start.startswith('"') or
+                        line_start.startswith("'") or
+                        line_start.startswith('`')):
+                    i += 1
+                    continue
+
+                # Found the start of a valid command block
+                command_name = match.group(1)
+                content_lines = []
+
+                # Now, loop forward to find the corresponding %%END%%
+                j = i + 1
+                while j < len(lines):
+                    if end_pattern.match(lines[j]):
+                        # Found the end of the block.
+                        # Get command info and known args
+                        command_info = self.commands.get(command_name, {})
+                        known_args = command_info.get("args", [])
+
+                        # Extract args and content from the captured lines
+                        args, command_content = self.extract_args_and_content(content_lines, known_args)
+
+                        command_stack.append({
+                            'command': command_name,
+                            'args': args,
+                            'content': command_content.strip()
+                        })
+
+                        # Move the outer loop's index past this entire block
+                        i = j
+                        break  # Exit the inner 'j' loop
+                    else:
+                        # This line is part of the command's content
+                        content_lines.append(lines[j])
+                    j += 1
+
+                # Check if we exited the loop without finding %%END%%
+                if j >= len(lines):
+                    # Command was never closed - skip it
+                    i = j - 1
+
+            i += 1
 
         return command_stack
 

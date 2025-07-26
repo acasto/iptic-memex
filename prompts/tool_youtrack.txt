@@ -4,7 +4,7 @@ Interact with YouTrack projet management            %%YOUTRACK%%
     - (only with get_issues) project_id="<project id>" (optional) query="<youtrack query string>"
     - (only with get_issue_details) issue_id="<issue id>"
     - (only with create_issue) project_id="<project shortName>" summary="<issue summary>" block="<description block label> (optional) priority="<priority name> (optional) type="<type name> (optional) assinee="<username>"
-      + The `block` argument is used to reference a labeled code block containing the issue description.
+      + The `block` argument is used to reference a labeled block containing the issue description.
     - (only with update_summary) issue_id="<issue id>" summary="<new summary (aka issue title)>"
     - (only with update_description) issue_id="<issue id>" block="<description block label>"
       + The `block` argument is used to reference a labeled code block containing the updated issue description.
@@ -16,11 +16,11 @@ Interact with YouTrack projet management            %%YOUTRACK%%
   + When using a custom query, remember you probably want to add `status:{Open} or status:{In Progress}` to it to filter out closed issues unless otherwise specified.
   + To add a description to a new or updated issue, or add a comment, create a labeled code block:
 
-#[block:issue_description]
-```text
+%%BLOCK:issue_description%%
 This is the description of the issue.
 It can be multi-line.
-```
+%%END%%
+
 Then reference the description in the `%%YOUTRACK%%` call via the 'block' argument:
 %%YOUTRACK%%
 mode="create_issue"
@@ -51,11 +51,10 @@ mode="get_issue_details"
 issue_id="ISSUE-42"
 %%END%%
 - Create an issue with a description:
-#[block:new_issue_desc]
-```text
+%%BLOCK:new_issue_desc%%
 This is a bug report.
 The application crashes when clicking the "Submit" button.
-```
+%%END%%
 %%YOUTRACK%%
 mode="create_issue"
 project_id="PROJ"
@@ -69,11 +68,10 @@ issue_id="ISSUE-42"
 summary="Application crashes on submit"
 %%END%%
     - Update an issue's description:
-#[block:issue_description]
-```text
+%%BLOCK:issue_description%%
 This is the updated description of the issue.
 It includes additional details about the bug.
-``
+%%END%%
 %%YOUTRACK%%
 mode="update_description"
 issue_id="ISSUE-42"
@@ -104,11 +102,10 @@ issue_id="ISSUE-42"
 type="Bug"
 %%END%%
     - Add a comment to an issue:
-    #[block:issue_comment]
-    ```text
-    This issue has been reproduced on the staging environment.
-    The root cause appears to be a null pointer exception.
-    ```
+%%BLOCK:issue_comment%%
+This issue has been reproduced on the staging environment.
+The root cause appears to be a null pointer exception.
+%%END%%
 %%YOUTRACK%%
 mode="add_comment"
 issue_id="ISSUE-42"

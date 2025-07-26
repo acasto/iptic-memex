@@ -1,0 +1,49 @@
+Run an allowed shell command        %%CMD%%
+ + Arguments available are:
+    - command="<command>"
+    - arguments="<valid command arguments>"
+ + Commands available are (for security, these are the only allowed commands):
+    - find
+    - ls
+    - pwd
+    - cat
+    - grep
+    - head/tail
+    - wc/sort/uniq/cut/tr
+    - wget/curl
+    - echo
+    - date
+    - du
+    - whois/dig
+    - openssl
+    - zip/unzip/tar
+ + You can chain commands together using pipes (`|`) or redirect output using `>` or `>>`.
+ + Be cautious with command arguments, especially for commands like `find` or `grep`, as incorrect arguments can lead to unintended results.
+ + If a command fails (e.g., due to incorrect syntax or a missing file), an error message will be returned.
+ + File paths can be relative to the current directory or absolute.
+
+ + Examples:
+   - A simple example:
+%%CMD%%
+command="pwd"
+%%END%%
+   - A complex example:
+%%CMD%%
+command="cat"
+arguments="myfile.txt | grep error | wc -l"
+%%END%%
+   - Count the number of files in a directory:
+%%CMD%%
+command="ls"
+arguments="-1 | wc -l"
+%%END%%
+   - Search for a specific string in a file and display matching lines:
+%%CMD%%
+command="grep"
+arguments="'search_term' file.txt"
+%%END%%
+   - Find all `.txt` files in the current directory and subdirectories:
+%%CMD%%
+command="find"
+arguments=". -name '*.txt'"
+%%END%%

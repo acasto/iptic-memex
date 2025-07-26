@@ -3,16 +3,15 @@ Interact with files                 %%FILE%%
   + Arguments available are:
     - mode="<read|write|edit|append|summarize|delete|rename|copy>"
     - file="<path to file>"
-    - block="<block name or id when referencing a code block to save>"
+    - block="<block label referencing a block to save>"
     - (only with rename and copy) new_name="<new name>"
     - (only when deleting directories) recursive=true
   + File paths should be relative to the current working directory
-  + To *write*, *edit*, or *append* content, first create a labeled code block (NOTE: the label goes immediately ABOVE the code block):
+  + To *write*, *edit*, or *append* content, first create a labeled block:
 
-    #[block:my_content] <--- the label is here
-    ```text             <--- the code block starts here
-    This is some content I want to save to a file.
-    ```                 <--- the code block ends here
+    %%BLOCK:my_content%%
+    ...content...
+    %%END%%
 
     Then reference the block in the `%%FILE%%` call:
 
