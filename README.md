@@ -56,6 +56,8 @@ envisioned a device that would compress and store all of their knowledge. https:
 
 ### Getting Started
 
+See [INSTALL.md](INSTALL.md) for details on how to adjust requirements.txt as needed for your system.
+
 #### 1. **Clone the Repository**
 ```bash
    git clone https://github.com/acasto/iptic-memex.git
