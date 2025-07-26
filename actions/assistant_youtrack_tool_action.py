@@ -282,9 +282,10 @@ class AssistantYoutrackToolAction(InteractionAction):
         if content:
             data['description'] = content
 
-        # Add optional priority and type fields
+        # Add optional priority, type, and assignee fields
         priority = args.get('priority')
         issue_type = args.get('type')
+        assignee = args.get('assignee')
 
         custom_fields = []
         if priority:
@@ -305,6 +306,15 @@ class AssistantYoutrackToolAction(InteractionAction):
                     'name': issue_type
                 }
             })
+        if assignee:
+            custom_fields.append({
+                'name': self.config['assignee_field_name'],
+                '$type': 'SingleUserIssueCustomField',
+                'value': {
+                    '$type': 'User',
+                    'login': assignee
+                }
+            })
 
         if custom_fields:
             data['customFields'] = custom_fields
@@ -323,10 +333,6 @@ class AssistantYoutrackToolAction(InteractionAction):
                 'content': 'Failed to get the entity ID after creating the issue.'
             })
             return
-
-        # Introduce a small delay to allow YouTrack to process the creation
-        # import time
-        # time.sleep(2)  # Wait for 2 seconds
 
         # Fetch the final issue details to confirm the final ID
         url = self._construct_url(ENDPOINTS['get_issue_details'], issue_id=entity_id)
@@ -422,7 +428,11 @@ class AssistantYoutrackToolAction(InteractionAction):
             'customFields': [
                 {
                     'name': self.config['assignee_field_name'],
-                    'value': {'login': assignee}
+                    '$type': 'SingleUserIssueCustomField',
+                    'value': {
+                        '$type': 'User',
+                        'login': assignee
+                    }
                 }
             ]
         }

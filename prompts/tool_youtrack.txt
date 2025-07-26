@@ -3,7 +3,7 @@ Interact with YouTrack projet management            %%YOUTRACK%%
     - mode="<get_projects|get_issues|get_issue_details|create_issue|update_summary|update_description|assign_issue|update_state|update_priority|update_type|add_comment>"
     - (only with get_issues) project_id="<project id>" (optional) query="<youtrack query string>"
     - (only with get_issue_details) issue_id="<issue id>"
-    - (only with create_issue) project_id="<project shortName>" summary="<issue summary>" block="<description block label> (optional) priority="<priority name> (optional) type="<type name>"
+    - (only with create_issue) project_id="<project shortName>" summary="<issue summary>" block="<description block label> (optional) priority="<priority name> (optional) type="<type name> (optional) assinee="<username>"
       + The `block` argument is used to reference a labeled code block containing the issue description.
     - (only with update_summary) issue_id="<issue id>" summary="<new summary (aka issue title)>"
     - (only with update_description) issue_id="<issue id>" block="<description block label>"
