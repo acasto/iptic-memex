@@ -271,7 +271,7 @@ class AssistantFileToolAction(InteractionAction):
 
     You will receive:
     1. The content of the original file.
-    2. A few turns of conversation history between the user and the assistant if clarification is needed regarding context.
+    2. A few turns of conversation history between the user and the assistant if clarification is needed regarding context. You may see other changes mentioned in the COVERSATION CONTEXT, but you should only apply the changes requested in the REQUESTED CHANGES section.
     3. The requested changes to be applied to the oringinal file."""
 
         original_file_section = """=== ORIGINAL FILE ===
@@ -293,7 +293,7 @@ class AssistantFileToolAction(InteractionAction):
         prompt_parts = [
             intro_section,
             original_file_section,
-            # conversation_section,
+            conversation_section,
             changes_section,
             instructions_section
         ]
