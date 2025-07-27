@@ -45,7 +45,7 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw,
     if max_tokens:
         session.set_option('max_tokens', max_tokens)
     if stream:
-        session.set_option('stream', True)
+        session.set_option('cli_stream', True)  # differentiate from config stream option
     if verbose:
         ctx.obj['VERBOSE'] = verbose
 

@@ -124,6 +124,9 @@ class SessionHandler:
                 self.user_options[key] = value
                 if self.session_state['provider']:
                     self.configure_session()
+            elif key == 'cli_stream':
+                self.user_options['stream'] = value  # global/chat default
+                self.user_options['stream_completion'] = value  # completion override
             else:
                 # Convert string booleans
                 if isinstance(value, str) and value.lower() in ['true', 'false']:

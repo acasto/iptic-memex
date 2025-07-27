@@ -1,4 +1,3 @@
-import time
 from session_handler import InteractionMode
 
 
@@ -33,22 +32,24 @@ class CompletionMode(InteractionMode):
             self.chat.add("", 'user', contexts)
 
     def start(self):
-        """Start the completion mode interaction"""
+        """Start the completion mode interaction."""
+        import time
+
         if self.params.get('raw_completion'):
-            # Force disable streaming for raw output
+            # Raw mode: always non-streaming, emit raw JSON
             self.params['stream'] = False
-            # Get response but don't print it
             self.session.get_provider().chat()
-            # Get and print the raw response
-            raw_response = self.session.get_provider().get_full_response()
-            print(raw_response)
+            print(self.session.get_provider().get_full_response())
         else:
-            # Existing completion logic
-            if self.params['stream'] is True:
+            # Normal completion: stream only if CLI flag used
+            stream = self.params.get('stream_completion', False)
+            self.params['stream'] = stream
+
+            if stream:
                 response = self.session.get_provider().stream_chat()
                 if response:
-                    for i, event in enumerate(response):
-                        print(event, end='', flush=True)
+                    for chunk in response:
+                        print(chunk, end='', flush=True)
                         if 'stream_delay' in self.params:
                             time.sleep(float(self.params['stream_delay']))
                 print()
