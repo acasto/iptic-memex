@@ -218,51 +218,23 @@ class ConfigHandler:
                     for option in self.conf.options(section)}
         return {}
 
-    def get_default_prompt(self) -> str:
+    def get_default_prompt_source(self) -> str:
         """
-        gets the prompt as a string either from user specified, <prompt_dir>/default.txt, or the fallback prompt
-        :return: the prompt string
+        Determines the source of the default prompt from config files.
+        Returns the name of the prompt/chain, or a filename.
         """
-        try:
-            user_prompt_dir = self.get_option('DEFAULT', 'user_prompt_directory')
-            prompt_dir = self.get_option('DEFAULT', 'prompt_directory')
+        # 1. Check for 'default' in [PROMPTS] section (the new desired behavior)
+        prompt_source = self.get_option('PROMPTS', 'default', fallback=None)
+        if prompt_source:
+            return prompt_source
 
-            # if there is a default_prompt in the config file, check and make sure it exists and return it
-            if self.conf.has_option('DEFAULT', 'default_prompt'):
-                prompt_name = self.conf['DEFAULT']['default_prompt']
-                # Check user dir first
-                if user_prompt_dir:
-                    prompt_file = ConfigHandler.resolve_file_path(prompt_name, user_prompt_dir, '.txt')
-                    if prompt_file:
-                        with open(prompt_file, 'r') as f:
-                            return f.read()
-                # Then check default dir
-                if prompt_dir:
-                    prompt_file = ConfigHandler.resolve_file_path(prompt_name, prompt_dir, '.txt')
-                    if prompt_file:
-                        with open(prompt_file, 'r') as f:
-                            return f.read()
+        # 2. Check for 'default_prompt' in [DEFAULT] section (legacy)
+        prompt_source = self.get_option('DEFAULT', 'default_prompt', fallback=None)
+        if prompt_source:
+            return prompt_source
 
-            # if there is a prompt_directory in the config file, check and make sure it exists and return the default.txt file
-            # Check user dir first
-            if user_prompt_dir:
-                prompt_file = ConfigHandler.resolve_file_path("default.txt", user_prompt_dir)
-                if prompt_file:
-                    with open(prompt_file, 'r') as f:
-                        return f.read()
-            # Then check default dir
-            if prompt_dir:
-                prompt_file = ConfigHandler.resolve_file_path("default.txt", prompt_dir)
-                if prompt_file:
-                    with open(prompt_file, 'r') as f:
-                        return f.read()
-
-            # if there is a fallback_prompt in the config file, check and make sure it exists and return it
-            return self.get_option('DEFAULT', 'fallback_prompt', fallback='')
-
-        except FileNotFoundError:
-            print(f'Warning: Could not find the prompt file. Using fallback prompt.')
-            return self.get_option('DEFAULT', 'fallback_prompt', fallback='')
+        # 3. If nothing is defined, fall back to the literal filename "default.txt"
+        return "default.txt"
 
     def get_option(self, section, option, fallback=None):
         """

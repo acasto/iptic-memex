@@ -485,7 +485,7 @@ class SessionHandler:
                 return resolve_single_prompt(model_prompt)
 
         # Finally fall back to default prompt
-        return self.conf.get_default_prompt()
+        return self.conf.get_default_prompt_source()
 
     def get_session_state(self):
         """

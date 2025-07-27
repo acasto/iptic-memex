@@ -1,4 +1,5 @@
 from session_handler import InteractionContext
+import os
 
 
 class PromptContext(InteractionContext):
@@ -98,8 +99,21 @@ class PromptContext(InteractionContext):
 
         for p in resolved_prompts:
             if p.strip():
+                # Read file content if it's a file path
+                file_path = self.session.conf.resolve_file_path(p, self.session.conf.get_option('DEFAULT', 'prompt_directory'), '.txt')
+                if not file_path:
+                    file_path = self.session.conf.resolve_file_path(p, self.session.conf.get_option('DEFAULT', 'user_prompt_directory'), '.txt')
+                if not file_path:
+                    file_path = self.session.conf.resolve_file_path(p)
+
+                if file_path and os.path.exists(file_path):
+                    with open(file_path, 'r') as f:
+                        prompt_text = f.read()
+                else:
+                    prompt_text = p
+
                 # Process templates in the content
-                processed = self.process_templates(p)
+                processed = self.process_templates(prompt_text)
                 combined_content.append(processed)
 
         # Set final prompt content
