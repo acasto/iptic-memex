@@ -145,10 +145,12 @@ def list_models(ctx, showall, details):
         # Create a temporary config manager if none exists
         config_manager = ConfigManager()
     
+    # Note: active_only=True means show only active models (default behavior)
+    # active_only=False means show all models (when --all flag is used)
     if showall:
-        models = config_manager.list_models(showall=True)
+        models = config_manager.list_models(active_only=False)
     else:
-        models = config_manager.list_models(showall=False)
+        models = config_manager.list_models(active_only=True)
     
     for section, options in models.items():
         if details:
@@ -175,7 +177,7 @@ def list_providers(ctx, showall):
         # Create a temporary config manager if none exists
         config_manager = ConfigManager()
     
-    models = config_manager.list_models(showall=False)
+    models = config_manager.list_models(active_only=True)
     
     # get the provider of the default model
     default_model = ''
@@ -185,12 +187,15 @@ def list_providers(ctx, showall):
             default_model = model
             default_provider = options['provider']
     
+    # Note: active_only=True means show only active providers (default behavior)
+    # active_only=False means show all providers (when --all flag is used)  
     if showall:
-        providers = config_manager.list_providers(showall=True)
+        providers = config_manager.list_providers(active_only=False)
     else:
-        providers = config_manager.list_providers(showall=False)
+        providers = config_manager.list_providers(active_only=True)
     
-    for provider in providers:
+    # list_providers returns a dict, but we just want the keys (provider names)
+    for provider in providers.keys():
         if provider == default_provider:
             print(f'{provider} (default w/ {default_model})')
         else:
@@ -208,36 +213,8 @@ def list_prompts(ctx):
         # Create a temporary config manager if none exists
         config_manager = ConfigManager()
     
-    # Create a session to get the prompt resolver
-    builder = SessionBuilder(config_manager)
-    session = builder.build()
-    
-    # Get available prompts from the prompt resolver
-    prompt_resolver = session._registry.get_prompt_resolver()
-    
-    # List prompts from prompt directories
-    prompts = []
-    
-    # Get prompt directories
-    user_prompt_dir = config_manager.base_config.get('DEFAULT', {}).get('user_prompts')
-    default_prompt_dir = config_manager.base_config.get('DEFAULT', {}).get('prompt_directory', 'prompts')
-    
-    # Scan directories for prompt files
-    import os
-    extensions = ['', '.txt', '.md']
-    
-    for prompt_dir in [user_prompt_dir, default_prompt_dir]:
-        if prompt_dir:
-            full_path = session.config.resolve_directory_path(prompt_dir)
-            if full_path and os.path.isdir(full_path):
-                for filename in os.listdir(full_path):
-                    # Remove extensions to get prompt names
-                    for ext in extensions:
-                        if filename.endswith(ext):
-                            prompt_name = filename[:-len(ext)] if ext else filename
-                            if prompt_name and prompt_name not in prompts:
-                                prompts.append(prompt_name)
-                            break
+    # Use ConfigManager's list_prompts method directly
+    prompts = config_manager.list_prompts()
     
     if prompts:
         for prompt in sorted(prompts):
