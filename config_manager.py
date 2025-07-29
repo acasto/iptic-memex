@@ -31,13 +31,13 @@ class ConfigManager:
 
         # Get the user config location from the default config file and check and read it
         if 'user_config' in config['DEFAULT']:
-            user_config = self._resolve_file_path(config['DEFAULT']['user_config'])
+            user_config = self.resolve_file_path(config['DEFAULT']['user_config'])
             if user_config is not None:
                 config.read(user_config)
 
         # If a custom config file was specified, check and read it
         if config_file is not None:
-            file = self._resolve_file_path(config_file)
+            file = self.resolve_file_path(config_file)
             if file is None:
                 raise FileNotFoundError(f'Could not find the custom config file at {config_file}')
             config.read(config_file)
@@ -59,7 +59,7 @@ class ConfigManager:
 
         # Get the user model definition overrides from the configuration file
         if 'user_models' in self.base_config['DEFAULT']:
-            user_models = self._resolve_file_path(self.base_config['DEFAULT']['user_models'])
+            user_models = self.resolve_file_path(self.base_config['DEFAULT']['user_models'])
             if user_models is not None:
                 models.read(user_models)
 
@@ -94,7 +94,7 @@ class ConfigManager:
         if not active_only:
             for model in self.models.sections():
                 filtered_models[model] = {
-                    option: self._fix_values(self.models.get(model, option)) 
+                    option: self.fix_values(self.models.get(model, option))
                     for option in self.models.options(model)
                 }
         else:
@@ -111,7 +111,7 @@ class ConfigManager:
                         if self.models.get(model, 'provider') == provider:
                             if desired_models is None or model in desired_models:
                                 filtered_models[model] = {
-                                    option: self._fix_values(self.models.get(model, option)) 
+                                    option: self.fix_values(self.models.get(model, option))
                                     for option in self.models.options(model)
                                 }
 
@@ -124,14 +124,14 @@ class ConfigManager:
         if not active_only:
             for provider in self.base_config.sections():
                 filtered_providers[provider] = {
-                    option: self._fix_values(self.base_config.get(provider, option)) 
+                    option: self.fix_values(self.base_config.get(provider, option))
                     for option in self.base_config.options(provider)
                 }
         else:
             for provider in self.base_config.sections():
                 if self.base_config.getboolean(provider, 'active', fallback=False):
                     filtered_providers[provider] = {
-                        option: self._fix_values(self.base_config.get(provider, option)) 
+                        option: self.fix_values(self.base_config.get(provider, option))
                         for option in self.base_config.options(provider)
                     }
 
@@ -144,7 +144,7 @@ class ConfigManager:
         # Get from default prompt directory
         prompt_dir_str = self._get_base_option('DEFAULT', 'prompt_directory', fallback='prompts')
         if prompt_dir_str:
-            prompt_dir = self._resolve_directory_path(prompt_dir_str)
+            prompt_dir = self.resolve_directory_path(prompt_dir_str)
             if prompt_dir and os.path.isdir(prompt_dir):
                 for f in os.listdir(prompt_dir):
                     if os.path.isfile(os.path.join(prompt_dir, f)):
@@ -153,7 +153,7 @@ class ConfigManager:
         # Get from user prompt directory, overriding defaults
         user_prompt_dir_str = self._get_base_option('DEFAULT', 'user_prompts', fallback=None)
         if user_prompt_dir_str:
-            user_prompt_dir = self._resolve_directory_path(user_prompt_dir_str)
+            user_prompt_dir = self.resolve_directory_path(user_prompt_dir_str)
             if user_prompt_dir and os.path.isdir(user_prompt_dir):
                 for f in os.listdir(user_prompt_dir):
                     if os.path.isfile(os.path.join(user_prompt_dir, f)):
@@ -164,12 +164,12 @@ class ConfigManager:
     def _get_base_option(self, section: str, option: str, fallback: Any = None) -> Any:
         """Get an option from the base configuration"""
         try:
-            return self._fix_values(self.base_config.get(section, option))
+            return self.fix_values(self.base_config.get(section, option))
         except (NoSectionError, NoOptionError):
             return fallback
     
     @staticmethod
-    def _fix_values(value: Any) -> Any:
+    def fix_values(value: Any) -> Any:
         """Fix some values due to how they are stored and retrieved with ConfigParser"""
         if isinstance(value, str):
             value = value.strip()
@@ -184,11 +184,11 @@ class ConfigManager:
             # Handle dict-like strings
             if value.startswith('{') and value.endswith('}'):
                 pairs = re.findall(r'(\w+)\s*:\s*(\[.*?]|[^,]+)(?=\s*(?:,|$))', value[1:-1])
-                return {k.strip(): ConfigManager._fix_values(v.strip()) for k, v in pairs}
+                return {k.strip(): ConfigManager.fix_values(v.strip()) for k, v in pairs}
 
             # Handle list-like strings
             if value.startswith('[') and value.endswith(']'):
-                return [ConfigManager._fix_values(item.strip()) for item in re.findall(r'<[^>]+>|[^,\s]+', value[1:-1])]
+                return [ConfigManager.fix_values(item.strip()) for item in re.findall(r'<[^>]+>|[^,\s]+', value[1:-1])]
 
             # Check for integer values
             if value.isdigit():
@@ -209,7 +209,7 @@ class ConfigManager:
         return value
 
     @staticmethod
-    def _resolve_file_path(file_name: str, base_dir: Optional[str] = None, extension: Optional[str] = None) -> Optional[str]:
+    def resolve_file_path(file_name: str, base_dir: Optional[str] = None, extension: Optional[str] = None) -> Optional[str]:
         """
         Works out the path to a file based on the filename and optional base directory
         :param file_name: name of the file to resolve the path to
@@ -261,7 +261,7 @@ class ConfigManager:
         return None
 
     @staticmethod
-    def _resolve_directory_path(dir_name: str) -> Optional[str]:
+    def resolve_directory_path(dir_name: str) -> Optional[str]:
         """
         Works out the path to a directory
         :param dir_name: name of the directory to resolve the path to
@@ -311,7 +311,7 @@ class SessionConfig:
         params = {}
         
         # Start with base config DEFAULT section
-        params.update({k: ConfigManager._fix_values(v) for k, v in self.base_config['DEFAULT'].items()})
+        params.update({k: ConfigManager.fix_values(v) for k, v in self.base_config['DEFAULT'].items()})
         
         # Set the model parameter explicitly
         if model:
@@ -361,7 +361,7 @@ class SessionConfig:
         
         # Then check the specific section in base config
         try:
-            return ConfigManager._fix_values(self.base_config.get(section, option))
+            return ConfigManager.fix_values(self.base_config.get(section, option))
         except (NoSectionError, NoOptionError):
             # If not found and this is DEFAULT section, check merged params
             if section == 'DEFAULT':
@@ -387,7 +387,7 @@ class SessionConfig:
         """Get configuration for a specific provider"""
         if self.base_config.has_section(provider):
             return {
-                option: ConfigManager._fix_values(self.base_config.get(provider, option))
+                option: ConfigManager.fix_values(self.base_config.get(provider, option))
                 for option in self.base_config.options(provider)
             }
         return {}
@@ -397,7 +397,7 @@ class SessionConfig:
         # Check direct section name first
         if self.models.has_section(model):
             return {
-                option: ConfigManager._fix_values(self.models.get(model, option))
+                option: ConfigManager.fix_values(self.models.get(model, option))
                 for option in self.models.options(model)
             }
         
@@ -406,7 +406,7 @@ class SessionConfig:
             model_name = self.models.get(section, 'model_name', fallback=section)
             if model == model_name:
                 return {
-                    option: ConfigManager._fix_values(self.models.get(section, option))
+                    option: ConfigManager.fix_values(self.models.get(section, option))
                     for option in self.models.options(section)
                 }
         
@@ -466,18 +466,19 @@ class SessionConfig:
         """List models - backward compatibility"""
         filtered_models = {}
 
-        # First lets add "default = True" to the default model
+        # Get the default model for marking
         default_model = self.base_config['DEFAULT'].get('default_model', None)
-        for model in self.models.sections():
-            if model == default_model:
-                self.models.set(model, 'default', 'True')
 
         if showall:
             for model in self.models.sections():
-                filtered_models[model] = {
-                    option: ConfigManager._fix_values(self.models.get(model, option)) 
+                model_data = {
+                    option: ConfigManager.fix_values(self.models.get(model, option))
                     for option in self.models.options(model)
                 }
+                # Mark default model without mutating the original config
+                if model == default_model:
+                    model_data['default'] = True
+                filtered_models[model] = model_data
         else:
             for provider in self.base_config.sections():
                 # Check if the provider is active
@@ -486,15 +487,19 @@ class SessionConfig:
                     desired_models = self.base_config.get(provider, 'models', fallback=None)
                     if desired_models is not None:
                         desired_models = [model.strip() for model in desired_models.split(',')]
-                    
+
                     # Filter the models based on the provider configuration
                     for model in self.models.sections():
                         if self.models.get(model, 'provider') == provider:
                             if desired_models is None or model in desired_models:
-                                filtered_models[model] = {
-                                    option: ConfigManager._fix_values(self.models.get(model, option)) 
+                                model_data = {
+                                    option: ConfigManager.fix_values(self.models.get(model, option))
                                     for option in self.models.options(model)
                                 }
+                                # Mark default model without mutating the original config
+                                if model == default_model:
+                                    model_data['default'] = True
+                                filtered_models[model] = model_data
 
         return filtered_models
     
@@ -505,14 +510,14 @@ class SessionConfig:
         if showall:
             for provider in self.base_config.sections():
                 filtered_providers[provider] = {
-                    option: ConfigManager._fix_values(self.base_config.get(provider, option)) 
+                    option: ConfigManager.fix_values(self.base_config.get(provider, option))
                     for option in self.base_config.options(provider)
                 }
         else:
             for provider in self.base_config.sections():
                 if self.base_config.getboolean(provider, 'active', fallback=False):
                     filtered_providers[provider] = {
-                        option: ConfigManager._fix_values(self.base_config.get(provider, option)) 
+                        option: ConfigManager.fix_values(self.base_config.get(provider, option))
                         for option in self.base_config.options(provider)
                     }
 
@@ -525,7 +530,7 @@ class SessionConfig:
         # Get from default prompt directory
         prompt_dir_str = self.get_option('DEFAULT', 'prompt_directory', fallback='prompts')
         if prompt_dir_str:
-            prompt_dir = ConfigManager._resolve_directory_path(prompt_dir_str)
+            prompt_dir = ConfigManager.resolve_directory_path(prompt_dir_str)
             if prompt_dir and os.path.isdir(prompt_dir):
                 for f in os.listdir(prompt_dir):
                     if os.path.isfile(os.path.join(prompt_dir, f)):
@@ -534,7 +539,7 @@ class SessionConfig:
         # Get from user prompt directory, overriding defaults
         user_prompt_dir_str = self.get_option('DEFAULT', 'user_prompts', fallback=None)
         if user_prompt_dir_str:
-            user_prompt_dir = ConfigManager._resolve_directory_path(user_prompt_dir_str)
+            user_prompt_dir = ConfigManager.resolve_directory_path(user_prompt_dir_str)
             if user_prompt_dir and os.path.isdir(user_prompt_dir):
                 for f in os.listdir(user_prompt_dir):
                     if os.path.isfile(os.path.join(user_prompt_dir, f)):
@@ -565,7 +570,7 @@ class SessionConfig:
         """Get all options from section - backward compatibility"""
         if self.base_config.has_section(section):
             return {
-                option: ConfigManager._fix_values(self.base_config.get(section, option))
+                option: ConfigManager.fix_values(self.base_config.get(section, option))
                 for option in self.base_config.options(section)
             }
         return {}
@@ -573,9 +578,9 @@ class SessionConfig:
     @staticmethod
     def resolve_file_path(file_name: str, base_dir: Optional[str] = None, extension: Optional[str] = None) -> Optional[str]:
         """Static method for backward compatibility"""
-        return ConfigManager._resolve_file_path(file_name, base_dir, extension)
+        return ConfigManager.resolve_file_path(file_name, base_dir, extension)
     
     @staticmethod
     def resolve_directory_path(dir_name: str) -> Optional[str]:
         """Static method for backward compatibility"""
-        return ConfigManager._resolve_directory_path(dir_name)
+        return ConfigManager.resolve_directory_path(dir_name)
