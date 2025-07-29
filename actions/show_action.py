@@ -41,12 +41,83 @@ class ShowAction(InteractionAction):
             print()
 
         if args[0] == 'messages':
-            if len(args) > 1 and args[1] == 'all':
-                messages = self.session.get_context('chat').get('all')
-            else:
-                messages = self.session.get_provider().get_messages()
-            for message in messages:
-                print(message)
+            try:
+                # First, show the system prompt if it exists
+                prompt_context = self.session.get_context('prompt')
+                if prompt_context:
+                    prompt_data = prompt_context.get()
+                    if prompt_data and prompt_data.get('content'):
+                        print("=== SYSTEM PROMPT ===")
+                        print(prompt_data['content'])
+                        print("=" * 50)
+                        print()
+
+                # Then show the conversation messages
+                if len(args) > 1 and args[1] == 'all':
+                    # Get all messages from chat context
+                    chat_context = self.session.get_context('chat')
+                    if chat_context:
+                        messages = chat_context.get("all")
+                    else:
+                        print("No chat context available")
+                        return
+                else:
+                    # Get messages from provider (which delegates to chat context)
+                    provider = self.session.get_provider()
+                    if provider:
+                        messages = provider.get_messages()
+                    else:
+                        print("No provider available")
+                        return
+                
+                if not messages:
+                    print("No conversation messages to display")
+                    return
+                
+                # Display messages with proper formatting
+                print("=== CONVERSATION ===")
+                for i, message in enumerate(messages):
+                    timestamp = message.get('timestamp', 'Unknown time')
+                    role = message.get('role', 'unknown')
+                    context = message.get('context', None)
+                    
+                    # Handle different message content formats
+                    content = ""
+                    
+                    # Check for old simple format first
+                    if 'message' in message and message['message']:
+                        content = message['message']
+                    # Check for modern format with content array
+                    elif 'content' in message:
+                        content_data = message['content']
+                        if isinstance(content_data, list):
+                            # Extract text from content array
+                            text_parts = []
+                            for item in content_data:
+                                if isinstance(item, dict) and item.get('type') == 'text':
+                                    text_parts.append(item.get('text', ''))
+                                elif isinstance(item, dict) and item.get('type') == 'image_url':
+                                    text_parts.append('[IMAGE]')
+                            content = ' '.join(text_parts)
+                        elif isinstance(content_data, str):
+                            content = content_data
+                    
+                    print(f"[{i}] {timestamp} - {role.upper()}")
+                    if content:
+                        print(f"    Message: {content}")
+                    else:
+                        print("    Message: (empty)")
+                    
+                    if context:
+                        print(f"    Context: {len(context)} item(s)")
+                        for j, ctx in enumerate(context):
+                            ctx_type = ctx.get('type', 'unknown')
+                            print(f"      [{j}] Type: {ctx_type}")
+                    
+                    print()
+                    
+            except Exception as e:
+                print(f"Error displaying messages: {e}")
                 print()
 
         if args[0] == 'contexts':

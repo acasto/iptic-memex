@@ -10,3 +10,4 @@ uv.lock
 pyproject.toml
 .python-version
 CLAUDE.md
+.aiexclude

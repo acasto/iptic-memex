@@ -17,7 +17,7 @@ class AssistantCmdToolAction(InteractionAction):
         self._default_timeout = float(session.get_tools().get('timeout', 15))
 
         # Get base directory configuration
-        base_dir = session.conf.get_option('TOOLS', 'base_directory', fallback='working')
+        base_dir = session.get_option('TOOLS', 'base_directory', fallback='working')
         if base_dir == 'working':
             self.base_dir = os.getcwd()
         elif base_dir == '.':

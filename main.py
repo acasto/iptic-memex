@@ -1,5 +1,6 @@
 import click
-from session_handler import SessionHandler
+from config_manager import ConfigManager
+from session import SessionBuilder
 
 
 @click.group(invoke_without_command=True)
@@ -12,60 +13,61 @@ from session_handler import SessionHandler
 @click.option('-v', '--verbose', default=False, is_flag=True, help='Show session parameters')
 @click.option('-r', '--raw', default=False, is_flag=True, help='Return raw response in completion mode')
 @click.option('-f', '--file', multiple=True, help='File to use for completion')
-# @click.option( '-f', '--file', multiple=True, type=click.File('r'), help='File to use for completion')
 @click.pass_context
 def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw, file):
     """
     the main entry point for the CLI click interface
-    :param ctx: the context object that we can use to pass around information
-    :param conf: a path to a custom configuration file
-    :param model: the model to use for completion
-    :param prompt: the prompt file to use for completion
-    :param temperature: temperature to use for completion
-    :param max_tokens: maximum number of tokens to use
-    :param stream: stream the completion events
-    :param verbose: show session parameters
-    :param raw: return raw response in completion mode
-    :param file: file to use for completion (file mode)
-    :return: none (this is a click entry point)
     """
     ctx.ensure_object(dict)  # set up the context object to be passed around
-    session = SessionHandler(conf)  # start up a session handler
-    ctx.obj['SESSION'] = session
-
-    # Update session parameters only if they are provided
-    if prompt:
-        # Create a temporary PromptContext to resolve the chain
-        session.set_option('prompt', prompt)
-        session.add_context('prompt', prompt)
+    
+    # Create config manager and session builder
+    config_manager = ConfigManager(conf)
+    builder = SessionBuilder(config_manager)
+    ctx.obj['CONFIG_MANAGER'] = config_manager
+    ctx.obj['BUILDER'] = builder
+    
+    # Build session options from CLI parameters
+    options = {}
     if model:
-        session.set_option('model', model)
+        options['model'] = model
+    if prompt:
+        options['prompt'] = prompt
     if temperature:
-        session.set_option('temperature', temperature)
+        options['temperature'] = temperature
     if max_tokens:
-        session.set_option('max_tokens', max_tokens)
+        options['max_tokens'] = max_tokens
     if stream:
-        session.set_option('cli_stream', True)  # differentiate from config stream option
+        options['cli_stream'] = True  # differentiate from config stream option
+        options['stream'] = True
     if verbose:
         ctx.obj['VERBOSE'] = verbose
-
-    # In the CLI function, modify the file handling:
+    if raw:
+        options['raw_completion'] = True
+        # Disable streaming if raw output is requested
+        options['stream'] = False
+    
+    # Store options for later use
+    ctx.obj['OPTIONS'] = options
+    
+    # Handle file mode (completion mode)
     if len(file) > 0:
-        if raw:
-            session.set_option('raw_completion', True)
-            # Disable streaming if raw output is requested
-            session.set_option('stream', False)
-        # loop through the files and read them in appending the content to the message
+        # Build session for completion mode
+        session = builder.build(mode='completion', **options)
+        ctx.obj['SESSION'] = session
+        
+        # Add file contexts
         for f in file:
             if is_image_file(f):
                 session.add_context('image', f)
             else:
                 session.add_context('file', f)
-
-        session.start_mode("completion")
-
+        
+        # Start completion mode
+        from modes.completion_mode import CompletionMode
+        mode = CompletionMode(session)
+        mode.start()
         return
-
+    
     # if no subcommand was invoked, show the help (since we're using invoke_without_command=True)
     if ctx.invoked_subcommand is None:
         raise click.UsageError(cli.get_help(ctx))
@@ -75,16 +77,59 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw,
 @click.pass_context
 @click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
 def chat(ctx, file):
-    session = ctx.obj['SESSION']
-
-    # if we have files to read in, do that now
+    # Get builder and options from context
+    builder = ctx.obj['BUILDER']
+    options = ctx.obj.get('OPTIONS', {})
+    
+    # Build session for chat mode
+    session = builder.build(mode='chat', **options)
+    ctx.obj['SESSION'] = session
+    
+    # Add file contexts if provided
     if len(file) > 0:
-        # loop through the files and read them in appending the content to the message
         for f in file:
             session.add_context('file', f)
-
-    session.start_mode("chat")
+    
+    # Start chat mode
+    from modes.chat_mode import ChatMode
+    mode = ChatMode(session, builder)
+    mode.start()
     return
+
+
+@cli.command()
+@click.pass_context
+@click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
+def tui(ctx, file):
+    """Start TUI (Terminal User Interface) mode"""
+    # Get builder and options from context
+    builder = ctx.obj['BUILDER']
+    options = ctx.obj.get('OPTIONS', {})
+    
+    # Build session for TUI mode
+    session = builder.build(mode='tui', **options)
+    ctx.obj['SESSION'] = session
+    
+    # Add file contexts if provided
+    if len(file) > 0:
+        for f in file:
+            session.add_context('file', f)
+    
+    # Start TUI mode
+    try:
+        from tui.mode import TextualMode
+        mode = TextualMode(session, builder)
+        mode.start()
+    except ImportError as e:
+        if 'textual' in str(e).lower():
+            print("Error: TUI mode requires the 'textual' library.")
+            print("Install with: pip install textual")
+        else:
+            print(f"Error importing TUI components: {e}")
+    except Exception as e:
+        print(f"Error starting TUI mode: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 @cli.command()
@@ -94,15 +139,17 @@ def chat(ctx, file):
 def list_models(ctx, showall, details):
     """
     list the available models
-    :param ctx: click context
-    :param showall: show all models
-    :param details: show model details
     """
-    session = ctx.obj['SESSION']
+    config_manager = ctx.obj.get('CONFIG_MANAGER')
+    if not config_manager:
+        # Create a temporary config manager if none exists
+        config_manager = ConfigManager()
+    
     if showall:
-        models = session.list_models(showall=True)
+        models = config_manager.list_models(showall=True)
     else:
-        models = session.list_models(showall=False)
+        models = config_manager.list_models(showall=False)
+    
     for section, options in models.items():
         if details:
             print()
@@ -122,12 +169,14 @@ def list_models(ctx, showall, details):
 def list_providers(ctx, showall):
     """
     list the available providers
-    :param ctx: click context
-    :param showall: show all providers
     """
-    session = ctx.obj['SESSION']
-    models = session.list_models(showall=False)
-
+    config_manager = ctx.obj.get('CONFIG_MANAGER')
+    if not config_manager:
+        # Create a temporary config manager if none exists
+        config_manager = ConfigManager()
+    
+    models = config_manager.list_models(showall=False)
+    
     # get the provider of the default model
     default_model = ''
     default_provider = ''
@@ -135,12 +184,12 @@ def list_providers(ctx, showall):
         if 'default' in options and options['default'] == 'True':
             default_model = model
             default_provider = options['provider']
-
+    
     if showall:
-        providers = session.list_providers(showall=True)
+        providers = config_manager.list_providers(showall=True)
     else:
-        providers = session.list_providers(showall=False)
-
+        providers = config_manager.list_providers(showall=False)
+    
     for provider in providers:
         if provider == default_provider:
             print(f'{provider} (default w/ {default_model})')
@@ -153,12 +202,45 @@ def list_providers(ctx, showall):
 def list_prompts(ctx):
     """
     list the available prompts
-    :param ctx: click context
     """
-    session = ctx.obj['SESSION']
-    prompts = session.list_prompts()
-    if prompts is not None:
-        for prompt in prompts:
+    config_manager = ctx.obj.get('CONFIG_MANAGER')
+    if not config_manager:
+        # Create a temporary config manager if none exists
+        config_manager = ConfigManager()
+    
+    # Create a session to get the prompt resolver
+    builder = SessionBuilder(config_manager)
+    session = builder.build()
+    
+    # Get available prompts from the prompt resolver
+    prompt_resolver = session._registry.get_prompt_resolver()
+    
+    # List prompts from prompt directories
+    prompts = []
+    
+    # Get prompt directories
+    user_prompt_dir = config_manager.base_config.get('DEFAULT', {}).get('user_prompts')
+    default_prompt_dir = config_manager.base_config.get('DEFAULT', {}).get('prompt_directory', 'prompts')
+    
+    # Scan directories for prompt files
+    import os
+    extensions = ['', '.txt', '.md']
+    
+    for prompt_dir in [user_prompt_dir, default_prompt_dir]:
+        if prompt_dir:
+            full_path = session.config.resolve_directory_path(prompt_dir)
+            if full_path and os.path.isdir(full_path):
+                for filename in os.listdir(full_path):
+                    # Remove extensions to get prompt names
+                    for ext in extensions:
+                        if filename.endswith(ext):
+                            prompt_name = filename[:-len(ext)] if ext else filename
+                            if prompt_name and prompt_name not in prompts:
+                                prompts.append(prompt_name)
+                            break
+    
+    if prompts:
+        for prompt in sorted(prompts):
             print(prompt)
     else:
         print("No prompts available")

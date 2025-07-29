@@ -27,17 +27,17 @@ ENDPOINTS = {
 class AssistantYoutrackToolAction(InteractionAction):
     def __init__(self, session):
         self.session = session
-        self.base_url = self.session.conf.get_option('YOUTRACK', 'base_url')
-        self.api_key = self.session.conf.get_option('YOUTRACK', 'api_key')
+        self.base_url = self.session.get_option('YOUTRACK', 'base_url')
+        self.api_key = self.session.get_option('YOUTRACK', 'api_key')
 
         # Merge the default configuration with user-defined settings from config.ini
         self.config = DEFAULT_CONFIG.copy()
-        self.config['state_field_name'] = self.session.conf.get_option('YOUTRACK', 'state_field_name', fallback=self.config['state_field_name'])
-        self.config['priority_field_name'] = self.session.conf.get_option('YOUTRACK', 'priority_field_name', fallback=self.config['priority_field_name'])
-        self.config['type_field_name'] = self.session.conf.get_option('YOUTRACK', 'type_field_name', fallback=self.config['type_field_name'])
-        self.config['assignee_field_name'] = self.session.conf.get_option('YOUTRACK', 'assignee_field_name', fallback=self.config['assignee_field_name'])
-        self.config['default_state_filter'] = self.session.conf.get_option('YOUTRACK', 'default_state_filter', fallback=self.config['default_state_filter'])
-        self.config['timezone'] = self.session.conf.get_option('YOUTRACK', 'timezone', fallback=self.config['timezone'])
+        self.config['state_field_name'] = self.session.get_option('YOUTRACK', 'state_field_name', fallback=self.config['state_field_name'])
+        self.config['priority_field_name'] = self.session.get_option('YOUTRACK', 'priority_field_name', fallback=self.config['priority_field_name'])
+        self.config['type_field_name'] = self.session.get_option('YOUTRACK', 'type_field_name', fallback=self.config['type_field_name'])
+        self.config['assignee_field_name'] = self.session.get_option('YOUTRACK', 'assignee_field_name', fallback=self.config['assignee_field_name'])
+        self.config['default_state_filter'] = self.session.get_option('YOUTRACK', 'default_state_filter', fallback=self.config['default_state_filter'])
+        self.config['timezone'] = self.session.get_option('YOUTRACK', 'timezone', fallback=self.config['timezone'])
 
         self.headers = {
             'Authorization': f'Bearer {self.api_key}',

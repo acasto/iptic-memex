@@ -28,13 +28,13 @@ class AssistantDockerToolAction(InteractionAction):
         self.docker_env = self.session.get_tools().get('docker_env', 'ephemeral')
         env_section = self.docker_env.upper()
         # Load persistence setting from the environment's config
-        self.is_persistent = self.session.conf.get_option(env_section, 'persistent', False)
+        self.is_persistent = self.session.get_option(env_section, 'persistent', False)
 
         # Load Docker-specific configuration
-        self.docker_image = self.session.conf.get_option(env_section, 'docker_image', 'ubuntu:latest')
-        self.docker_run_options = self.session.conf.get_option(env_section, 'docker_run_options', '')
+        self.docker_image = self.session.get_option(env_section, 'docker_image', 'ubuntu:latest')
+        self.docker_run_options = self.session.get_option(env_section, 'docker_run_options', '')
         self.container_name = None if not self.is_persistent else \
-            self.session.conf.get_option(env_section, 'docker_name', f'assistant-{self.docker_env}')
+            self.session.get_option(env_section, 'docker_name', f'assistant-{self.docker_env}')
 
     def _check_container_exists(self) -> bool:
         """Check if the named container exists and is running"""
@@ -59,7 +59,7 @@ class AssistantDockerToolAction(InteractionAction):
                     docker_cmd.extend(shlex.split(self.docker_run_options))
 
                 # Check if read-only mount is specified in config
-                mount_ro = self.session.conf.get_option(self.docker_env.upper(), 'mount_readonly', 'false').lower() == 'true'
+                mount_ro = self.session.get_option(self.docker_env.upper(), 'mount_readonly', 'false').lower() == 'true'
                 mount_opts = ':ro' if mount_ro else ''
 
                 # Add volume mount and working directory
@@ -98,7 +98,7 @@ class AssistantDockerToolAction(InteractionAction):
                 docker_cmd.extend(shlex.split(self.docker_run_options))
 
             # Check if read-only mount is specified in config
-            mount_ro = self.session.conf.get_option(self.docker_env.upper(), 'mount_readonly', False)
+            mount_ro = self.session.get_option(self.docker_env.upper(), 'mount_readonly', False)
             mount_opts = ':ro' if mount_ro else ''
             docker_cmd.extend(["-v", f"{self.base_dir}:/workspace{mount_opts}"])
             docker_cmd.extend(["-w", "/workspace"])

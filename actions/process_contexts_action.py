@@ -105,8 +105,8 @@ class ProcessContextsAction(InteractionAction):
         # 'idx' - the original index of the context in the list of contexts (to be able to reference it later)
         # 'context' - the context object
         contexts = []
-        for context_type in session.get_context():  # get the dict of context type lists
+        for context_type in session.context:  # get the dict of context type lists directly
             if context_type != 'prompt' and context_type != 'chat':  # Ignore the prompt and chat contexts
-                for idx, context in enumerate(session.get_context(context_type)):
+                for idx, context in enumerate(session.context[context_type]):
                     contexts.append({'type': context_type, 'idx': idx, 'context': context})
         return contexts

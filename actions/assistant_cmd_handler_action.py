@@ -12,7 +12,7 @@ class AssistantCmdHandlerAction(InteractionAction):
 
     def _get_default_timeout(self):
         """Get default timeout from config"""
-        return float(self.session.conf.get_option('TOOLS', 'timeout', fallback=15))
+        return float(self.session.get_option('TOOLS', 'timeout', fallback=15))
 
     def run(self, command, content, mode='w+', encoding='utf-8', timeout=None):
         """

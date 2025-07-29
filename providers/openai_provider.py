@@ -2,7 +2,7 @@ import os
 from time import time
 import openai
 from openai import OpenAI
-from session_handler import APIProvider, SessionHandler
+from session_handler import APIProvider
 from actions.process_contexts_action import ProcessContextsAction
 
 
@@ -11,7 +11,7 @@ class OpenAIProvider(APIProvider):
     OpenAI API handler
     """
 
-    def __init__(self, session: SessionHandler):
+    def __init__(self, session):
         self.session = session
         self.params = session.get_params()
         self.last_api_param = None

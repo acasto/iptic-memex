@@ -28,7 +28,7 @@ class PromptTemplateAction(InteractionAction):
                 return str(value)
 
             # Check config defaults
-            value = self.session.conf.get_option("DEFAULT", var)
+            value = self.session.get_option("DEFAULT", var)
             if value is not None:
                 return str(value)
 
@@ -45,7 +45,7 @@ class PromptTemplateAction(InteractionAction):
         namespace = parts[0].lower()
 
         if namespace == "config" and len(parts) == 3:
-            value = self.session.conf.get_option(parts[1], parts[2], fallback=None)
+            value = self.session.get_option(parts[1], parts[2], fallback=None)
             return str(value) if value is not None else None
 
         elif namespace == "env" and len(parts) == 2:

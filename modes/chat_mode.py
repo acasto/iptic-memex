@@ -2,14 +2,16 @@ from session_handler import InteractionMode
 
 
 class ChatMode(InteractionMode):
-    def __init__(self, session):
+    def __init__(self, session, builder=None):
         self.session = session
-        self.params = session.get_params()
-        self.utils = session.utils
+        self.builder = builder  # For model switching
+        
+        self.params = self.session.get_params()
+        self.utils = self.session.utils
 
-        session.add_context('chat')
-        self.chat = session.get_context('chat')
-        self.process_contexts = session.get_action('process_contexts')
+        self.session.add_context('chat')
+        self.chat = self.session.get_context('chat')
+        self.process_contexts = self.session.get_action('process_contexts')
         self._budget_warning_shown = False
 
     def get_user_input(self):
@@ -50,9 +52,16 @@ class ChatMode(InteractionMode):
                 stream = self.session.get_provider().stream_chat()
                 if not stream:
                     return None
-                # response = self.utils.stream.process_stream(stream, spinner_message="")
                 output_processor = self.session.get_action('assistant_output')
-                response = output_processor.run(stream, spinner_message="")
+                if output_processor:
+                    response = output_processor.run(stream, spinner_message="")
+                else:
+                    # Fallback if assistant_output action not available
+                    response = ""
+                    for chunk in stream:
+                        print(chunk, end='', flush=True)
+                        response += chunk
+                    print()
             else:
                 response = self.session.get_provider().chat()
                 if response is None:
@@ -64,7 +73,9 @@ class ChatMode(InteractionMode):
             return None
 
         self.chat.add(response, 'assistant')
-        self.session.get_action('assistant_commands').run(response)
+        assistant_commands = self.session.get_action('assistant_commands')
+        if assistant_commands:
+            assistant_commands.run(response)
         return response
 
     def check_budget(self):
@@ -78,13 +89,15 @@ class ChatMode(InteractionMode):
 
         try:
             budget = float(session_budget)
-            cost = self.session.get_provider().get_cost()
-            if cost and cost.get('total_cost', 0) > budget:
-                self.utils.output.warning(
-                    f"Budget warning: Session cost (${cost['total_cost']:.4f}) exceeds budget (${budget:.4f})",
-                    spacing=[0, 1]
-                )
-                self._budget_warning_shown = True
+            provider = self.session.get_provider()
+            if provider and hasattr(provider, 'get_cost'):
+                cost = provider.get_cost()
+                if cost and cost.get('total_cost', 0) > budget:
+                    self.utils.output.warning(
+                        f"Budget warning: Session cost (${cost['total_cost']:.4f}) exceeds budget (${budget:.4f})",
+                        spacing=[0, 1]
+                    )
+                    self._budget_warning_shown = True
         except (ValueError, TypeError):
             pass
 
@@ -98,9 +111,15 @@ class ChatMode(InteractionMode):
             self.check_budget()
 
             if self.session.get_flag('auto_submit'):
-                contexts = self.process_contexts.process_contexts_for_user(auto_submit=True)
+                if self.process_contexts and hasattr(self.process_contexts, 'process_contexts_for_user'):
+                    contexts = self.process_contexts.process_contexts_for_user(auto_submit=True)
+                else:
+                    contexts = []
             else:
-                contexts = self.process_contexts.process_contexts_for_user()
+                if self.process_contexts and hasattr(self.process_contexts, 'process_contexts_for_user'):
+                    contexts = self.process_contexts.process_contexts_for_user()
+                else:
+                    contexts = []
 
             try:
                 # Skip user input if auto_submit is set
@@ -112,7 +131,9 @@ class ChatMode(InteractionMode):
 
                 self.utils.output.write()
 
-                if self.session.get_action('user_commands').run(user_input):
+                # Safe action call with None check
+                user_commands_action = self.session.get_action('user_commands')
+                if user_commands_action and user_commands_action.run(user_input):
                     continue
 
             # handle Ctrl-C
@@ -127,7 +148,8 @@ class ChatMode(InteractionMode):
 
             self.chat.add(user_input, 'user', contexts)
 
-            for context_type in list(self.session.get_context().keys()):
+            # Clear temporary contexts
+            for context_type in list(self.session.context.keys()):
                 if context_type not in ('prompt', 'chat'):
                     self.session.remove_context_type(context_type)
 

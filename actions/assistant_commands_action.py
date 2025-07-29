@@ -33,8 +33,8 @@ class AssistantCommandsAction(InteractionAction):
         self.session = session
         self.params = session.get_params()
 
-        cmd_tool = session.conf.get_option('TOOLS', 'cmd_tool', fallback='assistant_cmd_tool')
-        search_tool = session.conf.get_option('TOOLS', 'search_tool', fallback='assistant_websearch_tool')
+        cmd_tool = session.get_option('TOOLS', 'cmd_tool', fallback='assistant_cmd_tool')
+        search_tool = session.get_option('TOOLS', 'search_tool', fallback='assistant_websearch_tool')
 
         self.commands = {
             "CMD": {
@@ -97,7 +97,7 @@ class AssistantCommandsAction(InteractionAction):
 
                 command_info = self.commands[command_name]
                 # Check auto-submit status
-                allow_auto_submit = self.session.conf.get_option('TOOLS', 'allow_auto_submit', fallback=False)
+                allow_auto_submit = self.session.get_option('TOOLS', 'allow_auto_submit', fallback=False)
                 if command_info.get('auto_submit') and auto_submit is not False and allow_auto_submit:
                     self.session.set_flag('auto_submit', True)
 

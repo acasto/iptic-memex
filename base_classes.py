@@ -3,9 +3,6 @@ Abstract base classes for iptic-memex components.
 
 These classes define the interfaces that providers, modes, contexts, and actions
 must implement to work with the iptic-memex architecture.
-
-The old SessionHandler class has been replaced by the new Session + SessionBuilder
-architecture in session.py and config_manager.py.
 """
 
 from __future__ import annotations

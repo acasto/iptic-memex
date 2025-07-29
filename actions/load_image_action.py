@@ -17,7 +17,7 @@ class LoadImageAction(InteractionAction):
         # Check if this is a summary request or if we should fall back to summary
         model = self.session.get_params().get('model')
         force_summary = args and args[0] == "summary"
-        use_summary = force_summary or not (model and self.session.conf.get_option_from_model('vision', model))
+        use_summary = force_summary or not (model and self.session.get_option_from_model('vision', model))
 
         if use_summary:
             args = args[1:] if force_summary and len(args) > 1 else args
@@ -84,7 +84,7 @@ class LoadImageAction(InteractionAction):
 
         # Check if current model supports direct vision
         model = session.get_params().get('model')
-        if model and session.conf.get_option_from_model('vision', model):
+        if model and session.get_option_from_model('vision', model):
             return True
 
         return False

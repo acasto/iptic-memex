@@ -9,7 +9,20 @@ class BraveSummaryAction(InteractionAction):
 
     def __init__(self, session):
         self.session = session
-        self.brave = session.conf.get_all_options_from_provider("Brave")
+        try:
+            # Try to get brave config through session params (which includes provider settings)
+            params = session.get_params()
+            self.brave = {k: v for k, v in params.items() if k.startswith('brave_') or k in ['api_key', 'endpoint']}
+            # If empty, try to get from TOOLS section as fallback
+            if not self.brave:
+                self.brave = {}
+                # Get common brave settings
+                for key in ['api_key', 'endpoint', 'search_model']:
+                    value = session.get_option('TOOLS', f'brave_{key}', fallback=None)
+                    if value:
+                        self.brave[key] = value
+        except Exception:
+            self.brave = {}
 
     def run(self, message=None):
         if 'api_key' not in self.brave:

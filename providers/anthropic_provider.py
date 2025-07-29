@@ -3,7 +3,7 @@ from time import time
 from dataclasses import dataclass
 from typing import List, Dict, Any, Generator
 from anthropic import Anthropic
-from session_handler import APIProvider, SessionHandler
+from session_handler import APIProvider
 
 
 @dataclass
@@ -29,7 +29,7 @@ class Usage:
 
 
 class AnthropicProvider(APIProvider):
-    def __init__(self, session: SessionHandler):
+    def __init__(self, session):
         self.session = session
         self.params = session.get_params()
         self.client = self._initialize_client()
