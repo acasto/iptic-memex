@@ -442,7 +442,7 @@ class SessionHandler:
                 return '\n\n'.join(resolved_contents)
 
             # Check user prompt directory first
-            user_prompt_dir_str = self.conf.get_option('DEFAULT', 'user_prompt_directory', fallback=None)
+            user_prompt_dir_str = self.conf.get_option('DEFAULT', 'user_prompts', fallback=None)
             if user_prompt_dir_str:
                 user_prompt_dir = self.conf.resolve_directory_path(user_prompt_dir_str)
                 if user_prompt_dir:

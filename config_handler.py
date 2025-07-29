@@ -96,7 +96,7 @@ class ConfigHandler:
                         prompts.add(os.path.splitext(f)[0])
 
         # Get from user prompt directory, overriding defaults
-        user_prompt_dir_str = self.get_option('DEFAULT', 'user_prompt_directory', fallback=None)
+        user_prompt_dir_str = self.get_option('DEFAULT', 'user_prompts', fallback=None)
         if user_prompt_dir_str:
             user_prompt_dir = self.resolve_directory_path(user_prompt_dir_str)
             if user_prompt_dir and os.path.isdir(user_prompt_dir):
