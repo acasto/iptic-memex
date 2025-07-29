@@ -35,7 +35,19 @@ class OpenAIProvider(APIProvider):
             quit()
 
         if 'base_url' in self.params and self.params['base_url'] is not None:
-            options['base_url'] = self.params['base_url']
+            base_url = self.params['base_url']
+            
+            # If there's also an endpoint parameter, combine them
+            if 'endpoint' in self.params and self.params['endpoint'] is not None:
+                endpoint = self.params['endpoint']
+                # Make sure we don't double up on slashes
+                if not base_url.endswith('/') and not endpoint.startswith('/'):
+                    base_url += '/'
+                elif base_url.endswith('/') and endpoint.startswith('/'):
+                    endpoint = endpoint[1:]
+                base_url += endpoint
+            
+            options['base_url'] = base_url
 
         if 'timeout' in self.params and self.params['timeout'] is not None:
             options['timeout'] = self.params['timeout']
@@ -171,8 +183,27 @@ class OpenAIProvider(APIProvider):
 
             if self.last_api_param is not None:
                 error_msg += "\nDebug info:\n"
+                
+                # Add URL information from the client
+                if hasattr(self.client, 'base_url'):
+                    error_msg += f"base_url: {self.client.base_url}\n"
+                elif 'base_url' in self.params:
+                    error_msg += f"base_url: {self.params['base_url']}\n"
+                
+                # Add endpoint if available
+                if 'endpoint' in self.params:
+                    error_msg += f"endpoint: {self.params['endpoint']}\n"
+                
+                # Add provider info for context
+                if 'provider' in self.params:
+                    error_msg += f"provider: {self.params['provider']}\n"
+                
                 for key, value in self.last_api_param.items():
-                    error_msg += f"{key}: {value}\n"
+                    # Don't print the full messages as they can be very long
+                    if key == 'messages':
+                        error_msg += f"{key}: <{len(value)} messages>\n"
+                    else:
+                        error_msg += f"{key}: {value}\n"
 
             print(error_msg)
             return error_msg

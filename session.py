@@ -19,6 +19,7 @@ class Session:
         self.usage_stats = {}
         self.user_data = {}  # For arbitrary session data
         self._registry = registry
+        self.current_model = None  # Track the current model
     
     # Convenience methods that delegate to registry
     def get_action(self, name: str):
@@ -98,7 +99,7 @@ class Session:
     @property
     def params(self):
         """Current merged parameters for the session"""
-        return self.config.get_params()
+        return self.config.get_params(self.current_model)
     
     def get_params(self):
         """Backward compatibility method"""
@@ -301,8 +302,12 @@ class SessionBuilder:
         # Create session
         session = Session(session_config, registry)
         
+        # Set the current model
+        session.current_model = options.get('model')
+        
         # Initialize provider
-        provider_name = session_config.get_params().get('provider')
+        model = options.get('model')  # Get the model from options
+        provider_name = session_config.get_params(model).get('provider')
         if provider_name:
             provider_class = self._load_provider_class(provider_name)
             if provider_class:
@@ -346,10 +351,21 @@ class SessionBuilder:
             session.provider.set_usage(old_usage)
     
     def _load_provider_class(self, provider_name: str):
-        """Load a provider class dynamically"""
+        """Load a provider class dynamically, handling aliases"""
         try:
+            # Check if this provider has an alias
+            provider_config = {}
+            if self.config_manager.base_config.has_section(provider_name):
+                provider_config = {
+                    option: self.config_manager.base_config.get(provider_name, option)
+                    for option in self.config_manager.base_config.options(provider_name)
+                }
+            
+            # If there's an alias, use the aliased provider
+            actual_provider = provider_config.get('alias', provider_name)
+            
             # Convert provider name to module name (e.g., 'OpenAI' -> 'openai_provider')
-            module_name = f"{provider_name.lower()}_provider"
+            module_name = f"{actual_provider.lower()}_provider"
             
             # Try to import from providers package
             module_path = os.path.join(os.path.dirname(__file__), 'providers', f"{module_name}.py")
@@ -362,8 +378,8 @@ class SessionBuilder:
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             
-            # Look for a class that matches the provider name
-            class_name = f"{provider_name}Provider"
+            # Look for a class that matches the actual provider name
+            class_name = f"{actual_provider}Provider"
             if hasattr(module, class_name):
                 return getattr(module, class_name)
             

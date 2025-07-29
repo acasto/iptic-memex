@@ -67,6 +67,18 @@ class ConfigManager:
     
     def create_session_config(self, overrides: Optional[Dict[str, Any]] = None) -> 'SessionConfig':
         """Create a mutable session-specific config"""
+        if overrides is None:
+            overrides = {}
+        
+        # Normalize model name in overrides if present
+        if 'model' in overrides:
+            model = overrides['model']
+            # Create a temporary SessionConfig to use normalize_model_name
+            temp_config = SessionConfig(self.base_config, self.models, {})
+            normalized_model = temp_config.normalize_model_name(model)
+            if normalized_model:
+                overrides['model'] = normalized_model
+        
         return SessionConfig(self.base_config, self.models, overrides)
     
     def list_models(self, active_only: bool = True) -> Dict[str, Dict[str, Any]]:
@@ -303,7 +315,9 @@ class SessionConfig:
         
         # Set the model parameter explicitly
         if model:
-            params['model'] = model
+            # Use the normalized model name (model_name from config) instead of section name
+            normalized_model = self.normalize_model_name(model)
+            params['model'] = normalized_model if normalized_model else model
         
         # Add provider-specific config if model is specified
         if model:
