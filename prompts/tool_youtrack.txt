@@ -13,7 +13,6 @@ Interact with YouTrack projet management            %%YOUTRACK%%
     - (only with update_priority) issue_id="<issue id>" priority="<priority name>"
     - (only with update_type) issue_id="<issue id>" type="<type name>"
     - (only with add_comment) issue_id="<issue id>" block="<comment block label>"
-  + When using a custom query, remember you probably want to add `status:{Open} or status:{In Progress}` to it to filter out closed issues unless otherwise specified.
   + To add a description to a new or updated issue, or add a comment, create a labeled code block:
 
 %%BLOCK:issue_description%%
