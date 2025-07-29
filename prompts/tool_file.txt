@@ -21,10 +21,11 @@ Interact with files                 %%FILE%%
     block="my_content"
     %%END%%
 
-  + The 'edit' mode will pass the file along with the requested changes to another LLM for editing. You don't need to write out the whole file, just the parts you want to change, but be sure to provide enough context for the changes to be applied.
+  + The 'edit' mode allows you to make targeted changes to specific parts of a file without rewriting the entire file. Provide the actual code/content you want, with enough surrounding context for the model to locate and apply the changes. Think of it like showing someone exactly what to copy-paste, but with enough context to find the right location.
   + The `summarize` mode uses a smaller language model to examine the structure and nature of a file.
   + Only use `summarize` when digging through multiple files, for doing work you probably want to `read`.
   + Use `mode="append"` to add content without overwriting the file.
   + Be cautious with `mode="write"`, as it will overwrite the file if it exists.
   + Be cautious when it comes to edits in the middle of files you can't fully write out. When in doubt, ask the user to copy paste.
   + Referenced code blocks WILL NOT work with commands like sed, only with this file tool.
+  + ONLY DO ONE FILE OPERATION PER TURN FOR RELIABILITY.
