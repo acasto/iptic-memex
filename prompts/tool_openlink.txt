@@ -2,9 +2,7 @@ Open links in browser                      %%OPENLINK%%
  + Opens URLs in the system's default browser
  + Automatically adds https:// if no protocol is specified
  + Works cross-platform (macOS, Linux, Windows)
- + Arguments available are:
-    - url="<URL to open>"
- + The URL can be provided either as an argument or in the content block
+ + The URL can be provided in the content block
  + Examples:
    - Open a website:
 %%OPENLINK%%
@@ -14,7 +12,8 @@ https://github.com
 %%OPENLINK%%
 google.com
 %%END%%
-   - Using the url argument:
+   - Open multiple links:
 %%OPENLINK%%
-url="https://stackoverflow.com"
+https://docs.anthropic.com
+https://platform.openai.com/docs
 %%END%%

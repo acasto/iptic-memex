@@ -2,6 +2,7 @@ from base_classes import InteractionAction
 import subprocess
 import platform
 import shlex
+import urllib.parse
 
 
 class AssistantOpenlinkToolAction(InteractionAction):
@@ -12,6 +13,15 @@ class AssistantOpenlinkToolAction(InteractionAction):
     '''
     %%OPENLINK%%
     https://example.com
+    %%END%%
+    '''
+
+    Multiple URLs:
+    '''
+    %%OPENLINK%%
+    https://docs.djangoproject.com/en/stable/topics/forms/
+    https://docs.djangoproject.com/en/stable/ref/forms/api/
+    https://github.com/django/django/issues/12345
     %%END%%
     '''
 
@@ -47,7 +57,7 @@ class AssistantOpenlinkToolAction(InteractionAction):
         elif system == 'linux':
             return ['xdg-open']
         elif system == 'windows':
-            return ['start', '']  # The empty string is needed for start command
+            return ['cmd', '/c', 'start', '']
         else:
             # Fallback - try common commands
             for cmd in ['xdg-open', 'open']:
@@ -58,22 +68,84 @@ class AssistantOpenlinkToolAction(InteractionAction):
                     continue
             return None
 
-    def run(self, args: dict = None, content: str = ""):
-        """Process and open the URL in the default browser"""
-        # Extract URL from either content or args
-        url = content.strip() if content.strip() else (args.get('url', '') if args else '')
+    def _parse_urls(self, content, args):
+        """Parse URLs from content or args, supporting multiple URLs"""
+        urls = []
 
+        # First try to get URLs from content (line-separated)
+        if content.strip():
+            # Split by newlines and clean up each line
+            for line in content.strip().split('\n'):
+                line = line.strip()
+                if line and not line.startswith('#'):  # Skip empty lines and comments
+                    urls.append(line)
+
+        # If no URLs in content, try args
+        if not urls and args:
+            if 'url' in args:
+                urls.append(args['url'])
+            elif 'urls' in args:
+                # Support comma-separated URLs in args
+                urls.extend([u.strip() for u in args['urls'].split(',') if u.strip()])
+
+        return urls
+
+    def _validate_url(self, url):
+        """Validate URL for security and safety"""
         if not url:
+            return False, "Empty URL"
+
+        # Block potentially problematic schemes
+        blocked_schemes = ['file://', 'javascript:', 'data:', 'vbscript:']
+        url_lower = url.lower()
+
+        for scheme in blocked_schemes:
+            if url_lower.startswith(scheme):
+                return False, f"URL scheme '{scheme}' not allowed for security reasons"
+
+        # Basic URL structure validation
+        temp_url = url
+        if not (url.startswith('http://') or url.startswith('https://')):
+            temp_url = 'https://' + url
+
+        try:
+            parsed_url = urllib.parse.urlparse(temp_url)
+            if not parsed_url.scheme or not parsed_url.netloc:
+                return False, "URL missing scheme or host"
+        except Exception as e:
+            return False, f"Invalid URL format: {str(e)}"
+
+        return True, ""
+
+    def _get_url_description(self, url):
+        """Generate a simple description of what's being opened"""
+        try:
+            parsed = urllib.parse.urlparse(url)
+            domain = parsed.netloc
+            return f"Opened {domain}: {url}" if domain else f"Opened: {url}"
+        except Exception:
+            return f"Opened: {url}"
+
+    def run(self, args: dict = None, content: str = ""):
+        """Process and open URL(s) in the default browser"""
+        # Parse URLs from input
+        urls = self._parse_urls(content, args)
+
+        if not urls:
             self.session.add_context('assistant', {
                 'name': 'openlink_error',
-                'content': "No URL provided"
+                'content': "No URLs provided"
             })
             return
 
-        # Basic URL validation - ensure it has a protocol
-        if not (url.startswith('http://') or url.startswith('https://') or url.startswith('file://')):
-            # Assume https if no protocol specified
-            url = 'https://' + url
+        # Limit number of URLs to prevent accidents
+        max_urls = 15
+        if len(urls) > max_urls:
+            self.session.add_context('assistant', {
+                'name': 'openlink_error',
+                'content': f"Too many URLs provided ({len(urls)}). Maximum allowed is {max_urls}."
+            })
+            return
 
         # Get the system command for opening URLs
         open_cmd = self._get_system_open_command()
@@ -84,35 +156,74 @@ class AssistantOpenlinkToolAction(InteractionAction):
             })
             return
 
-        try:
-            # Execute the command to open the URL
-            cmd = open_cmd + [url]
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=10  # Don't wait too long
-            )
+        successful_urls = []
+        failed_urls = []
 
-            if result.returncode == 0:
-                self.session.add_context('assistant', {
-                    'name': 'openlink_success',
-                    'content': f"Opened URL in default browser: {url}"
-                })
+        # Process each URL
+        for url in urls:
+            # Validate URL before processing
+            is_valid, error_msg = self._validate_url(url)
+            if not is_valid:
+                failed_urls.append(f"{url}: {error_msg}")
+                continue
+
+            # Add protocol if missing
+            if not (url.startswith('http://') or url.startswith('https://') or url.startswith('file://')):
+                url = 'https://' + url
+
+            try:
+                # Execute the command to open the URL
+                cmd = open_cmd + [url]
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    shell=False
+                )
+
+                if result.returncode == 0:
+                    successful_urls.append(url)
+                else:
+                    error_msg = result.stderr.strip() if result.stderr else "Unknown error"
+                    failed_urls.append(f"{url}: {error_msg}")
+
+            except subprocess.TimeoutExpired:
+                failed_urls.append(f"{url}: Timeout")
+            except Exception as e:
+                failed_urls.append(f"{url}: {str(e)}")
+
+        # Report results
+        if successful_urls and not failed_urls:
+            # All succeeded
+            if len(successful_urls) == 1:
+                description = self._get_url_description(successful_urls[0])
+                message = description
             else:
-                error_msg = result.stderr.strip() if result.stderr else "Unknown error"
-                self.session.add_context('assistant', {
-                    'name': 'openlink_error',
-                    'content': f"Failed to open URL: {error_msg}"
-                })
+                domains = []
+                for url in successful_urls:
+                    try:
+                        parsed = urllib.parse.urlparse(url)
+                        domains.append(parsed.netloc or url)
+                    except:
+                        domains.append(url)
+                message = f"Opened {len(successful_urls)} URLs: {', '.join(domains)}"
 
-        except subprocess.TimeoutExpired:
             self.session.add_context('assistant', {
-                'name': 'openlink_error',
-                'content': "Timeout while trying to open URL"
+                'name': 'openlink_success',
+                'content': message
             })
-        except Exception as e:
+        elif successful_urls and failed_urls:
+            # Partial success
+            message = f"Opened {len(successful_urls)} URLs successfully. Failed to open {len(failed_urls)}: {'; '.join(failed_urls)}"
+            self.session.add_context('assistant', {
+                'name': 'openlink_partial',
+                'content': message
+            })
+        else:
+            # All failed
+            message = f"Failed to open all URLs: {'; '.join(failed_urls)}"
             self.session.add_context('assistant', {
                 'name': 'openlink_error',
-                'content': f"Error opening URL: {str(e)}"
+                'content': message
             })
