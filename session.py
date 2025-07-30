@@ -209,12 +209,13 @@ class Session:
         # Get tool settings from the TOOLS section of config
         tools = {}
         try:
-            # Get all options from TOOLS section
-            for key, value in self.config.base_config.get('TOOLS', {}).items():
-                # Convert string booleans to actual booleans
+            # Use get_all_options_from_section to get merged config (base + user)
+            tools = self.config.get_all_options_from_section('TOOLS')
+
+            # Convert string booleans to actual booleans
+            for key, value in tools.items():
                 if isinstance(value, str) and value.lower() in ['true', 'false']:
-                    value = value.lower() == 'true'
-                tools[key] = value
+                    tools[key] = value.lower() == 'true'
         except Exception:
             pass
         return tools
