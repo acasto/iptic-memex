@@ -30,3 +30,4 @@ Interact with files                 %%FILE%%
   + Referenced code blocks WILL NOT work with commands like sed, only with this file tool.
   + Wait for read results before you start writing. The results of a read operation will come in on the following turn. 
   + Be extra cautious of sequential file operations. 
+  + Prefer programmatic edits with the %%CMD%% tool where possible
