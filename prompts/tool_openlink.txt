@@ -1,0 +1,20 @@
+Open links in browser                      %%OPENLINK%%
+ + Opens URLs in the system's default browser
+ + Automatically adds https:// if no protocol is specified
+ + Works cross-platform (macOS, Linux, Windows)
+ + Arguments available are:
+    - url="<URL to open>"
+ + The URL can be provided either as an argument or in the content block
+ + Examples:
+   - Open a website:
+%%OPENLINK%%
+https://github.com
+%%END%%
+   - Open with automatic https:// addition:
+%%OPENLINK%%
+google.com
+%%END%%
+   - Using the url argument:
+%%OPENLINK%%
+url="https://stackoverflow.com"
+%%END%%

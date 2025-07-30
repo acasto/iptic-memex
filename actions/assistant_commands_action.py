@@ -47,6 +47,11 @@ class AssistantCommandsAction(InteractionAction):
                 'auto_submit': True,
                 "function": {"type": "action", "name": "assistant_math_tool"}
             },
+            "OPENLINK": {
+                "args": ["url"],
+                'auto_submit': True,
+                "function": {"type": "action", "name": "assistant_openlink_tool"}
+            },
             "MEMORY": {
                 "args": ["action", "memory", "project", "id"],
                 'auto_submit': True,
