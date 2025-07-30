@@ -10,9 +10,9 @@ class GoogleProvider(APIProvider):
     """
     Google Generative AI provider with proper system prompt and context caching
     """
+    ##%%BLOCK:refactor_google_no_caching%%
     def __init__(self, session):
         self.session = session
-        self.params = session.get_params()
         self.token_counter = session.get_action('count_tokens')
         self._last_response = None
 
@@ -30,9 +30,8 @@ class GoogleProvider(APIProvider):
             'tool_choice'
         ]
 
-        # Initialize API client configuration
-        api_key = self.params.get('api_key') or os.environ.get('GOOGLE_API_KEY', 'none')
-        genai.configure(api_key=api_key)
+        # Initialize API client configuration with fresh params
+        self._initialize_api_config()
 
         # Defer client initialization until first turn to handle caching
         self.client = None
@@ -47,10 +46,19 @@ class GoogleProvider(APIProvider):
         self._cached_content = None
         self._first_turn = True
 
+    def _initialize_api_config(self):
+        """Initialize Google API configuration"""
+        params = self.session.get_params()
+        api_key = params.get('api_key') or os.environ.get('GOOGLE_API_KEY', 'none')
+        genai.configure(api_key=api_key)
+
     def _initialize_client(self, first_turn_context=None):
         """Initialize client with optional caching"""
+        # Get fresh parameters each time
+        current_params = self.session.get_params()
+        
         # Use model_name for the API call, fallback to model if model_name doesn't exist
-        api_model = self.params.get('model_name', self.params.get('model'))
+        api_model = current_params.get('model_name', current_params.get('model'))
         
         if not self._should_enable_caching():
             # Standard initialization without caching
@@ -75,7 +83,7 @@ class GoogleProvider(APIProvider):
         if token_count >= cache_threshold:
             # Setup caching
             try:
-                ttl_minutes = float(self.params.get('cache_ttl', 60))
+                ttl_minutes = float(current_params.get('cache_ttl', 60))
                 self._cached_content = caching.CachedContent.create(
                     model=api_model,
                     display_name=f"session_context_{datetime.datetime.now().isoformat()}",
@@ -100,9 +108,10 @@ class GoogleProvider(APIProvider):
         self.gchat = self.client.start_chat(history=[])
 
     def _should_enable_caching(self) -> bool:
-        """Check if caching should be enabled based on config"""
-        return (self.params.get('prompt_caching', False) and 
-                self.params.get('cache', False))
+        """Check if caching should be enabled based on current config"""
+        params = self.session.get_params()
+        return (params.get('prompt_caching', False) and 
+                params.get('cache', False))
 
     def _get_system_prompt(self) -> str:
         """Get system prompt from context"""
@@ -125,9 +134,11 @@ class GoogleProvider(APIProvider):
         return ""
 
     def _get_safety_settings(self):
-        """Get safety settings from config"""
+        """Get safety settings from current config"""
+        params = self.session.get_params()
+        
         settings = []
-        default = self.params.get('safety_default', 'BLOCK_MEDIUM_AND_ABOVE')
+        default = params.get('safety_default', 'BLOCK_MEDIUM_AND_ABOVE')
 
         categories = {
             'harassment': 'HARM_CATEGORY_HARASSMENT',
@@ -137,7 +148,7 @@ class GoogleProvider(APIProvider):
         }
 
         for category_key, enum_name in categories.items():
-            threshold = self.params.get(f'safety_{category_key}', default)
+            threshold = params.get(f'safety_{category_key}', default)
             settings.append({
                 'category': getattr(genai.types.HarmCategory, enum_name),
                 'threshold': getattr(genai.types.HarmBlockThreshold, threshold)
@@ -148,6 +159,9 @@ class GoogleProvider(APIProvider):
     def chat(self):
         """Handle chat completion requests with caching support"""
         try:
+            # Get fresh parameters instead of using cached self.params
+            current_params = self.session.get_params()
+            
             messages = self.assemble_message()
             if not messages:
                 return None
@@ -161,11 +175,11 @@ class GoogleProvider(APIProvider):
                 if self._cached_content and len(messages) > 1 and not self.session.get_option('completion_mode'):
                     messages = [messages[0]] + messages[2:]
 
-            # Process generation parameters
+            # Process generation parameters using fresh params
             gen_params = {}
             for param in self.parameters:
-                if param in self.params and self.params[param] is not None:
-                    gen_params[param] = self.params[param]
+                if param in current_params and current_params[param] is not None:
+                    gen_params[param] = current_params[param]
 
             # Handle special parameters
             stream = gen_params.pop('stream', False)
@@ -174,7 +188,7 @@ class GoogleProvider(APIProvider):
             if 'max_tokens' in gen_params:
                 gen_params['max_output_tokens'] = int(gen_params.pop('max_tokens'))
 
-            # Get safety settings
+            # Get safety settings using fresh params
             safety_settings = self._get_safety_settings()
 
             # Send message
@@ -336,9 +350,11 @@ class GoogleProvider(APIProvider):
             return {'total_cost': 0.0}
 
         try:
-            price_unit = float(self.params.get('price_unit', 1000000))
-            price_in = float(self.params.get('price_in', 0))
-            price_out = float(self.params.get('price_out', 0))
+            params = self.session.get_params()
+            
+            price_unit = float(params.get('price_unit', 1000000))
+            price_in = float(params.get('price_in', 0))
+            price_out = float(params.get('price_out', 0))
 
             # Regular costs
             input_cost = (usage['total_in'] / price_unit) * price_in

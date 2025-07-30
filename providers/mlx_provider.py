@@ -19,13 +19,15 @@ class MlxProvider:
             session: A Session instance (assuming your existing structure)
         """
         self.session = session
-        self.params = self.session.get_params()
         self.last_api_param = None
         self._last_response = None
 
+        # Get fresh params for initialization
+        params = self.session.get_params()
+
         # Extract/set defaults for MLX
-        model_name = self.params.get('model_name', "mlx-community/MyAwesomeModel")  # Default model
-        self.device = self.params.get('device', "gpu")  # or "cpu"
+        model_name = params.get('model_name', "mlx-community/MyAwesomeModel")  # Default model
+        self.device = params.get('device', "gpu")  # or "cpu"
 
         # Load Model and Tokenizer
         f = io.StringIO()
@@ -150,8 +152,9 @@ class MlxProvider:
         message = []
         if self.session.get_context('prompt'):
             # Use 'system' or 'developer' based on provider configuration
-            # role = 'system' if self.params.get('use_old_system_role', False) else 'developer'
-            role = 'system'  # Remove when 'developer' is supported and uncomment above
+            # Get fresh params to check use_old_system_role
+            params = self.session.get_params()
+            role = 'system' if params.get('use_old_system_role', False) else 'developer'
             message.append({'role': role, 'content': self.session.get_context('prompt').get()['content']})
 
         chat = self.session.get_context('chat')

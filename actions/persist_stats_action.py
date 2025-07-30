@@ -9,7 +9,6 @@ class PersistStatsAction(InteractionAction):
     def __init__(self, session):
         self.session = session
         self.provider = session.get_provider()
-        self.params = session.get_params()
 
         # Define stats schema with typing and behavior
         self.stats_schema = {
@@ -41,11 +40,14 @@ class PersistStatsAction(InteractionAction):
 
     def _get_value(self, stat_name: str, stats: dict[str, Any]) -> Any:
         """Get value from stats based on schema source"""
+        # Get fresh params each time
+        params = self.session.get_params()
+        
         source = self.stats_schema[stat_name]['source']
         if source in stats:
             return stats[source]
-        elif source in self.params:
-            return self.params[source]
+        elif source in params:
+            return params[source]
         return None
 
     def run(self, args=None):
@@ -59,6 +61,9 @@ class PersistStatsAction(InteractionAction):
         if not current_stats:
             return
 
+        # Get fresh params each time
+        params = self.session.get_params()
+
         # Process each stat according to schema
         for stat_name, schema in self.stats_schema.items():
             current_value = self._get_value(stat_name, current_stats)
@@ -68,7 +73,7 @@ class PersistStatsAction(InteractionAction):
             # Handle each prefix for the stat
             for prefix in schema['prefixes']:
                 # Format prefix if it contains placeholders
-                formatted_prefix = prefix.format(model=self.params.get('model', 'unknown'))
+                formatted_prefix = prefix.format(model=params.get('model', 'unknown'))
                 db_key = f"{formatted_prefix}_{stat_name}"
 
                 if schema['accumulate']:

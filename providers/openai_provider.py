@@ -13,47 +13,11 @@ class OpenAIProvider(APIProvider):
 
     def __init__(self, session):
         self.session = session
-        self.params = session.get_params()
         self.last_api_param = None
         self._last_response = None
 
-        # set the options for the OpenAI API client
-        options = {}
-        if 'api_key' in self.params and self.params['api_key'] is not None:
-            options['api_key'] = self.params['api_key']
-        elif 'OPENAI_API_KEY' in os.environ:
-            options['api_key'] = os.environ['OPENAI_API_KEY']
-        else:
-            options['api_key'] = 'none'  # in case we're using the library for something else but still need something set
-
-        # Quick hack to provide a simple and clear message if someone clones the repo and forgets to set the API key
-        # since OpenAI will probably be the most common provider. Will still error out on other providers that require
-        # an API key though until we figure out a better way to handle  this (issue is above where we set it to none
-        # so that it still works with local providers that don't require an API key)
-        if self.params['provider'].lower() == 'openai' and options['api_key'] == 'none':
-            print(f"\nOpenAI API Key is required\n")
-            quit()
-
-        if 'base_url' in self.params and self.params['base_url'] is not None:
-            base_url = self.params['base_url']
-            
-            # If there's also an endpoint parameter, combine them
-            if 'endpoint' in self.params and self.params['endpoint'] is not None:
-                endpoint = self.params['endpoint']
-                # Make sure we don't double up on slashes
-                if not base_url.endswith('/') and not endpoint.startswith('/'):
-                    base_url += '/'
-                elif base_url.endswith('/') and endpoint.startswith('/'):
-                    endpoint = endpoint[1:]
-                base_url += endpoint
-            
-            options['base_url'] = base_url
-
-        if 'timeout' in self.params and self.params['timeout'] is not None:
-            options['timeout'] = self.params['timeout']
-
-        # Initialize the OpenAI client
-        self.client = OpenAI(**options)
+        # Initialize client with fresh params
+        self.client = self._initialize_client()
 
         # List of parameters that can be passed to the OpenAI API that we want to handle automatically
         # todo: add list of items for include/exclude to the providers config
@@ -87,6 +51,47 @@ class OpenAIProvider(APIProvider):
             'total_time': 0.0
         }
 
+    def _initialize_client(self) -> OpenAI:
+        """Initialize OpenAI client with current connection parameters"""
+        params = self.session.get_params()
+        
+        # set the options for the OpenAI API client
+        options = {}
+        if 'api_key' in params and params['api_key'] is not None:
+            options['api_key'] = params['api_key']
+        elif 'OPENAI_API_KEY' in os.environ:
+            options['api_key'] = os.environ['OPENAI_API_KEY']
+        else:
+            options['api_key'] = 'none'  # in case we're using the library for something else but still need something set
+
+        # Quick hack to provide a simple and clear message if someone clones the repo and forgets to set the API key
+        # since OpenAI will probably be the most common provider. Will still error out on other providers that require
+        # an API key though until we figure out a better way to handle  this (issue is above where we set it to none
+        # so that it still works with local providers that don't require an API key)
+        if params['provider'].lower() == 'openai' and options['api_key'] == 'none':
+            print(f"\nOpenAI API Key is required\n")
+            quit()
+
+        if 'base_url' in params and params['base_url'] is not None:
+            base_url = params['base_url']
+            
+            # If there's also an endpoint parameter, combine them
+            if 'endpoint' in params and params['endpoint'] is not None:
+                endpoint = params['endpoint']
+                # Make sure we don't double up on slashes
+                if not base_url.endswith('/') and not endpoint.startswith('/'):
+                    base_url += '/'
+                elif base_url.endswith('/') and endpoint.startswith('/'):
+                    endpoint = endpoint[1:]
+                base_url += endpoint
+            
+            options['base_url'] = base_url
+
+        if 'timeout' in params and params['timeout'] is not None:
+            options['timeout'] = params['timeout']
+
+        return OpenAI(**options)
+
     def chat(self):
         """
         Creates a chat completion request to the OpenAI API
@@ -94,27 +99,35 @@ class OpenAIProvider(APIProvider):
         """
         start_time = time()
         try:
+            # Get fresh parameters instead of using cached self.params
+            current_params = self.session.get_params()
+            
             messages = self.assemble_message()
             api_parms = {}
 
             # Check if this is a reasoning model
-            is_reasoning = self.params.get('reasoning', False)
+            is_reasoning = current_params.get('reasoning', False)
 
             # Get excluded parameters if any
             excluded_params = []
             if is_reasoning:
-                excluded_params = self.params.get('excluded_parameters', [])
+                excluded_params = current_params.get('excluded_parameters', [])
 
             # Filter out excluded parameters from self.parameters
             valid_params = [p for p in self.parameters if p not in excluded_params]
 
-            # Build parameter dictionary
+            # Build parameter dictionary using fresh params
             for parameter in valid_params:
-                if parameter in self.params and self.params[parameter] is not None:
-                    api_parms[parameter] = self.params[parameter]
+                if parameter in current_params and current_params[parameter] is not None:
+                    # Handle stream parameter specially - only include if True
+                    if parameter == 'stream':
+                        if current_params[parameter] is True:
+                            api_parms[parameter] = True
+                    else:
+                        api_parms[parameter] = current_params[parameter]
 
             # Use model_name for the API call, fallback to model if model_name doesn't exist
-            api_model = self.params.get('model_name', self.params.get('model'))
+            api_model = current_params.get('model_name', current_params.get('model'))
             if api_model:
                 api_parms['model'] = api_model
 
@@ -131,8 +144,8 @@ class OpenAIProvider(APIProvider):
                         extra_body = {}
 
                 # Handle max_tokens vs max_completion_tokens
-                max_completion_tokens = self.params.get('max_completion_tokens')
-                max_tokens = self.params.get('max_tokens')
+                max_completion_tokens = current_params.get('max_completion_tokens')
+                max_tokens = current_params.get('max_tokens')
 
                 if max_completion_tokens is not None:
                     extra_body['max_completion_tokens'] = max_completion_tokens
@@ -144,7 +157,7 @@ class OpenAIProvider(APIProvider):
                     api_parms.pop('max_tokens', None)
 
                 # Handle reasoning_effort
-                reasoning_effort = self.params.get('reasoning_effort')
+                reasoning_effort = current_params.get('reasoning_effort')
                 if reasoning_effort is not None:
                     # Normalize to lowercase
                     extra_body['reasoning_effort'] = reasoning_effort.lower()
@@ -192,16 +205,16 @@ class OpenAIProvider(APIProvider):
                 # Add URL information from the client
                 if hasattr(self.client, 'base_url'):
                     error_msg += f"base_url: {self.client.base_url}\n"
-                elif 'base_url' in self.params:
-                    error_msg += f"base_url: {self.params['base_url']}\n"
+                elif 'base_url' in current_params:
+                    error_msg += f"base_url: {current_params['base_url']}\n"
                 
                 # Add endpoint if available
-                if 'endpoint' in self.params:
-                    error_msg += f"endpoint: {self.params['endpoint']}\n"
+                if 'endpoint' in current_params:
+                    error_msg += f"endpoint: {current_params['endpoint']}\n"
                 
                 # Add provider info for context
-                if 'provider' in self.params:
-                    error_msg += f"provider: {self.params['provider']}\n"
+                if 'provider' in current_params:
+                    error_msg += f"provider: {current_params['provider']}\n"
                 
                 for key, value in self.last_api_param.items():
                     # Don't print the full messages as they can be very long
@@ -274,7 +287,7 @@ class OpenAIProvider(APIProvider):
         message = []
         if self.session.get_context('prompt'):
             # Use 'system' or 'developer' based on provider configuration
-            role = 'system' if self.params.get('use_old_system_role', False) else 'developer'
+            role = 'system' if self.session.get_params().get('use_old_system_role', False) else 'developer'
             prompt_content = self.session.get_context('prompt').get()['content']
             if prompt_content.strip() == '':
                 prompt_content = ' '  # Replace empty content with a space
@@ -283,7 +296,7 @@ class OpenAIProvider(APIProvider):
         chat = self.session.get_context('chat')
         if chat is not None:
             # Check if provider uses simple message format
-            use_simple_format = self.params.get('use_simple_message_format', False)
+            use_simple_format = self.session.get_params().get('use_simple_message_format', False)
 
             for idx, turn in enumerate(chat.get()):
                 # For simple format, we'll use a single string for content
@@ -461,9 +474,9 @@ class OpenAIProvider(APIProvider):
             return None
 
         try:
-            price_unit = float(self.params.get('price_unit', 1000000))
-            price_in = float(self.params.get('price_in', 0))
-            price_out = float(self.params.get('price_out', 0))
+            price_unit = float(self.session.get_params().get('price_unit', 1000000))
+            price_in = float(self.session.get_params().get('price_in', 0))
+            price_out = float(self.session.get_params().get('price_out', 0))
 
             input_cost = (usage['total_in'] / price_unit) * price_in
             output_cost = (usage['total_out'] / price_unit) * price_out

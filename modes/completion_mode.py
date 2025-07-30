@@ -10,7 +10,6 @@ class CompletionMode(InteractionMode):
 
     def __init__(self, session):
         self.session = session
-        self.params = self.session.get_params()
         self.session.set_flag('completion_mode', True)
 
         # Get all contexts using the process_contexts action
@@ -45,21 +44,26 @@ class CompletionMode(InteractionMode):
         """Start the completion mode interaction."""
         import time
 
+        # Get fresh params each time
+        params = self.session.get_params()
+        
         provider = self.session.get_provider()
         if not provider:
             print("No provider available")
             return
 
-        if self.params.get('raw_completion'):
+        if params.get('raw_completion'):
             # Raw mode: always non-streaming, emit raw JSON
-            self.params['stream'] = False
+            # Set stream to False in session for this completion
+            self.session.set_option('stream', False)
             provider.chat()
             if hasattr(provider, 'get_full_response'):
                 print(provider.get_full_response())
         else:
             # Normal completion: stream only if CLI flag used
-            stream = self.params.get('stream_completion', False)
-            self.params['stream'] = stream
+            stream = params.get('stream_completion', False)
+            # Set stream option in session for this completion
+            self.session.set_option('stream', stream)
 
             if stream:
                 if hasattr(provider, 'stream_chat'):
@@ -67,8 +71,8 @@ class CompletionMode(InteractionMode):
                     if response:
                         for chunk in response:
                             print(chunk, end='', flush=True)
-                            if 'stream_delay' in self.params:
-                                time.sleep(float(self.params['stream_delay']))
+                            if 'stream_delay' in params:
+                                time.sleep(float(params['stream_delay']))
                     print()
             else:
                 if hasattr(provider, 'chat'):

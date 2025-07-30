@@ -32,7 +32,6 @@ class Usage:
 class AnthropicProvider(APIProvider):
     def __init__(self, session):
         self.session = session
-        self.params = session.get_params()
         self.client = self._initialize_client()
         self.current_usage = Usage()
         self.total_usage = Usage()
@@ -45,14 +44,17 @@ class AnthropicProvider(APIProvider):
         }
 
     def _initialize_client(self) -> Anthropic:
+        """Initialize Anthropic client with current connection parameters"""
+        params = self.session.get_params()
+        
         options = {}
-        api_key = self.params.get('api_key') or os.getenv('ANTHROPIC_API_KEY')
+        api_key = params.get('api_key') or os.getenv('ANTHROPIC_API_KEY')
         if api_key:
             options['api_key'] = api_key
         else:
             options['api_key'] = 'none'
 
-        base_url = self.params.get('base_url')
+        base_url = params.get('base_url')
         if base_url:
             options['base_url'] = base_url
 
@@ -168,16 +170,28 @@ class AnthropicProvider(APIProvider):
             return str(context)
 
     def _is_caching_enabled(self) -> bool:
-        return self.params.get('prompt_caching', False)
+        """Check if caching should be enabled based on current config"""
+        params = self.session.get_params()
+        return params.get('prompt_caching', False)
 
     def _prepare_api_parameters(self) -> Dict[str, Any]:
+        # Get fresh parameters instead of using cached self.params
+        current_params = self.session.get_params()
+        
         params = {
-            key: value for key, value in self.params.items()
+            key: value for key, value in current_params.items()
             if key in self.parameters and value is not None
         }
         
+        # Handle stream parameter specially - only include if True
+        if current_params.get('stream') is True:
+            params['stream'] = True
+        else:
+            # Remove stream parameter entirely when False to get non-streaming response
+            params.pop('stream', None)
+        
         # Use model_name for the API call, fallback to model if model_name doesn't exist
-        api_model = self.params.get('model_name', self.params.get('model'))
+        api_model = current_params.get('model_name', current_params.get('model'))
         if api_model:
             params['model'] = api_model
             
@@ -365,11 +379,14 @@ class AnthropicProvider(APIProvider):
             return {'total_cost': 0.0}
 
         try:
-            price_unit = float(self.params.get('price_unit', 1000000))
-            price_in = float(self.params.get('price_in', 0))
-            price_out = float(self.params.get('price_out', 0))
-            price_cache_in = float(self.params.get('price_cache_in', price_in))
-            price_cache_out = float(self.params.get('price_cache_out', price_out))
+            # Use fresh parameters instead of cached self.params
+            current_params = self.session.get_params()
+            
+            price_unit = float(current_params.get('price_unit', 1000000))
+            price_in = float(current_params.get('price_in', 0))
+            price_out = float(current_params.get('price_out', 0))
+            price_cache_in = float(current_params.get('price_cache_in', price_in))
+            price_cache_out = float(current_params.get('price_cache_out', price_out))
 
             # Calculate base token costs
             total_cost = 0.0

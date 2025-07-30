@@ -31,7 +31,6 @@ class AssistantCommandsAction(InteractionAction):
     """
     def __init__(self, session):
         self.session = session
-        self.params = session.get_params()
 
         cmd_tool = session.get_option('TOOLS', 'cmd_tool', fallback='assistant_cmd_tool')
         search_tool = session.get_option('TOOLS', 'search_tool', fallback='assistant_websearch_tool')
@@ -144,7 +143,9 @@ class AssistantCommandsAction(InteractionAction):
 
         # Final processing: if highlighting is True and code blocks are present, reprint chat
         if '```' in response:
-            if 'highlighting' in self.params and self.params['highlighting'] is True:
+            # Get fresh params to check highlighting setting
+            params = self.session.get_params()
+            if 'highlighting' in params and params['highlighting'] is True:
                 self.session.get_action('reprint_chat').run()
 
     @staticmethod

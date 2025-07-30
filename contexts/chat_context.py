@@ -7,7 +7,6 @@ class ChatContext(InteractionContext):
         self.context_data = context_data
         self.session = session
         self.conversation = []  # list to hold the file name and content
-        self.params = session.get_params()
 
     def add(self, message, role='user', context=None):
         # If the conversation is empty and the role isn't 'user', insert a blank 'user' message first
@@ -33,7 +32,9 @@ class ChatContext(InteractionContext):
         if args == "all":
             return self.conversation
 
-        context_sent = self.params.get('context_sent', 'all')
+        # Get fresh params each time
+        params = self.session.get_params()
+        context_sent = params.get('context_sent', 'all')
         if context_sent == 'none' or context_sent == 'last_1':
             return self.conversation[-1:] if self.conversation else []
         elif context_sent == 'all':
@@ -96,5 +97,3 @@ class ChatContext(InteractionContext):
             self.conversation = self.conversation[removed:]
             return removed
         return 0
-
-    

@@ -81,7 +81,8 @@ class SetOptionAction(InteractionAction):
                 print(f"Tool option {option} not found.")
         else:
             if option in self.session.get_params():
-                self.session.set_option(option, value)
-                print(f"Option {option} set to {value}\n")
+                converted_value = self._convert_value(option, value)  # Convert the value
+                self.session.set_option(option, converted_value)     # Use converted value
+                print(f"Option {option} set to {converted_value}\n")  # Show converted value
             else:
                 print(f"Option {option} not found.")

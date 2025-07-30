@@ -10,7 +10,6 @@ from reportlab.lib.styles import getSampleStyleSheet
 class ManageChatsAction(InteractionAction):
     def __init__(self, session):
         self.session = session
-        self.params = session.get_params()
         self.tc = session.utils.tab_completion
         self.tc.set_session(session)
         self.chat = session.get_context('chat')
@@ -43,10 +42,13 @@ class ManageChatsAction(InteractionAction):
             print(f"Unknown command: {command}")
 
     def save_chat(self, include_context=False, turns=None):
+        # Get fresh params each time
+        params = self.session.get_params()
+        
         self.tc.run("chat_path")
-        chat_format = self.params.get('chat_format', 'md')
+        chat_format = params.get('chat_format', 'md')
         default_filename = f"chat_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.{chat_format}"
-        chats_directory = self.params.get('chats_directory', 'chats')
+        chats_directory = params.get('chats_directory', 'chats')
 
         # Ensure chats_directory exists
         os.makedirs(chats_directory, exist_ok=True)
@@ -92,8 +94,11 @@ class ManageChatsAction(InteractionAction):
         self.tc.run("chat")  # Reset tab completion
 
     def export_chat(self, export_format='pdf'):
+        # Get fresh params each time
+        params = self.session.get_params()
+        
         self.tc.run("chat_path")
-        chats_directory = self.params.get('chats_directory', 'chats')
+        chats_directory = params.get('chats_directory', 'chats')
 
         # Ensure chats_directory exists
         os.makedirs(chats_directory, exist_ok=True)
@@ -146,6 +151,9 @@ class ManageChatsAction(InteractionAction):
             self._save_as_pdf(filename, content)
 
     def _format_chat_content(self, chat_format, include_context=False, turns=None):
+        # Get fresh params each time
+        params = self.session.get_params()
+        
         content = ""
 
         # Handle message selection
@@ -161,7 +169,7 @@ class ManageChatsAction(InteractionAction):
         if chat_format in ['md', 'txt', 'pdf']:
             content += "Chat Session\n\n"
             content += f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-            content += f"Model: {self.params.get('model', 'Unknown')}\n\n"
+            content += f"Model: {params.get('model', 'Unknown')}\n\n"
             content += "---\n\n"
 
             for turn in conversation:
@@ -201,8 +209,11 @@ class ManageChatsAction(InteractionAction):
         doc.build(flowables)
 
     def load_chat(self):
+        # Get fresh params each time
+        params = self.session.get_params()
+        
         self.tc.run("chat_path")
-        chats_directory = self.params.get('chats_directory', 'chats')
+        chats_directory = params.get('chats_directory', 'chats')
 
         full_path = None
         while True:
@@ -269,7 +280,10 @@ class ManageChatsAction(InteractionAction):
         return messages
 
     def list_chats(self):
-        chats_directory = self.params.get('chats_directory', 'chats')
+        # Get fresh params each time
+        params = self.session.get_params()
+        
+        chats_directory = params.get('chats_directory', 'chats')
         if not os.path.isdir(chats_directory):
             print(f"Chats directory not found: {chats_directory}")
             return

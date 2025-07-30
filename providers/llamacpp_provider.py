@@ -16,35 +16,37 @@ class LlamaCppProvider(APIProvider):
 
     def __init__(self, session):
         self.session = session
-        self.params = self.session.get_params()
         self.last_api_param = None
         self._last_response = None
 
+        # Get fresh params for initialization
+        params = self.session.get_params()
+
         # Extract or set defaults for llama-cpp
-        model_path = self.params.get('model_path', './models/7B/llama-model.gguf')
+        model_path = params.get('model_path', './models/7B/llama-model.gguf')
         # Example: you can allow specifying n_ctx or other llama-specific params:
-        n_ctx = self.params.get('context_size', 2048)
-        embedding = self.params.get('embedding', False)
-        n_gpu_layers = int(self.params.get('n_gpu_layers', -1))
-        verbose = self.params.get('verbose', False)
+        n_ctx = params.get('context_size', 2048)
+        embedding = params.get('embedding', False)
+        n_gpu_layers = int(params.get('n_gpu_layers', -1))
+        verbose = params.get('verbose', False)
 
         # If you want to enable speculative decoding when requested:
         self.draft_model = None
         logits_all = False
-        if self.params.get('speculative', False) == "draft":
+        if params.get('speculative', False) == "draft":
             print("Using draft model for speculative decoding")
             self.draft_model = LlamaSmallModelDraftWithMetrics(
                 # model_path="/Users/adam/LLM/models/draft/Llama-3.2-3B-Instruct-Q5_K_M.gguf",
                 model_path="/Users/adam/LLM/models/draft/Llama-3.2-1B-Instruct-Q5_K_M.gguf",
-                num_draft_tokens=self.params.get('draft', 10),
+                num_draft_tokens=params.get('draft', 10),
                 temperature=0.2
             )
             logits_all = True
-        if self.params.get('speculative', False) == "prompt":
+        if params.get('speculative', False) == "prompt":
             print("Using prompt lookup decoding")
             self.draft_model = LlamaPromptLookupDecoding(
                 max_ngram_size=5,
-                num_pred_tokens=self.params.get('draft', 10),
+                num_pred_tokens=params.get('draft', 10),
             )
             logits_all = True
 
@@ -101,19 +103,27 @@ class LlamaCppProvider(APIProvider):
         """
         start_time = time()
         try:
+            # Get fresh params each time
+            current_params = self.session.get_params()
+            
             # Assemble messages from session
             messages = self.assemble_message()
             api_parms = {}
 
-            # Map parameters from self.params to the call
+            # Map parameters from current_params to the call
             for parameter in self.parameters:
-                if parameter in self.params and self.params[parameter] is not None:
-                    api_parms[parameter] = self.params[parameter]
+                if parameter in current_params and current_params[parameter] is not None:
+                    # Handle stream parameter specially - only include if True
+                    if parameter == 'stream':
+                        if current_params[parameter] is True:
+                            api_parms[parameter] = True
+                    else:
+                        api_parms[parameter] = current_params[parameter]
 
             # If streaming set stream_options - we could set this in the config, but since it's dependent
             # on stream and enables internal feature, we'll set it here
             # if 'stream' in api_parms and api_parms['stream'] is True:
-            #    if 'stream_options' not in self.params or self.params['stream_options'] is not False:
+            #    if 'stream_options' not in current_params or current_params['stream_options'] is not False:
             #        api_parms['stream_options'] = {
             #            'include_usage': True,
             #        }
@@ -193,8 +203,12 @@ class LlamaCppProvider(APIProvider):
         completion_token_count = len(completion_tokens)
 
         total_token_count = prompt_token_count + completion_token_count
-        if self.params.get('speculative', False) == "draft":
+        
+        # Get fresh params to check speculative setting
+        current_params = self.session.get_params()
+        if current_params.get('speculative', False) == "draft":
             self.draft_model.print_overall_metrics()
+            
         # Create a usage dict compatible with what we'd normally expect
         self.turn_usage = {
             'prompt_tokens': prompt_token_count,
@@ -217,8 +231,10 @@ class LlamaCppProvider(APIProvider):
         message = []
         if self.session.get_context('prompt'):
             # Use 'system' or 'developer' based on provider configuration
-            # role = 'system' if self.params.get('use_old_system_role', False) else 'developer'
-            role = 'system'  # Remove when 'developer' is supported and uncomment above
+            # Get fresh params to check use_old_system_role
+            params = self.session.get_params()
+            role = 'system' if params.get('use_old_system_role', False) else 'developer'
+            # role = 'system'  # Remove when 'developer' is supported and uncomment above
             message.append({'role': role, 'content': self.session.get_context('prompt').get()['content']})
 
         chat = self.session.get_context('chat')

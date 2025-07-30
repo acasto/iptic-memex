@@ -6,13 +6,18 @@ class ChatMode(InteractionMode):
         self.session = session
         self.builder = builder  # For model switching
         
-        self.params = self.session.get_params()
+        # Don't cache params - get them fresh each time
         self.utils = self.session.utils
 
         self.session.add_context('chat')
         self.chat = self.session.get_context('chat')
         self.process_contexts = self.session.get_action('process_contexts')
         self._budget_warning_shown = False
+
+    @property
+    def params(self):
+        """Get fresh params each time instead of caching"""
+        return self.session.get_params()
 
     def get_user_input(self):
         """

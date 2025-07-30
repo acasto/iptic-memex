@@ -7,21 +7,12 @@ class CohereProvider(APIProvider):
     Cohere API handler
     """
 
-    def __init__(self, session: Session):
+    def __init__(self, session):
         self.session = session
-        self.params = session.get_params()
         self.last_api_param = None
-
-        # set the options for the Cohere API client
-        options = {}
-        if 'api_key' in self.params and self.params['api_key'] is not None:
-            options['api_key'] = self.params['api_key']
-        else:
-            print(f"\nAPI key not found for Cohere provider in configuration.\n")
-            quit()
-
-        # Initialize the Cohere client
-        self.client = cohere.Client(**options)
+        
+        # Initialize client with fresh params
+        self.client = self._initialize_client()
 
         # List of parameters that can be passed to the Cohere API that we want to handle automatically
         self.parameters = [
@@ -49,13 +40,30 @@ class CohereProvider(APIProvider):
             'total_time': 0.0
         }
 
+    def _initialize_client(self) -> cohere.Client:
+        """Initialize Cohere client with current connection parameters"""
+        params = self.session.get_params()
+        
+        # set the options for the Cohere API client
+        options = {}
+        if 'api_key' in params and params['api_key'] is not None:
+            options['api_key'] = params['api_key']
+        else:
+            print(f"\nAPI key not found for Cohere provider in configuration.\n")
+            quit()
+
+        return cohere.Client(**options)
+
     def process_api_params(self):
+        # Get fresh parameters each time
+        current_params = self.session.get_params()
+        
         chat_history, message = self.assemble_message()
 
         api_params = {}
         for parameter in self.parameters:
-            if parameter in self.params and self.params[parameter] is not None:
-                api_params[parameter] = self.params[parameter]
+            if parameter in current_params and current_params[parameter] is not None:
+                api_params[parameter] = current_params[parameter]
 
         api_params['chat_history'] = chat_history
         api_params['message'] = message
