@@ -313,22 +313,22 @@ class SessionConfig:
         # Start with base config DEFAULT section
         params.update({k: ConfigManager.fix_values(v) for k, v in self.base_config['DEFAULT'].items()})
         
-        # Set the model parameter explicitly
+        # Set the model parameter - use the section name for internal reference
         if model:
-            # Use the normalized model name (model_name from config) instead of section name
+            # Normalize to get the section name (display name)
             normalized_model = self.normalize_model_name(model)
-            params['model'] = normalized_model if normalized_model else model
-        
-        # Add provider-specific config if model is specified
-        if model:
-            provider = self._get_provider_for_model(model)
+            section_name = normalized_model if normalized_model else model
+            params['model'] = section_name  # Keep section name for internal use
+            
+            # Add provider-specific config if model is specified
+            provider = self._get_provider_for_model(section_name)
             if provider:
                 params['provider'] = provider
                 provider_config = self._get_provider_config(provider)
                 params.update(provider_config)
                 
-                # Add model-specific config
-                model_config = self._get_model_config(model)
+                # Add model-specific config - this will include the actual model_name for the provider
+                model_config = self._get_model_config(section_name)
                 params.update(model_config)
         
         # Apply overrides (this will override the model if explicitly set)
@@ -428,17 +428,18 @@ class SessionConfig:
     
     def normalize_model_name(self, model: str) -> Optional[str]:
         """
-        Normalize model name to the full model_name value
+        Normalize model name - returns the section name (display name) if valid
+        The model_name field is only used when talking to providers
         """
-        # Check direct section name first
+        # Check direct section name first - return the section name, not model_name
         if self.models.has_section(model):
-            return self.models.get(model, 'model_name', fallback=model)
+            return model  # Return the section name itself
         
-        # Check by model_name
+        # Check by model_name - if someone passes the actual model_name, find the first section that uses it
         for section in self.models.sections():
             model_name = self.models.get(section, 'model_name', fallback=section)
             if model == model_name:
-                return model_name
+                return section  # Return the section name, not the model_name
         
         return None
     

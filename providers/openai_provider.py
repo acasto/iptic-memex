@@ -113,6 +113,11 @@ class OpenAIProvider(APIProvider):
                 if parameter in self.params and self.params[parameter] is not None:
                     api_parms[parameter] = self.params[parameter]
 
+            # Use model_name for the API call, fallback to model if model_name doesn't exist
+            api_model = self.params.get('model_name', self.params.get('model'))
+            if api_model:
+                api_parms['model'] = api_model
+
             # Handle reasoning model specific logic
             if is_reasoning:
                 # Initialize or get extra_body

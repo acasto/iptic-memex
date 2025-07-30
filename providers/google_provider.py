@@ -49,9 +49,12 @@ class GoogleProvider(APIProvider):
 
     def _initialize_client(self, first_turn_context=None):
         """Initialize client with optional caching"""
+        # Use model_name for the API call, fallback to model if model_name doesn't exist
+        api_model = self.params.get('model_name', self.params.get('model'))
+        
         if not self._should_enable_caching():
             # Standard initialization without caching
-            init_params = {'model_name': self.params['model']}
+            init_params = {'model_name': api_model}
             system_prompt = self._get_system_prompt()
             if system_prompt:
                 init_params['system_instruction'] = system_prompt
@@ -74,7 +77,7 @@ class GoogleProvider(APIProvider):
             try:
                 ttl_minutes = float(self.params.get('cache_ttl', 60))
                 self._cached_content = caching.CachedContent.create(
-                    model=self.params['model'],
+                    model=api_model,
                     display_name=f"session_context_{datetime.datetime.now().isoformat()}",
                     system_instruction=content,
                     ttl=datetime.timedelta(minutes=ttl_minutes)
@@ -84,13 +87,13 @@ class GoogleProvider(APIProvider):
                 print(f"Failed to initialize cache: {str(e)}")
                 # Fall back to standard initialization
                 self.client = genai.GenerativeModel(
-                    model_name=self.params['model'],
+                    model_name=api_model,
                     system_instruction=self._get_system_prompt()
                 )
         else:
             # Not enough content to cache, initialize normally
             self.client = genai.GenerativeModel(
-                model_name=self.params['model'],
+                model_name=api_model,
                 system_instruction=self._get_system_prompt()
             )
         

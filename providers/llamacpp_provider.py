@@ -14,7 +14,7 @@ class LlamaCppProvider(APIProvider):
     llama.cpp Python bindings provider
     """
 
-    def __init__(self, session: Session):
+    def __init__(self, session):
         self.session = session
         self.params = self.session.get_params()
         self.last_api_param = None
@@ -153,7 +153,7 @@ class LlamaCppProvider(APIProvider):
     def stream_chat(self):
         """
         Stream chat responses while manually computing usage statistics.
-        Since streaming usage stats aren't currently returned by llama-cpp-python,
+        Since llama-cpp-python doesn't currently return streaming usage stats,
         we will:
         - Extract prompt text from api_params['messages']
         - Tokenize the prompt to count prompt tokens

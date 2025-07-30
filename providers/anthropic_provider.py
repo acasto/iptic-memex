@@ -16,6 +16,7 @@ class Usage:
     time_elapsed: float = 0.0
 
     def update(self, other: 'Usage'):
+        """Update this usage with values from another Usage object"""
         if other.input_tokens is not None:
             self.input_tokens += other.input_tokens
         if other.output_tokens is not None:
@@ -174,6 +175,12 @@ class AnthropicProvider(APIProvider):
             key: value for key, value in self.params.items()
             if key in self.parameters and value is not None
         }
+        
+        # Use model_name for the API call, fallback to model if model_name doesn't exist
+        api_model = self.params.get('model_name', self.params.get('model'))
+        if api_model:
+            params['model'] = api_model
+            
         params['system'] = self._build_system_content()
         params['messages'] = self._build_messages()
         return params
@@ -200,8 +207,6 @@ class AnthropicProvider(APIProvider):
 
     def stream_chat(self) -> Generator[str, None, None]:
         self.current_usage = Usage()
-        initial_usage = None  # to store usage from message_start which includes input_tokens
-        final_usage = None  # will be updated later with message_delta usage info
         response = self.chat()
 
         if isinstance(response, str):
@@ -209,47 +214,48 @@ class AnthropicProvider(APIProvider):
             return
 
         try:
+            accumulated_text = ""
+            message_start_usage = None
+            message_delta_usage = None
+            
             for event in response:
-                event_usage = None
-                if event.type == "message_start" and event.message and event.message.usage:
-                    event_usage = event.message.usage
-                    initial_usage = event_usage
-                    final_usage = event_usage
-                elif event.type == "content_block_delta":
-                    yield event.delta.text
-                elif event.type == "message_delta":
-                    if hasattr(event, 'usage') and event.usage:
-                        event_usage = event.usage
-                        final_usage = event_usage
-
-                # Update cache metrics whenever they appear
-                if event_usage:
-                    if hasattr(event_usage, 'cache_creation_input_tokens'):
-                        self.current_usage.cache_writes = event_usage.cache_creation_input_tokens
-                    if hasattr(event_usage, 'cache_read_input_tokens'):
-                        self.current_usage.cache_hits = event_usage.cache_read_input_tokens
+                # Handle message_start - contains input_tokens and initial output count
+                if event.type == "message_start" and hasattr(event, 'message') and event.message.usage:
+                    message_start_usage = event.message.usage
+                
+                # Handle content deltas - yield the text
+                elif event.type == "content_block_delta" and hasattr(event, 'delta') and event.delta.text:
+                    text = event.delta.text
+                    accumulated_text += text
+                    yield text
+                
+                # Handle message_delta - contains final output token count
+                elif event.type == "message_delta" and hasattr(event, 'usage') and event.usage:
+                    message_delta_usage = event.usage
 
         except Exception as e:
-            yield self._format_error(e)
+            yield f"Stream error: {str(e)}"
+            return
 
-        if final_usage:
-            # Merge initial input tokens if missing in final_usage.
-            input_tokens = (
-                initial_usage.input_tokens
-                if initial_usage and hasattr(initial_usage, 'input_tokens')
-                else 0
-            )
-            output_tokens = getattr(final_usage, 'output_tokens', 0)
-            cache_writes = getattr(final_usage, 'cache_creation_input_tokens', 0)
-            cache_hits = getattr(final_usage, 'cache_read_input_tokens', 0)
-            # Create a merged usage object.
-            merged_usage = Usage(
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                cache_writes=cache_writes,
-                cache_hits=cache_hits,
-            )
-            self._update_usage_from_event(merged_usage)
+        # Reconstruct final usage from the streaming events
+        if message_start_usage:
+            # Input tokens come from message_start
+            self.current_usage.input_tokens = message_start_usage.input_tokens
+            
+            # Output tokens: use message_delta if available, otherwise message_start
+            if message_delta_usage and hasattr(message_delta_usage, 'output_tokens'):
+                self.current_usage.output_tokens = message_delta_usage.output_tokens
+            else:
+                self.current_usage.output_tokens = message_start_usage.output_tokens
+            
+            # Handle cache metrics from message_start
+            if hasattr(message_start_usage, 'cache_creation_input_tokens'):
+                self.current_usage.cache_writes = message_start_usage.cache_creation_input_tokens or 0
+            if hasattr(message_start_usage, 'cache_read_input_tokens'):
+                self.current_usage.cache_hits = message_start_usage.cache_read_input_tokens or 0
+            
+            # Update totals
+            self.total_usage.update(self.current_usage)
 
     def get_full_response(self):
         """Returns the full response object from the last API call"""
@@ -274,6 +280,7 @@ class AnthropicProvider(APIProvider):
         return messages
 
     def _update_usage_from_response(self, response: Any) -> None:
+        """Update usage tracking from API response"""
         if hasattr(response, 'usage') and response.usage:
             usage = response.usage
 
@@ -281,39 +288,39 @@ class AnthropicProvider(APIProvider):
             self.current_usage.input_tokens = getattr(usage, 'input_tokens', 0)
             self.current_usage.output_tokens = getattr(usage, 'output_tokens', 0)
 
-            # Handle cache-related tokens - these might be None/null
+            # Handle cache-related tokens - set to 0 if None/null
             cache_creation = getattr(usage, 'cache_creation_input_tokens', None)
-            if cache_creation is not None:
-                self.current_usage.cache_writes = cache_creation
+            self.current_usage.cache_writes = cache_creation if cache_creation is not None else 0
 
             cache_read = getattr(usage, 'cache_read_input_tokens', None)
-            if cache_read is not None:
-                self.current_usage.cache_hits = cache_read
+            self.current_usage.cache_hits = cache_read if cache_read is not None else 0
 
+            # Update total usage
             self.total_usage.update(self.current_usage)
 
     def _update_usage_from_event(self, usage: Any) -> None:
+        """Update usage from streaming event"""
         if not usage:
             return
 
-        # Only update input_tokens if present; otherwise, keep the existing value.
+        # Update input_tokens if present
         input_tokens = getattr(usage, 'input_tokens', None)
         if input_tokens is not None:
             self.current_usage.input_tokens = input_tokens
 
+        # Update output_tokens if present
         output_tokens = getattr(usage, 'output_tokens', None)
         if output_tokens is not None:
             self.current_usage.output_tokens = output_tokens
 
-        # Handle cache metrics - these might be None/null
+        # Handle cache metrics - set to 0 if None/null
         cache_creation = getattr(usage, 'cache_creation_input_tokens', None)
-        if cache_creation is not None:
-            self.current_usage.cache_writes = cache_creation
+        self.current_usage.cache_writes = cache_creation if cache_creation is not None else 0
 
         cache_read = getattr(usage, 'cache_read_input_tokens', None)
-        if cache_read is not None:
-            self.current_usage.cache_hits = cache_read
+        self.current_usage.cache_hits = cache_read if cache_read is not None else 0
 
+        # Update total usage
         self.total_usage.update(self.current_usage)
 
     @staticmethod
@@ -327,6 +334,7 @@ class AnthropicProvider(APIProvider):
         return "\n".join(parts)
 
     def get_usage(self) -> Any:
+        """Get usage statistics with cache-aware display"""
         return {
             'total_in': self.total_usage.input_tokens,
             'total_out': self.total_usage.output_tokens,
@@ -334,11 +342,13 @@ class AnthropicProvider(APIProvider):
             'total_time': self.total_usage.time_elapsed,
             'total_cache_writes': self.total_usage.cache_writes,
             'total_cache_hits': self.total_usage.cache_hits,
+            'total_content_tokens': self.total_usage.input_tokens + self.total_usage.cache_hits,  # True content processed
             'turn_in': self.current_usage.input_tokens,
             'turn_out': self.current_usage.output_tokens,
             'turn_total': self.current_usage.input_tokens + self.current_usage.output_tokens,
             'turn_cache_writes': self.current_usage.cache_writes,
-            'turn_cache_hits': self.current_usage.cache_hits
+            'turn_cache_hits': self.current_usage.cache_hits,
+            'turn_content_tokens': self.current_usage.input_tokens + self.current_usage.cache_hits  # True content this turn
         }
 
     def reset_usage(self) -> Any:
