@@ -10,7 +10,7 @@ class GoogleProvider(APIProvider):
     """
     Google Generative AI provider with proper system prompt and context caching
     """
-    def __init__(self, session: Session):
+    def __init__(self, session):
         self.session = session
         self.params = session.get_params()
         self.token_counter = session.get_action('count_tokens')
@@ -103,8 +103,9 @@ class GoogleProvider(APIProvider):
 
     def _get_system_prompt(self) -> str:
         """Get system prompt from context"""
-        if self.session.get_context('prompt'):
-            return self.session.get_context('prompt').get()['content']
+        prompt_context = self.session.get_context('prompt')
+        if prompt_context:
+            return prompt_context.get()['content']
         return ""
 
     @staticmethod
@@ -154,7 +155,7 @@ class GoogleProvider(APIProvider):
                 self._initialize_client(first_turn_context)
 
                 # Only modify messages for multi-turn chat mode
-                if self._cached_content and len(messages) > 1 and not self.session.get_flag('completion_mode'):
+                if self._cached_content and len(messages) > 1 and not self.session.get_option('completion_mode'):
                     messages = [messages[0]] + messages[2:]
 
             # Process generation parameters
