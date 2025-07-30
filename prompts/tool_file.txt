@@ -28,4 +28,5 @@ Interact with files                 %%FILE%%
   + Be cautious with `mode="write"`, as it will overwrite the file if it exists.
   + Be cautious when it comes to edits in the middle of files you can't fully write out. When in doubt, ask the user to copy paste.
   + Referenced code blocks WILL NOT work with commands like sed, only with this file tool.
-  + ONLY DO ONE FILE OPERATION PER TURN FOR RELIABILITY.
+  + Wait for read results before you start writing. The results of a read operation will come in on the following turn. 
+  + Be extra cautious of sequential file operations. 
