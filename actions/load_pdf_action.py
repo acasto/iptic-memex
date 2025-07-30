@@ -1,6 +1,6 @@
 import os
 import glob
-from session_handler import InteractionAction
+from base_classes import InteractionAction
 from PyPDF2 import PdfReader
 
 

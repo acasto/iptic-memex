@@ -2,7 +2,7 @@ import os
 import datetime
 import google.generativeai as genai
 from google.generativeai import caching
-from session_handler import APIProvider, SessionHandler
+from base_classes import APIProvider
 from actions.process_contexts_action import ProcessContextsAction
 
 
@@ -10,7 +10,7 @@ class GoogleProvider(APIProvider):
     """
     Google Generative AI provider with proper system prompt and context caching
     """
-    def __init__(self, session: SessionHandler):
+    def __init__(self, session: Session):
         self.session = session
         self.params = session.get_params()
         self.token_counter = session.get_action('count_tokens')

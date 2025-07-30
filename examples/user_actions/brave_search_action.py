@@ -1,5 +1,5 @@
 import requests
-from session_handler import InteractionAction
+from base_classes import InteractionAction
 
 
 class BraveSearchAction(InteractionAction):

@@ -16,7 +16,7 @@ class MlxProvider:
         Initializes the MLX provider.
 
         Args:
-            session: A SessionHandler instance (assuming your existing structure)
+            session: A Session instance (assuming your existing structure)
         """
         self.session = session
         self.params = self.session.get_params()

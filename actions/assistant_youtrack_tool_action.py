@@ -1,5 +1,5 @@
 import requests
-from session_handler import InteractionAction
+from base_classes import InteractionAction
 import pytz
 from datetime import datetime
 

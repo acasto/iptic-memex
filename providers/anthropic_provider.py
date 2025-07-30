@@ -3,7 +3,7 @@ from time import time
 from dataclasses import dataclass
 from typing import List, Dict, Any, Generator
 from anthropic import Anthropic
-from session_handler import APIProvider
+from base_classes import APIProvider
 
 
 @dataclass

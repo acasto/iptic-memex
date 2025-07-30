@@ -2,7 +2,7 @@ import os
 from time import time
 import openai
 from openai import OpenAI
-from session_handler import APIProvider
+from base_classes import APIProvider
 from actions.process_contexts_action import ProcessContextsAction
 
 

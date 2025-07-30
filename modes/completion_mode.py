@@ -1,4 +1,4 @@
-from session_handler import InteractionMode
+from base_classes import InteractionMode
 
 
 class CompletionMode(InteractionMode):

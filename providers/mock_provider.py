@@ -4,7 +4,7 @@ Mock provider for testing iptic-memex without requiring API keys.
 This provider gives simple responses to test the chat functionality.
 """
 
-from session_handler import APIProvider
+from base_classes import APIProvider
 
 
 class MockProvider(APIProvider):

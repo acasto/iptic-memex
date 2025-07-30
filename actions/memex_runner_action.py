@@ -1,7 +1,7 @@
 import subprocess
 import sys
 import os
-from session_handler import InteractionAction
+from base_classes import InteractionAction
 
 class MemexRunnerAction(InteractionAction):
     """An action for running the memex tool as a subprocess."""

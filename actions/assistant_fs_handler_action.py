@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from session_handler import InteractionAction
+from base_classes import InteractionAction
 import os
 from pathlib import Path
 

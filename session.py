@@ -283,7 +283,7 @@ class Session:
 class SessionBuilder:
     """
     Builds fully configured sessions.
-    Handles initialization logic currently in SessionHandler.
+    Handles initialization logic currently in Session.
     """
 
     def __init__(self, config_manager):

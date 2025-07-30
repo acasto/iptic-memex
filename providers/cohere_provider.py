@@ -1,5 +1,5 @@
 import cohere
-from session_handler import APIProvider, SessionHandler
+from base_classes import APIProvider
 
 
 class CohereProvider(APIProvider):
@@ -7,7 +7,7 @@ class CohereProvider(APIProvider):
     Cohere API handler
     """
 
-    def __init__(self, session: SessionHandler):
+    def __init__(self, session: Session):
         self.session = session
         self.params = session.get_params()
         self.last_api_param = None

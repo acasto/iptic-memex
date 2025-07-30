@@ -1,4 +1,4 @@
-from session_handler import InteractionContext
+from base_classes import InteractionContext
 
 class SheetContext(InteractionContext):
     def __init__(self, session, context_data=None):

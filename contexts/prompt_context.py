@@ -1,4 +1,4 @@
-from session_handler import InteractionContext
+from base_classes import InteractionContext
 import os
 
 

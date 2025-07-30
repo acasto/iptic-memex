@@ -1,6 +1,6 @@
 import os
 import subprocess
-from session_handler import InteractionAction
+from base_classes import InteractionAction
 
 
 class LoadImageAction(InteractionAction):

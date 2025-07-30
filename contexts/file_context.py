@@ -1,5 +1,5 @@
 import sys
-from session_handler import InteractionContext
+from base_classes import InteractionContext
 
 
 class FileContext(InteractionContext):

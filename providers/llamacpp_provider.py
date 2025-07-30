@@ -1,6 +1,6 @@
 import traceback
 from time import time
-from session_handler import APIProvider, SessionHandler
+from base_classes import APIProvider
 from llama_cpp import Llama
 from llama_cpp.llama_speculative import LlamaPromptLookupDecoding
 import io
@@ -14,7 +14,7 @@ class LlamaCppProvider(APIProvider):
     llama.cpp Python bindings provider
     """
 
-    def __init__(self, session: SessionHandler):
+    def __init__(self, session: Session):
         self.session = session
         self.params = self.session.get_params()
         self.last_api_param = None

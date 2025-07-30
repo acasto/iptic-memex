@@ -1,6 +1,6 @@
 import re
 from datetime import datetime
-from session_handler import InteractionAction
+from base_classes import InteractionAction
 
 
 class PromptTemplateAction(InteractionAction):

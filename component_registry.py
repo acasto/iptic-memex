@@ -269,7 +269,7 @@ class ComponentRegistry:
             print(f"Warning: Could not load context {context_type}: {e}")
 
     def _load_action(self, name: str):
-        """Dynamic action loading logic (similar to current SessionHandler)"""
+        """Dynamic action loading logic (similar to current Session)"""
         # Check user actions directory first
         user_actions_dir = self.config.get_option('DEFAULT', 'user_actions', fallback=None)
         if user_actions_dir:

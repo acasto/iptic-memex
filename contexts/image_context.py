@@ -1,6 +1,6 @@
 import base64
 from pathlib import Path
-from session_handler import InteractionContext
+from base_classes import InteractionContext
 
 
 class ImageContext(InteractionContext):

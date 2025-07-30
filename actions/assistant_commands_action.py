@@ -1,5 +1,5 @@
 import re
-from session_handler import InteractionAction
+from base_classes import InteractionAction
 
 
 class AssistantCommandsAction(InteractionAction):

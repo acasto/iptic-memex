@@ -5,7 +5,7 @@ This mode integrates with the Session architecture to provide a terminal
 user interface using the Textual library.
 """
 
-from session_handler import InteractionMode
+from base_classes import InteractionMode
 
 
 class TextualMode(InteractionMode):

@@ -1,7 +1,7 @@
 # load_file_action.py
 import os
 import glob
-from session_handler import InteractionAction
+from base_classes import InteractionAction
 
 
 class LoadFileAction(InteractionAction):

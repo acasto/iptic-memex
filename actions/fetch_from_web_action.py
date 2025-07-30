@@ -2,7 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 import trafilatura
 from trafilatura.settings import use_config
-from session_handler import InteractionAction
+from base_classes import InteractionAction
 
 
 class FetchFromWebAction(InteractionAction):

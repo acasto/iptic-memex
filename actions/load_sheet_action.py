@@ -1,5 +1,5 @@
 import os
-from session_handler import InteractionAction
+from base_classes import InteractionAction
 from openpyxl import load_workbook
 import csv
 from io import StringIO
