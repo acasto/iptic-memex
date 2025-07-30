@@ -274,27 +274,45 @@ class AnthropicProvider(APIProvider):
         return messages
 
     def _update_usage_from_response(self, response: Any) -> None:
-        if hasattr(response, 'usage'):
+        if hasattr(response, 'usage') and response.usage:
             usage = response.usage
-            self.current_usage.input_tokens = usage.input_tokens
-            self.current_usage.output_tokens = usage.output_tokens
 
-            if hasattr(usage, 'cache_creation_input_tokens'):
-                self.current_usage.cache_writes = usage.cache_creation_input_tokens
-            if hasattr(usage, 'cache_read_input_tokens'):
-                self.current_usage.cache_hits = usage.cache_read_input_tokens
+            # Handle basic token counts - these should always be present
+            self.current_usage.input_tokens = getattr(usage, 'input_tokens', 0)
+            self.current_usage.output_tokens = getattr(usage, 'output_tokens', 0)
+
+            # Handle cache-related tokens - these might be None/null
+            cache_creation = getattr(usage, 'cache_creation_input_tokens', None)
+            if cache_creation is not None:
+                self.current_usage.cache_writes = cache_creation
+
+            cache_read = getattr(usage, 'cache_read_input_tokens', None)
+            if cache_read is not None:
+                self.current_usage.cache_hits = cache_read
 
             self.total_usage.update(self.current_usage)
 
     def _update_usage_from_event(self, usage: Any) -> None:
-        # Only update input_tokens if present; otherwise, keep the existing value.
-        self.current_usage.input_tokens = getattr(usage, 'input_tokens', self.current_usage.input_tokens)
-        self.current_usage.output_tokens = getattr(usage, 'output_tokens', self.current_usage.output_tokens)
+        if not usage:
+            return
 
-        if hasattr(usage, 'cache_creation_input_tokens'):
-            self.current_usage.cache_writes = usage.cache_creation_input_tokens
-        if hasattr(usage, 'cache_read_input_tokens'):
-            self.current_usage.cache_hits = usage.cache_read_input_tokens
+        # Only update input_tokens if present; otherwise, keep the existing value.
+        input_tokens = getattr(usage, 'input_tokens', None)
+        if input_tokens is not None:
+            self.current_usage.input_tokens = input_tokens
+
+        output_tokens = getattr(usage, 'output_tokens', None)
+        if output_tokens is not None:
+            self.current_usage.output_tokens = output_tokens
+
+        # Handle cache metrics - these might be None/null
+        cache_creation = getattr(usage, 'cache_creation_input_tokens', None)
+        if cache_creation is not None:
+            self.current_usage.cache_writes = cache_creation
+
+        cache_read = getattr(usage, 'cache_read_input_tokens', None)
+        if cache_read is not None:
+            self.current_usage.cache_hits = cache_read
 
         self.total_usage.update(self.current_usage)
 
