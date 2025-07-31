@@ -9,8 +9,8 @@ DEFAULT_CONFIG = {
     'priority_field_name': 'Priority',
     'type_field_name': 'Type',
     'assignee_field_name': 'Assignee',
-    'default_state_filter': 'status:{Open} or status:{In Progress}',
-    'default_get_issues_query': 'project:{project_short_name} {query_filter}',
+    'default_state_filter': '(status:{Open} or status:{In Progress})',
+    'default_project_filter': 'project:{project_short_name}',
     'timezone': 'UTC'  # Default timezone
 }
 
@@ -143,45 +143,50 @@ class AssistantYoutrackToolAction(InteractionAction):
         })
 
     def _get_issues(self, args, content):
-        """Retrieves issues for a specific project using its short name."""
-        project_short_name = args.get('project_id')
-        if not project_short_name:
-            self.session.add_context('assistant', {
-                'name': 'youtrack_tool_error',
-                'content': 'Project short name is required to get issues.'
-            })
-            return
-
+        """Retrieves issues, optionally filtered by project."""
+        project_short_name = args.get('project_id')  # Now optional
         custom_query = args.get('query', '')
 
-        # Check if custom query contains state/status filters
-        # Look for common state-related keywords in YouTrack queries
+        # Build query components
+        query_parts = []
+
+        # Add project filter if specified
+        if project_short_name:
+            project_filter = self.config['default_project_filter'].format(
+                project_short_name=project_short_name
+            )
+            query_parts.append(project_filter)
+
+        # Handle state/status filters
         state_keywords = ['state:', 'status:', 'State:', 'Status:']
         has_state_filter = any(keyword in custom_query for keyword in state_keywords)
 
         if custom_query and has_state_filter:
             # Custom query has state filter, use it as-is
-            query_filter = custom_query
+            query_parts.append(f"({custom_query})")
         elif custom_query:
-            # Custom query exists but no state filter, combine with default
-            query_filter = f"{self.config['default_state_filter']} {custom_query}"
+            # Custom query exists but no state filter, add both default and custom
+            query_parts.append(self.config['default_state_filter'])
+            query_parts.append(f"({custom_query})")
         else:
-            # No custom query, use default
-            query_filter = self.config['default_state_filter']
+            # No custom query, use default state filter only
+            query_parts.append(self.config['default_state_filter'])
 
-        full_query = self.config['default_get_issues_query'].format(
-            project_short_name=project_short_name,
-            query_filter=query_filter
-        )
+        # Join all parts with 'and'
+        full_query = ' and '.join(query_parts)
 
         url = self._construct_url(ENDPOINTS['get_issues'])
         params = {
             'query': full_query,
             'fields': 'idReadable,summary,customFields(name,value(name))',
         }
+
         response = self._make_request('GET', url, params=params)
         if response is None:
-            return  # Error already handled in _make_request
+            return
+
+        # Update context name to reflect scope
+        context_name = f'issues_in_{project_short_name}' if project_short_name else 'all_issues'
 
         formatted_issues = []
         if response:
@@ -197,10 +202,11 @@ class AssistantYoutrackToolAction(InteractionAction):
                 formatted_issues.append(
                     f"- {issue['summary']} (ID: {issue['idReadable']}, Status: {status}, Priority: {priority})")
         else:
-            formatted_issues.append(f"No issues found for project '{project_short_name}'.")
+            scope_desc = f"project '{project_short_name}'" if project_short_name else "the query"
+            formatted_issues.append(f"No issues found for {scope_desc}.")
 
         self.session.add_context('assistant', {
-            'name': f'issues_in_{project_short_name}',
+            'name': context_name,  # Use the variable, not hardcoded string
             'content': '\n'.join(formatted_issues)
         })
 
