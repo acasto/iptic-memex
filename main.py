@@ -117,8 +117,8 @@ def tui(ctx, file):
     
     # Start TUI mode
     try:
-        from tui.mode import TextualMode
-        mode = TextualMode(session, builder)
+        from modes.tui_mode import TUIMode
+        mode = TUIMode(session, builder)
         mode.start()
     except ImportError as e:
         if 'textual' in str(e).lower():
