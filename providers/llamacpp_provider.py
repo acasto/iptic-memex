@@ -230,12 +230,19 @@ class LlamaCppProvider(APIProvider):
         """
         message = []
         if self.session.get_context('prompt'):
-            # Use 'system' or 'developer' based on provider configuration
-            # Get fresh params to check use_old_system_role
             params = self.session.get_params()
-            role = 'system' if params.get('use_old_system_role', False) else 'developer'
-            # role = 'system'  # Remove when 'developer' is supported and uncomment above
-            message.append({'role': role, 'content': self.session.get_context('prompt').get()['content']})
+            
+            # llama-cpp-python currently only supports 'system', 'user', 'assistant' roles
+            # We default use_old_system_role=True for compatibility, but users can override
+            # when 'developer' role support is added to llama-cpp-python
+            use_old_system_role = params.get('use_old_system_role', True)
+            
+            role = 'system' if use_old_system_role else 'developer'
+            
+            prompt_content = self.session.get_context('prompt').get()['content']
+            if prompt_content.strip() == '':
+                prompt_content = ' '  # Handle empty content like other providers
+            message.append({'role': role, 'content': prompt_content})
 
         chat = self.session.get_context('chat')
         if chat is not None:
