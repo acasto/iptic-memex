@@ -9,7 +9,7 @@ DEFAULT_CONFIG = {
     'priority_field_name': 'Priority',
     'type_field_name': 'Type',
     'assignee_field_name': 'Assignee',
-    'default_state_filter': '(status:{Open} or status:{In Progress})',
+    'default_state_filter': 'status:{Open} or status:{In Progress}',
     'default_project_filter': 'project:{project_short_name}',
     'timezone': 'UTC'  # Default timezone
 }
@@ -166,14 +166,16 @@ class AssistantYoutrackToolAction(InteractionAction):
             query_parts.append(f"({custom_query})")
         elif custom_query:
             # Custom query exists but no state filter, add both default and custom
-            query_parts.append(self.config['default_state_filter'])
+            query_parts.append(f"({self.config['default_state_filter']})")
             query_parts.append(f"({custom_query})")
         else:
             # No custom query, use default state filter only
-            query_parts.append(self.config['default_state_filter'])
+            query_parts.append(f"({self.config['default_state_filter']})")
 
         # Join all parts with 'and'
         full_query = ' and '.join(query_parts)
+
+        print(f"Full query constructed: {full_query}")  # Debugging output
 
         url = self._construct_url(ENDPOINTS['get_issues'])
         params = {

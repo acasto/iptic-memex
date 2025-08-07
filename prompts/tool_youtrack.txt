@@ -13,6 +13,7 @@ Interact with YouTrack projet management            %%YOUTRACK%%
     - (only with update_priority) issue_id="<issue id>" priority="<priority name>"
     - (only with update_type) issue_id="<issue id>" type="<type name>"
     - (only with add_comment) issue_id="<issue id>" block="<comment block label>"
+  + When a query term contains a space, enclose it in braces { }: e.g., {In Progress}, {On Hold}
   + To add a description to a new or updated issue, or add a comment, create a labeled code block:
 
 %%BLOCK:issue_description%%
@@ -37,6 +38,11 @@ mode="get_projects"
 %%YOUTRACK%%
 mode="get_issues"
 query="priority:High or priority:Urgent"
+%%END%%
+    - Get issues when there is a space in the query syntax
+%%YOUTRACK%%
+mode="get_issues"
+query="status:{On Hold} or status:{In Progress}"
 %%END%%
     - Get open issues for a project (default):
 %%YOUTRACK%%
