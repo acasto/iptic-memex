@@ -175,7 +175,7 @@ class AssistantYoutrackToolAction(InteractionAction):
         # Join all parts with 'and'
         full_query = ' and '.join(query_parts)
 
-        print(f"Full query constructed: {full_query}")  # Debugging output
+        # print(f"Full query constructed: {full_query}")  # Debugging output
 
         url = self._construct_url(ENDPOINTS['get_issues'])
         params = {
