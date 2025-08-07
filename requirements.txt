@@ -16,3 +16,5 @@ python-docx
 openpyxl
 llama-cpp-python
 pytz
+mlx
+mlx-lm
