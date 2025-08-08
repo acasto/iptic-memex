@@ -162,6 +162,16 @@ class OpenAIProvider(APIProvider):
                     # Normalize to lowercase
                     extra_body['reasoning_effort'] = reasoning_effort.lower()
 
+                # Handle verbosity (low|medium|high) for reasoning-capable models
+                verbosity = current_params.get('verbosity')
+                if verbosity is not None:
+                    # Normalize to lowercase and pass through mechanically
+                    try:
+                        extra_body['verbosity'] = str(verbosity).lower()
+                    except Exception:
+                        # Be lenient: if it can't be lowercased cleanly, just pass as-is
+                        extra_body['verbosity'] = verbosity
+
                 # Update api_parms with modified extra_body
                 if extra_body:
                     api_parms['extra_body'] = extra_body
