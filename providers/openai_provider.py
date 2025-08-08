@@ -177,9 +177,11 @@ class OpenAIProvider(APIProvider):
                     api_parms['extra_body'] = extra_body
 
             if 'stream' in api_parms and api_parms['stream'] is True:
-                api_parms['stream_options'] = {
-                    'include_usage': True,
-                }
+                # Only include stream_options when the backend supports it
+                if self.session.get_params().get('stream_options', True):
+                    api_parms['stream_options'] = {
+                        'include_usage': True,
+                    }
 
             api_parms['messages'] = messages
             self.last_api_param = api_parms
@@ -271,11 +273,36 @@ class OpenAIProvider(APIProvider):
                     # Handle cached tokens
                     if hasattr(chunk.usage, 'prompt_tokens_details'):
                         prompt_details = chunk.usage.prompt_tokens_details
-                        if hasattr(prompt_details, 'cached_tokens'):
+                        # Support dict or object attributes
+                        cached = None
+                        if isinstance(prompt_details, dict):
+                            cached = prompt_details.get('cached_tokens')
+                        elif hasattr(prompt_details, 'cached_tokens'):
                             cached = prompt_details.cached_tokens
+                        if cached is not None:
                             if 'cached_tokens' not in self.running_usage:
                                 self.running_usage['cached_tokens'] = 0
                             self.running_usage['cached_tokens'] += cached
+
+                    # Handle reasoning-specific metrics from completion_tokens_details
+                    if hasattr(chunk.usage, 'completion_tokens_details'):
+                        details = getattr(chunk.usage, 'completion_tokens_details')
+                        # Accept dict or object with attributes
+                        if isinstance(details, dict):
+                            rt = details.get('reasoning_tokens', 0)
+                            ap = details.get('accepted_prediction_tokens', 0)
+                            rp = details.get('rejected_prediction_tokens', 0)
+                        else:
+                            rt = getattr(details, 'reasoning_tokens', 0)
+                            ap = getattr(details, 'accepted_prediction_tokens', 0)
+                            rp = getattr(details, 'rejected_prediction_tokens', 0)
+
+                        if rt:
+                            self.running_usage['reasoning_tokens'] = self.running_usage.get('reasoning_tokens', 0) + rt
+                        if ap:
+                            self.running_usage['accepted_prediction_tokens'] = self.running_usage.get('accepted_prediction_tokens', 0) + ap
+                        if rp:
+                            self.running_usage['rejected_prediction_tokens'] = self.running_usage.get('rejected_prediction_tokens', 0) + rp
 
         except Exception as e:
             error_msg = "Stream interrupted:\n"
@@ -383,34 +410,43 @@ class OpenAIProvider(APIProvider):
             self.running_usage['total_in'] += response.usage.prompt_tokens
             self.running_usage['total_out'] += response.usage.completion_tokens
 
-            # Handle cached tokens from prompt_tokens_details
+            # Handle cached tokens from prompt_tokens_details (support dict or object)
             if hasattr(response.usage, 'prompt_tokens_details'):
                 prompt_details = getattr(response.usage, 'prompt_tokens_details')
-                if hasattr(prompt_details, 'cached_tokens'):  # New check
+                cached = None
+                if isinstance(prompt_details, dict):
+                    cached = prompt_details.get('cached_tokens')
+                elif hasattr(prompt_details, 'cached_tokens'):
                     cached = prompt_details.cached_tokens
+                if cached is not None:
                     if 'cached_tokens' not in self.running_usage:
                         self.running_usage['cached_tokens'] = 0
                     self.running_usage['cached_tokens'] += cached
 
-            # Handle reasoning-specific metrics
+            # Handle reasoning-specific metrics (support dict or object)
             if hasattr(response.usage, 'completion_tokens_details'):
                 details = getattr(response.usage, 'completion_tokens_details')
+
                 if isinstance(details, dict):
-                    # Initialize reasoning metrics in running usage if not present
-                    metrics = [
-                        'reasoning_tokens',
-                        'accepted_prediction_tokens',
-                        'rejected_prediction_tokens'
-                    ]
+                    rt = details.get('reasoning_tokens', 0)
+                    ap = details.get('accepted_prediction_tokens', 0)
+                    rp = details.get('rejected_prediction_tokens', 0)
+                else:
+                    rt = getattr(details, 'reasoning_tokens', 0)
+                    ap = getattr(details, 'accepted_prediction_tokens', 0)
+                    rp = getattr(details, 'rejected_prediction_tokens', 0)
 
-                    # Initialize any missing metrics
-                    for metric in metrics:
-                        if metric not in self.running_usage:
-                            self.running_usage[metric] = 0
+                # Initialize if missing, then accumulate
+                if 'reasoning_tokens' not in self.running_usage:
+                    self.running_usage['reasoning_tokens'] = 0
+                if 'accepted_prediction_tokens' not in self.running_usage:
+                    self.running_usage['accepted_prediction_tokens'] = 0
+                if 'rejected_prediction_tokens' not in self.running_usage:
+                    self.running_usage['rejected_prediction_tokens'] = 0
 
-                        # Update running totals safely
-                        if metric in details:
-                            self.running_usage[metric] += details[metric]
+                self.running_usage['reasoning_tokens'] += rt
+                self.running_usage['accepted_prediction_tokens'] += ap
+                self.running_usage['rejected_prediction_tokens'] += rp
 
     def get_usage(self):
         """Get usage statistics including both standard and reasoning metrics"""
@@ -443,15 +479,21 @@ class OpenAIProvider(APIProvider):
                 'turn_total': self.turn_usage.total_tokens
             })
 
-            # Handle per-turn cached tokens
+            # Handle per-turn cached tokens (support dict or object)
             if hasattr(self.turn_usage, 'prompt_tokens_details'):
                 prompt_details = getattr(self.turn_usage, 'prompt_tokens_details')
-                if hasattr(prompt_details, 'cached_tokens'):  # New check
-                    stats['turn_cached'] = prompt_details.cached_tokens
+                cached = None
+                if isinstance(prompt_details, dict):
+                    cached = prompt_details.get('cached_tokens')
+                elif hasattr(prompt_details, 'cached_tokens'):
+                    cached = prompt_details.cached_tokens
+                if cached is not None:
+                    stats['turn_cached'] = cached
 
-            # Include per-turn reasoning metrics if available
+            # Include per-turn reasoning metrics if available (support dict or object)
             if hasattr(self.turn_usage, 'completion_tokens_details'):
                 details = getattr(self.turn_usage, 'completion_tokens_details')
+
                 if isinstance(details, dict):
                     turn_metrics = [
                         ('turn_reasoning', 'reasoning_tokens'),
@@ -461,6 +503,16 @@ class OpenAIProvider(APIProvider):
                     for stat_name, metric_name in turn_metrics:
                         if metric_name in details:
                             stats[stat_name] = details[metric_name]
+                else:
+                    rt = getattr(details, 'reasoning_tokens', None)
+                    ap = getattr(details, 'accepted_prediction_tokens', None)
+                    rp = getattr(details, 'rejected_prediction_tokens', None)
+                    if rt is not None:
+                        stats['turn_reasoning'] = rt
+                    if ap is not None:
+                        stats['turn_accepted_predictions'] = ap
+                    if rp is not None:
+                        stats['turn_rejected_predictions'] = rp
 
         return stats
 
@@ -489,7 +541,11 @@ class OpenAIProvider(APIProvider):
             price_out = float(self.session.get_params().get('price_out', 0))
 
             input_cost = (usage['total_in'] / price_unit) * price_in
-            output_cost = (usage['total_out'] / price_unit) * price_out
+            # Optionally bill reasoning tokens as output tokens (default True)
+            bill_reasoning = bool(self.session.get_params().get('bill_reasoning_as_output', True))
+            total_reasoning = usage.get('total_reasoning', 0)
+            billable_out = usage['total_out'] + (total_reasoning if bill_reasoning else 0)
+            output_cost = (billable_out / price_unit) * price_out
 
             return {
                 'input_cost': round(input_cost, 6),
