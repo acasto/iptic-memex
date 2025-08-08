@@ -15,6 +15,13 @@ class RegisterUserCommandsAction(InteractionAction):
                     "name": "debug_storage"  # Points to my_custom_action.py in user actions dir
                 }
             },
+            "debug reload": {
+                "description": "Reload action/context caches without restarting",
+                "function": {
+                    "type": "action",
+                    "name": "debug_reload"
+                }
+            },
             # "load summary": {
             #     "description": "Load a summary from the web",
             #     "function": {"type": "action", "name": "brave_summary"},

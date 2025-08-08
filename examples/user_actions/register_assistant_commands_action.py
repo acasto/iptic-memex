@@ -12,7 +12,12 @@ class RegisterAssistantCommandsAction(InteractionAction):
             "ASK_AI": {
                 "args": ["model", "question"],
                 "function": {"type": "action", "name": "ask_ai_tool"}
-            }
+            },
+            "RELOAD": {
+                "args": ["target"],
+                'auto_submit': True,
+                "function": {"type": "action", "name": "assistant_reload_tool"}
+            },
         }
 
 
