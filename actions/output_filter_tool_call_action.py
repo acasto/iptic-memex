@@ -17,9 +17,13 @@ class OutputFilterToolCallAction(InteractionAction):
     OPEN_DELIM = "%%"
     CLOSE_TOKEN = "%%END%%"
 
+    # Tool blocks should not affect the returned parser input (display-only)
+    AFFECTS_RETURN = False
+
     def __init__(self, session):
         self.session = session
-        self.tool_placeholder = "⟦hidden:{name}⟧"
+        # Default to blank unless configured
+        self.tool_placeholder = ""
         self.in_block = False
         self.current_label = None
         self._emitted_placeholder = False
@@ -106,4 +110,3 @@ class OutputFilterToolCallAction(InteractionAction):
                     continue
 
         return ("PASS", ''.join(out))
-

@@ -52,6 +52,7 @@ class ChatMode(InteractionMode):
         )
         self.utils.output.write(f"{response_label} ", end='', flush=True)
 
+        output_processor = None
         try:
             if self.params['stream']:
                 stream = self.session.get_provider().stream_chat()
@@ -80,7 +81,14 @@ class ChatMode(InteractionMode):
         self.chat.add(response, 'assistant')
         assistant_commands = self.session.get_action('assistant_commands')
         if assistant_commands:
-            assistant_commands.run(response)
+            # Prefer sanitized output (think removed) if available to avoid accidental tool triggers
+            try:
+                sanitized = None
+                if output_processor and hasattr(output_processor, 'get_sanitized_output'):
+                    sanitized = output_processor.get_sanitized_output()
+                assistant_commands.run(sanitized if sanitized is not None else response)
+            except Exception:
+                assistant_commands.run(response)
         return response
 
     def check_budget(self):

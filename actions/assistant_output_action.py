@@ -15,11 +15,15 @@ class AssistantOutputAction(InteractionAction):
     def __init__(self, session):
         self.session = session
         self.output = session.utils.output
-        self._filters: List[Any] = []
+        # Separate pipelines: display (what user sees) and return (what ChatMode passes to parser)
+        self._filters_display: List[Any] = []
+        self._filters_return: List[Any] = []
         self._accumulated_raw: str = ""
-        self._accumulated_filtered: str = ""
-        self._think_placeholder = "⟦hidden:think⟧"
-        self._tool_placeholder = "⟦hidden:{name}⟧"
+        self._accumulated_display: str = ""
+        self._accumulated_return: str = ""
+        # Defaults: blank placeholders unless configured
+        self._think_placeholder = ""
+        self._tool_placeholder = ""
 
     # ---- filter lifecycle ----
     def _parse_filters_from_params(self) -> List[str]:
@@ -41,7 +45,8 @@ class AssistantOutputAction(InteractionAction):
 
     def _load_filters(self) -> None:
         names = self._parse_filters_from_params()
-        self._filters = []
+        self._filters_display = []
+        self._filters_return = []
         self._load_placeholders()
 
         opts = {
@@ -62,19 +67,30 @@ class AssistantOutputAction(InteractionAction):
                     inst.configure(opts)
             except Exception as e:
                 self.output.warning(f"Failed to configure filter '{name}': {e}")
-            self._filters.append(inst)
+            self._filters_display.append(inst)
 
-        if self._filters:
-            class_names = [f.__class__.__name__ for f in self._filters]
+            # If the filter should affect the returned output (e.g., strip <think>), create a separate instance
+            affects_return = getattr(inst, 'AFFECTS_RETURN', False)
+            if affects_return:
+                inst_ret = self.session.get_action(action_name)
+                try:
+                    if hasattr(inst_ret, 'configure') and callable(getattr(inst_ret, 'configure')):
+                        inst_ret.configure(opts)
+                except Exception as e:
+                    self.output.warning(f"Failed to configure return filter '{name}': {e}")
+                self._filters_return.append(inst_ret)
+
+        if self._filters_display:
+            class_names = [f.__class__.__name__ for f in self._filters_display]
             self.output.debug(f"Loaded output filters: {class_names}")
 
     # ---- streaming callbacks ----
-    def _apply_filters(self, text: str) -> str:
-        if not self._filters:
+    def _apply_filters(self, text: str, filters: List[Any]) -> str:
+        if not filters:
             return text
 
         current = text
-        for f in self._filters:
+        for f in filters:
             try:
                 decision: Decision = f.process_token(current)
             except Exception as e:
@@ -102,15 +118,19 @@ class AssistantOutputAction(InteractionAction):
         self._accumulated_raw += token
 
         # Apply pipeline for user-visible text
-        visible = self._apply_filters(token)
+        visible = self._apply_filters(token, self._filters_display)
         if visible:
             self.output.write(visible, end='', flush=True)
-            self._accumulated_filtered += visible
+            self._accumulated_display += visible
+
+        # Apply return-only pipeline (e.g., think filters) for internal parser input
+        returned = self._apply_filters(token, self._filters_return)
+        self._accumulated_return += returned
         return token
 
     def _on_complete(self, raw_full: str) -> str:
         # Finish filters lifecycle
-        for f in self._filters:
+        for f in self._filters_display + self._filters_return:
             try:
                 if hasattr(f, 'on_complete') and callable(getattr(f, 'on_complete')):
                     f.on_complete()
@@ -127,7 +147,8 @@ class AssistantOutputAction(InteractionAction):
         """
         # Reset state and (re)load filters lazily per run
         self._accumulated_raw = ""
-        self._accumulated_filtered = ""
+        self._accumulated_display = ""
+        self._accumulated_return = ""
         self._load_filters()
 
         raw_result = self.session.utils.stream.process_stream(
@@ -138,5 +159,28 @@ class AssistantOutputAction(InteractionAction):
             spinner_message=spinner_message
         )
 
-        # Return raw result for internal consumers (e.g., assistant_commands)
+        # Return raw result for compatibility; ChatMode can query sanitized via getter
         return raw_result
+
+    # ---- getters for other consumers ----
+    def get_raw_output(self) -> str:
+        return self._accumulated_raw
+
+    def get_display_output(self) -> str:
+        return self._accumulated_display
+
+    def get_sanitized_output(self) -> str:
+        return self._accumulated_return
+
+    def get_hidden_output(self) -> str:
+        """Aggregate any hidden content captured by filters that expose get_hidden()."""
+        parts: List[str] = []
+        for f in self._filters_display + self._filters_return:
+            try:
+                if hasattr(f, 'get_hidden') and callable(getattr(f, 'get_hidden')):
+                    hidden = f.get_hidden()
+                    if hidden:
+                        parts.append(hidden)
+            except Exception:
+                continue
+        return ''.join(parts)

@@ -13,12 +13,17 @@ class OutputFilterAssumeThinkOpenAction(InteractionAction):
     Useful for models that omit the opening <think> tag.
     """
 
+    # Mark that this filter affects the returned/sanitized output
+    AFFECTS_RETURN = True
+
     def __init__(self, session):
         self.session = session
-        self.think_placeholder = "⟦hidden:think⟧"
+        # Default to blank unless configured
+        self.think_placeholder = ""
         # Start inside think by default
         self.in_think = True
         self._emitted_placeholder = False
+        self._hidden_parts = []
 
     # Required by InteractionAction, not used for this filter
     def run(self, *args, **kwargs):  # pragma: no cover - not invoked
@@ -31,6 +36,7 @@ class OutputFilterAssumeThinkOpenAction(InteractionAction):
         # Reset state after a stream completes
         self.in_think = True
         self._emitted_placeholder = False
+        # Do not clear hidden parts here to allow retrieval post-run
 
     def process_token(self, text: str) -> Decision:
         if not text:
@@ -60,8 +66,14 @@ class OutputFilterAssumeThinkOpenAction(InteractionAction):
 
                 next_close = text.find(close_tag, i)
                 if next_close == -1:
+                    # Capture the hidden remainder
+                    if i < len(text):
+                        self._hidden_parts.append(text[i:])
                     i = len(text)
                 else:
+                    # Capture hidden segment before the close tag
+                    if i < next_close:
+                        self._hidden_parts.append(text[i:next_close])
                     # Exit implicit think on close
                     i = next_close + lct
                     self.in_think = False
@@ -69,3 +81,5 @@ class OutputFilterAssumeThinkOpenAction(InteractionAction):
 
         return ("PASS", ''.join(out))
 
+    def get_hidden(self) -> str:
+        return ''.join(self._hidden_parts)

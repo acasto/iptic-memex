@@ -14,12 +14,17 @@ class OutputFilterThinkTagAction(InteractionAction):
     - Handles spans that begin/end across chunk boundaries
     """
 
+    # Mark that this filter affects the returned/sanitized output
+    AFFECTS_RETURN = True
+
     def __init__(self, session):
         self.session = session
-        self.think_placeholder = "⟦hidden:think⟧"
+        # Default to blank unless configured
+        self.think_placeholder = ""
         # Stateful across chunks
         self.in_think = False
         self._emitted_placeholder = False
+        self._hidden_parts = []
 
     # Required by InteractionAction, not used for this filter
     def run(self, *args, **kwargs):  # pragma: no cover - not invoked
@@ -32,6 +37,7 @@ class OutputFilterThinkTagAction(InteractionAction):
         # Reset state after a stream completes
         self.in_think = False
         self._emitted_placeholder = False
+        # Do not clear hidden parts here to allow retrieval post-run
 
     def process_token(self, text: str) -> Decision:
         if not text:
@@ -80,8 +86,14 @@ class OutputFilterThinkTagAction(InteractionAction):
                 next_close = text.find(close_tag, i)
                 if next_close == -1:
                     # Consume the rest of this chunk; remain in think
+                    # Capture hidden segment
+                    if i < len(text):
+                        self._hidden_parts.append(text[i:])
                     i = len(text)
                 else:
+                    # Capture hidden segment before the close tag
+                    if i < next_close:
+                        self._hidden_parts.append(text[i:next_close])
                     # Finish the block and continue after the close tag
                     i = next_close + lct
                     self.in_think = False
@@ -89,3 +101,5 @@ class OutputFilterThinkTagAction(InteractionAction):
 
         return ("PASS", ''.join(out))
 
+    def get_hidden(self) -> str:
+        return ''.join(self._hidden_parts)
