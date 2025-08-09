@@ -155,10 +155,10 @@ class AssistantCommandsAction(InteractionAction):
     @staticmethod
     def _sanitize_think_sections(text: str) -> str:
         """
-        Remove <think> ... </think> segments from text.
-        Also handles edge cases:
-          - Stray closing </think> with no prior <think>: drop from start to that closer.
-          - Unclosed <think> with no </think>: drop from opener to end.
+        Remove <think>/<thinking> ... </think></thinking> segments from text.
+        Edge cases handled:
+          - Stray closing tag before any opener: drop up to and including that closer.
+          - Unclosed open tag: drop from opener to end.
         """
         if not text:
             return text
@@ -166,16 +166,30 @@ class AssistantCommandsAction(InteractionAction):
         out = []
         i = 0
         n = len(text)
-        open_tag = '<think>'
-        close_tag = '</think>'
-        lo = len(open_tag)
-        lc = len(close_tag)
+        open_tags = ('<think>', '<thinking>')
+        close_tags = ('</think>', '</thinking>')
+        open_lens = {t: len(t) for t in open_tags}
+        close_lens = {t: len(t) for t in close_tags}
         in_think = False
 
         while i < n:
             if not in_think:
-                next_open = text.find(open_tag, i)
-                next_close = text.find(close_tag, i)
+                # Earliest opener among supported tags
+                next_open = -1
+                open_hit = None
+                for t in open_tags:
+                    pos = text.find(t, i)
+                    if pos != -1 and (next_open == -1 or pos < next_open):
+                        next_open = pos
+                        open_hit = t
+                # Earliest closer among supported tags
+                next_close = -1
+                close_hit = None
+                for t in close_tags:
+                    pos = text.find(t, i)
+                    if pos != -1 and (next_close == -1 or pos < next_close):
+                        next_close = pos
+                        close_hit = t
 
                 if next_open == -1 and next_close == -1:
                     out.append(text[i:])
@@ -183,14 +197,14 @@ class AssistantCommandsAction(InteractionAction):
 
                 # Handle stray close appearing before any open: drop from current i to after close
                 if next_close != -1 and (next_open == -1 or next_close < next_open):
-                    i = next_close + lc
+                    i = next_close + close_lens[close_hit]
                     continue
 
                 # Normal open
                 if next_open != -1 and (next_close == -1 or next_open <= next_close):
                     out.append(text[i:next_open])
                     in_think = True
-                    i = next_open + lo
+                    i = next_open + open_lens[open_hit]
                     continue
 
                 # Fallback: append remainder
@@ -198,12 +212,18 @@ class AssistantCommandsAction(InteractionAction):
                 break
             else:
                 # We are inside a think segment; look for the close tag
-                next_close = text.find(close_tag, i)
+                next_close = -1
+                close_hit = None
+                for t in close_tags:
+                    pos = text.find(t, i)
+                    if pos != -1 and (next_close == -1 or pos < next_close):
+                        next_close = pos
+                        close_hit = t
                 if next_close == -1:
                     # Unclosed think: drop until end
                     i = n
                 else:
-                    i = next_close + lc
+                    i = next_close + close_lens[close_hit]
                     in_think = False
 
         return ''.join(out)

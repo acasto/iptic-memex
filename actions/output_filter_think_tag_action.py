@@ -9,7 +9,7 @@ Decision = Optional[Tuple[str, Optional[str]]]
 
 class OutputFilterThinkTagAction(InteractionAction):
     """
-    Hides content within <think>...</think> spans during streaming.
+    Hides content within <think>...</think> (and <thinking>...</thinking>) spans during streaming.
     - Emits a placeholder once per span
     - Handles spans that begin/end across chunk boundaries
     """
@@ -45,16 +45,29 @@ class OutputFilterThinkTagAction(InteractionAction):
 
         out = []
         i = 0
-        open_tag = "<think>"
-        close_tag = "</think>"
-        lt = len(open_tag)
-        lct = len(close_tag)
+        open_tags = ("<think>", "<thinking>")
+        close_tags = ("</think>", "</thinking>")
+        open_lens = {t: len(t) for t in open_tags}
+        close_lens = {t: len(t) for t in close_tags}
 
         while i < len(text):
             if not self.in_think:
-                # Look for either an opener or a stray closer (which we'll strip)
-                next_open = text.find(open_tag, i)
-                next_close = text.find(close_tag, i)
+                # Look for earliest opener or stray closer among supported tags
+                next_open = -1
+                open_tag_hit = None
+                for t in open_tags:
+                    pos = text.find(t, i)
+                    if pos != -1 and (next_open == -1 or pos < next_open):
+                        next_open = pos
+                        open_tag_hit = t
+
+                next_close = -1
+                close_tag_hit = None
+                for t in close_tags:
+                    pos = text.find(t, i)
+                    if pos != -1 and (next_close == -1 or pos < next_close):
+                        next_close = pos
+                        close_tag_hit = t
 
                 if next_open == -1 and next_close == -1:
                     out.append(text[i:])
@@ -63,7 +76,7 @@ class OutputFilterThinkTagAction(InteractionAction):
                 # If a stray closer appears before any opener, skip the tag
                 if next_close != -1 and (next_open == -1 or next_close < next_open):
                     out.append(text[i:next_close])
-                    i = next_close + lct
+                    i = next_close + close_lens[close_tag_hit]
                     continue
 
                 # Handle opener
@@ -71,7 +84,7 @@ class OutputFilterThinkTagAction(InteractionAction):
                     out.append(text[i:next_open])
                     self.in_think = True
                     self._emitted_placeholder = False
-                    i = next_open + lt
+                    i = next_open + open_lens[open_tag_hit]
                     continue
 
                 # Fallback safety
@@ -83,7 +96,14 @@ class OutputFilterThinkTagAction(InteractionAction):
                     out.append(self.think_placeholder)
                     self._emitted_placeholder = True
 
-                next_close = text.find(close_tag, i)
+                # Find next closing tag among supported closers
+                next_close = -1
+                close_tag_hit = None
+                for t in close_tags:
+                    pos = text.find(t, i)
+                    if pos != -1 and (next_close == -1 or pos < next_close):
+                        next_close = pos
+                        close_tag_hit = t
                 if next_close == -1:
                     # Consume the rest of this chunk; remain in think
                     # Capture hidden segment
@@ -95,7 +115,7 @@ class OutputFilterThinkTagAction(InteractionAction):
                     if i < next_close:
                         self._hidden_parts.append(text[i:next_close])
                     # Finish the block and continue after the close tag
-                    i = next_close + lct
+                    i = next_close + close_lens[close_tag_hit]
                     self.in_think = False
                     self._emitted_placeholder = False
 

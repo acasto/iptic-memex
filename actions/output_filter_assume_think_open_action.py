@@ -9,7 +9,7 @@ Decision = Optional[Tuple[str, Optional[str]]]
 
 class OutputFilterAssumeThinkOpenAction(InteractionAction):
     """
-    Assumes we are inside a <think> span until a closing </think> is seen.
+    Assumes we are inside a <think> (or <thinking>) span until a closing </think> or </thinking> is seen.
     Useful for models that omit the opening <think> tag.
     """
 
@@ -44,19 +44,25 @@ class OutputFilterAssumeThinkOpenAction(InteractionAction):
 
         out = []
         i = 0
-        close_tag = "</think>"
-        lct = len(close_tag)
+        close_tags = ("</think>", "</thinking>")
+        close_lens = {t: len(t) for t in close_tags}
 
         while i < len(text):
             if not self.in_think:
                 # Pass-through until the next closing (if any) appears; if it does, strip it
-                next_close = text.find(close_tag, i)
+                next_close = -1
+                close_tag_hit = None
+                for t in close_tags:
+                    pos = text.find(t, i)
+                    if pos != -1 and (next_close == -1 or pos < next_close):
+                        next_close = pos
+                        close_tag_hit = t
                 if next_close == -1:
                     out.append(text[i:])
                     break
                 out.append(text[i:next_close])
                 # Skip the close tag (extra stray)
-                i = next_close + lct
+                i = next_close + close_lens[close_tag_hit]
                 continue
             else:
                 # Inside implicit think: emit placeholder once, drop content until a close tag
@@ -64,7 +70,13 @@ class OutputFilterAssumeThinkOpenAction(InteractionAction):
                     out.append(self.think_placeholder)
                     self._emitted_placeholder = True
 
-                next_close = text.find(close_tag, i)
+                next_close = -1
+                close_tag_hit = None
+                for t in close_tags:
+                    pos = text.find(t, i)
+                    if pos != -1 and (next_close == -1 or pos < next_close):
+                        next_close = pos
+                        close_tag_hit = t
                 if next_close == -1:
                     # Capture the hidden remainder
                     if i < len(text):
@@ -75,7 +87,7 @@ class OutputFilterAssumeThinkOpenAction(InteractionAction):
                     if i < next_close:
                         self._hidden_parts.append(text[i:next_close])
                     # Exit implicit think on close
-                    i = next_close + lct
+                    i = next_close + close_lens[close_tag_hit]
                     self.in_think = False
                     self._emitted_placeholder = False
 
