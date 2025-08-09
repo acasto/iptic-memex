@@ -80,11 +80,15 @@ class AssistantCommandsAction(InteractionAction):
                 self.commands.update(new_commands)
 
     def run(self, response: str = None):
-        # Extract labeled blocks first
-        blocks = self.extract_labeled_blocks(response)
+        # Backstop: sanitize out <think> ... </think> segments so parser
+        # never considers tools mentioned inside thinking sections.
+        sanitized = self._sanitize_think_sections(response or "")
 
-        # Parse commands in the response
-        parsed_commands = self.parse_commands(response)
+        # Extract labeled blocks first (from sanitized text)
+        blocks = self.extract_labeled_blocks(sanitized)
+
+        # Parse commands in the sanitized response
+        parsed_commands = self.parse_commands(sanitized)
 
         # Process commands
         auto_submit = None  # Track if we should auto-submit after all commands
@@ -147,6 +151,62 @@ class AssistantCommandsAction(InteractionAction):
             params = self.session.get_params()
             if 'highlighting' in params and params['highlighting'] is True:
                 self.session.get_action('reprint_chat').run()
+
+    @staticmethod
+    def _sanitize_think_sections(text: str) -> str:
+        """
+        Remove <think> ... </think> segments from text.
+        Also handles edge cases:
+          - Stray closing </think> with no prior <think>: drop from start to that closer.
+          - Unclosed <think> with no </think>: drop from opener to end.
+        """
+        if not text:
+            return text
+
+        out = []
+        i = 0
+        n = len(text)
+        open_tag = '<think>'
+        close_tag = '</think>'
+        lo = len(open_tag)
+        lc = len(close_tag)
+        in_think = False
+
+        while i < n:
+            if not in_think:
+                next_open = text.find(open_tag, i)
+                next_close = text.find(close_tag, i)
+
+                if next_open == -1 and next_close == -1:
+                    out.append(text[i:])
+                    break
+
+                # Handle stray close appearing before any open: drop from current i to after close
+                if next_close != -1 and (next_open == -1 or next_close < next_open):
+                    i = next_close + lc
+                    continue
+
+                # Normal open
+                if next_open != -1 and (next_close == -1 or next_open <= next_close):
+                    out.append(text[i:next_open])
+                    in_think = True
+                    i = next_open + lo
+                    continue
+
+                # Fallback: append remainder
+                out.append(text[i:])
+                break
+            else:
+                # We are inside a think segment; look for the close tag
+                next_close = text.find(close_tag, i)
+                if next_close == -1:
+                    # Unclosed think: drop until end
+                    i = n
+                else:
+                    i = next_close + lc
+                    in_think = False
+
+        return ''.join(out)
 
     @staticmethod
     def extract_labeled_blocks(text: str) -> dict:
