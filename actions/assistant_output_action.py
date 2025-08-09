@@ -184,3 +184,49 @@ class AssistantOutputAction(InteractionAction):
             except Exception:
                 continue
         return ''.join(parts)
+
+    # ---- non-streaming helper ----
+    @classmethod
+    def filter_full_text(cls, text: str, session) -> str:
+        """
+        Apply the configured output filters to a complete message string.
+        Mirrors the display pipeline used during streaming, without side effects.
+        """
+        try:
+            inst = cls(session)
+            # Prepare filters using the same config path as streaming
+            inst._load_filters()
+            # Apply display filters to the whole text in one pass
+            filtered = inst._apply_filters(text, inst._filters_display)
+            # Allow filters to finalize any state
+            for f in inst._filters_display:
+                try:
+                    if hasattr(f, 'on_complete') and callable(getattr(f, 'on_complete')):
+                        f.on_complete()
+                except Exception:
+                    # Non-fatal in non-streaming path
+                    pass
+            return filtered
+        except Exception:
+            # On any error, return original text to avoid breaking UX
+            return text
+
+    @classmethod
+    def filter_full_text_for_return(cls, text: str, session) -> str:
+        """
+        Apply only the return-affecting filters (AFFECTS_RETURN=True) to a full string.
+        This mirrors the sanitized output used for tool/command parsing during streaming.
+        """
+        try:
+            inst = cls(session)
+            inst._load_filters()
+            sanitized = inst._apply_filters(text, inst._filters_return)
+            for f in inst._filters_return:
+                try:
+                    if hasattr(f, 'on_complete') and callable(getattr(f, 'on_complete')):
+                        f.on_complete()
+                except Exception:
+                    pass
+            return sanitized
+        except Exception:
+            return text

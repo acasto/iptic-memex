@@ -1,4 +1,5 @@
 from base_classes import InteractionMode
+from actions.assistant_output_action import AssistantOutputAction
 
 
 class ChatMode(InteractionMode):
@@ -72,7 +73,9 @@ class ChatMode(InteractionMode):
                 response = self.session.get_provider().chat()
                 if response is None:
                     return None
-                self.utils.output.write(response)
+                # Apply non-streaming output filters for display parity
+                filtered = AssistantOutputAction.filter_full_text(response, self.session)
+                self.utils.output.write(filtered)
                 self.utils.output.write('')
         except (KeyboardInterrupt, EOFError):
             self.utils.output.write('')
@@ -86,6 +89,9 @@ class ChatMode(InteractionMode):
                 sanitized = None
                 if output_processor and hasattr(output_processor, 'get_sanitized_output'):
                     sanitized = output_processor.get_sanitized_output()
+                # If not streaming (no output_processor), synthesize sanitized text for tools
+                if sanitized is None and response is not None:
+                    sanitized = AssistantOutputAction.filter_full_text_for_return(response, self.session)
                 assistant_commands.run(sanitized if sanitized is not None else response)
             except Exception:
                 assistant_commands.run(response)
