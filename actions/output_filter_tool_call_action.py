@@ -27,6 +27,8 @@ class OutputFilterToolCallAction(InteractionAction):
         self.in_block = False
         self.current_label = None
         self._emitted_placeholder = False
+        # Carry buffer to handle openers/closers across chunk boundaries
+        self._carry = ""
 
     # Required by InteractionAction, not used for this filter
     def run(self, *args, **kwargs):  # pragma: no cover - not invoked
@@ -39,6 +41,7 @@ class OutputFilterToolCallAction(InteractionAction):
         self.in_block = False
         self.current_label = None
         self._emitted_placeholder = False
+        self._carry = ""
 
     def _emit_placeholder(self) -> str:
         name = self.current_label or "tool"
@@ -52,61 +55,69 @@ class OutputFilterToolCallAction(InteractionAction):
         if not text:
             return ("PASS", text)
 
+        buf = self._carry + text
         out = []
         i = 0
-        n = len(text)
+        n = len(buf)
 
         while i < n:
             if not self.in_block:
-                # Search for next opener-like pattern %%...%%
-                start = text.find(self.OPEN_DELIM, i)
+                # Find potential opener start '%%'
+                start = buf.find(self.OPEN_DELIM, i)
                 if start == -1:
-                    out.append(text[i:])
+                    # No opener → emit remaining visible content
+                    out.append(buf[i:])
+                    i = n
                     break
 
-                # Append text before opener candidate
-                out.append(text[i:start])
+                # Emit visible content before opener
+                out.append(buf[i:start])
 
-                # Find the closing %% of the opener
-                end = text.find(self.OPEN_DELIM, start + 2)
+                # Find closing '%%' of the opener label
+                end = buf.find(self.OPEN_DELIM, start + 2)
                 if end == -1:
-                    # No full opener available; leave remainder as-is
-                    out.append(text[start:])
-                    break
+                    # Incomplete opener; keep carry from start and finish for now
+                    self._carry = buf[start:]
+                    # Return what we could output so far
+                    return ("PASS", ''.join(out))
 
-                label = text[start + 2:end]
+                label = buf[start + 2:end]
                 label_stripped = label.strip()
 
-                # Treat %%END%% outside a block as a stray close; strip it
+                # If it's %%END%% outside a block, just skip it
                 if label_stripped == 'END':
                     i = end + 2
                     continue
 
-                # Enter a tool block
+                # Enter a block and emit placeholder once
                 self.in_block = True
                 self.current_label = label_stripped or 'tool'
                 self._emitted_placeholder = False
                 i = end + 2
-                # Continue in-block processing within the same chunk
-                continue
-
-            else:
-                # Inside a tool block: emit once, then drop until %%END%%
+                # Immediately emit placeholder upon entering the block
                 if not self._emitted_placeholder:
                     out.append(self._emit_placeholder())
                     self._emitted_placeholder = True
+                continue
 
-                close_pos = text.find(self.CLOSE_TOKEN, i)
+            else:
+                # We are inside a tool block: drop content until we see %%END%%
+                close_pos = buf.find(self.CLOSE_TOKEN, i)
                 if close_pos == -1:
-                    # Consume rest; remain in block
-                    i = n
+                    # No close token yet. Keep a small tail to detect boundary-spanning close.
+                    tail_len = len(self.CLOSE_TOKEN) - 1
+                    keep_from = max(n - tail_len, i)
+                    self._carry = buf[keep_from:]
+                    return ("PASS", ''.join(out))
                 else:
-                    # Exit the block and continue output after END token
+                    # Found close; skip hidden content up to and including close token
                     i = close_pos + len(self.CLOSE_TOKEN)
                     self.in_block = False
                     self.current_label = None
                     self._emitted_placeholder = False
-                    # Continue scanning for potential subsequent openers
+                    # Continue scanning for subsequent openers after the close
                     continue
 
+        # If we fully consumed buf, clear carry
+        self._carry = ""
         return ("PASS", ''.join(out))
