@@ -33,6 +33,10 @@ class ProcessContextsAction(InteractionAction):
             params = self.session.get_params()
             show_context_summary = params.get('show_context_summary', True)
 
+            # Agent-friendly: optionally print context contents (e.g., diffs) for assistant/agent contexts
+            show_context_details = params.get('show_context_details', False)
+            detail_max_chars = params.get('context_detail_max_chars', 4000)
+
             for idx, context in enumerate(contexts):
                 if context['type'] == 'image':
                     if show_context_summary:
@@ -54,6 +58,19 @@ class ProcessContextsAction(InteractionAction):
                         output.write(f"Output of: {context_data.get('name', 'unnamed')} ({tokens} tokens)")
                     else:
                         output.write(f"In context: [{idx}] {context_data.get('name', 'unnamed')} ({tokens} tokens)")
+
+                # Print details for assistant/agent contexts (e.g., diffs, errors) when enabled
+                if show_context_details and context['type'] in ('assistant', 'agent') and content:
+                    try:
+                        text = str(content)
+                    except Exception:
+                        text = ''
+                    if text:
+                        if isinstance(detail_max_chars, int) and detail_max_chars > 0 and len(text) > detail_max_chars:
+                            output.write(text[:detail_max_chars])
+                            output.write(f"\n… (truncated {len(text) - detail_max_chars} chars)\n")
+                        else:
+                            output.write(text)
 
             # Check total tokens against large_input_limit if auto_submit is True
             if auto_submit and total_tokens > 0:

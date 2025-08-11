@@ -160,6 +160,18 @@ class AssistantFsHandlerAction(InteractionAction):
                 if not content.endswith('\n'):
                     content += '\n'
 
+            # For non-append writes, optionally ensure trailing newline at EOF
+            if not append and isinstance(content, str):
+                try:
+                    ensure_nl = self.session.get_params().get(
+                        'ensure_trailing_newline',
+                        self.session.get_tools().get('ensure_trailing_newline', False)
+                    )
+                except Exception:
+                    ensure_nl = False
+                if ensure_nl and (len(content) == 0 or not content.endswith('\n')):
+                    content = content + '\n'
+
         return self.fs.write_file(resolved_path, content, binary=binary,
                                   encoding=encoding, create_dirs=create_dirs,
                                   append=append)

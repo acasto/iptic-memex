@@ -83,7 +83,50 @@ class AssistantFileToolAction(InteractionAction):
             })
 
     def _handle_write(self, filename, content):
-        success = self.fs_handler.write_file(filename, content, create_dirs=True)
+        agent_mode = self.session.get_params().get('agent_mode') or self.session.user_data.get('agent_mode')
+        policy = self.session.get_params().get('agent_write_policy') if agent_mode else None
+        if policy is None:
+            # Chat/TUI/Completion default path: prompt/confirm handled in fs_handler
+            success = self.fs_handler.write_file(filename, content, create_dirs=True)
+            msg = 'File written successfully' if success else f'Failed to write file: {filename}'
+            self.session.add_context('assistant', {
+                'name': 'file_tool_result',
+                'content': msg
+            })
+            return
+
+        if policy == 'deny':
+            self.session.add_context('assistant', {
+                'name': 'file_tool_result',
+                'content': 'Writes are disabled by policy; output a unified diff of changes you would apply.'
+            })
+            return
+
+        if policy == 'dry-run':
+            # Avoid noisy read errors: only read if file exists
+            try:
+                resolved = self.fs_handler.resolve_path(filename, must_exist=True)
+            except TypeError:
+                # Backward compatibility if resolve_path signature differs
+                resolved = self.fs_handler.resolve_path(filename)
+                if resolved and not os.path.exists(resolved):
+                    resolved = None
+            if resolved:
+                original = self.fs_handler.read_file(filename) or ''
+            else:
+                original = ''
+            try:
+                diff_text = self.fs_handler._generate_diff(original, content, filename)
+            except Exception:
+                diff_text = None
+            self.session.add_context('assistant', {
+                'name': 'file_tool_result',
+                'content': diff_text or 'No changes (dry-run)'
+            })
+            return
+
+        # allow: perform write non-interactively
+        success = self.fs_handler.write_file(filename, content, create_dirs=True, force=True)
         msg = 'File written successfully' if success else f'Failed to write file: {filename}'
         self.session.add_context('assistant', {
             'name': 'file_tool_result',
@@ -91,7 +134,48 @@ class AssistantFileToolAction(InteractionAction):
         })
 
     def _handle_append(self, filename, content):
-        success = self.fs_handler.write_file(filename, content, append=True, create_dirs=True)
+        agent_mode = self.session.get_params().get('agent_mode') or self.session.user_data.get('agent_mode')
+        policy = self.session.get_params().get('agent_write_policy') if agent_mode else None
+        if policy is None:
+            success = self.fs_handler.write_file(filename, content, append=True, create_dirs=True)
+            msg = 'Content appended successfully' if success else f'Failed to append to file: {filename}'
+            self.session.add_context('assistant', {
+                'name': 'file_tool_result',
+                'content': msg
+            })
+            return
+
+        if policy == 'deny':
+            self.session.add_context('assistant', {
+                'name': 'file_tool_result',
+                'content': 'Appends are disabled by policy; output a unified diff of appended changes.'
+            })
+            return
+
+        if policy == 'dry-run':
+            try:
+                resolved = self.fs_handler.resolve_path(filename, must_exist=True)
+            except TypeError:
+                resolved = self.fs_handler.resolve_path(filename)
+                if resolved and not os.path.exists(resolved):
+                    resolved = None
+            if resolved:
+                original = self.fs_handler.read_file(filename) or ''
+            else:
+                original = ''
+            # Emulate append with newline handling kept simple
+            new_content = original + ('' if original.endswith('\n') or not isinstance(content, str) else '\n') + content
+            try:
+                diff_text = self.fs_handler._generate_diff(original, new_content, filename)
+            except Exception:
+                diff_text = None
+            self.session.add_context('assistant', {
+                'name': 'file_tool_result',
+                'content': diff_text or 'No changes (dry-run append)'
+            })
+            return
+
+        success = self.fs_handler.write_file(filename, content, append=True, create_dirs=True, force=True)
         msg = 'Content appended successfully' if success else f'Failed to append to file: {filename}'
         self.session.add_context('assistant', {
             'name': 'file_tool_result',
@@ -142,11 +226,40 @@ class AssistantFileToolAction(InteractionAction):
 
     def _handle_delete(self, filename, recursive=False):
         """Handle file or directory deletion"""
-        if os.path.isdir(filename):
-            success = self.fs_handler.delete_directory(filename, recursive)
-        else:
-            success = self.fs_handler.delete_file(filename)
+        agent_mode = self.session.get_params().get('agent_mode') or self.session.user_data.get('agent_mode')
+        policy = self.session.get_params().get('agent_write_policy') if agent_mode else None
+        if policy is None:
+            if os.path.isdir(filename):
+                success = self.fs_handler.delete_directory(filename, recursive)
+            else:
+                success = self.fs_handler.delete_file(filename)
+            msg = 'Delete operation successful' if success else f'Failed to delete: {filename}'
+            self.session.add_context('assistant', {
+                'name': 'file_tool_result',
+                'content': msg
+            })
+            return
 
+        if policy == 'deny':
+            self.session.add_context('assistant', {
+                'name': 'file_tool_result',
+                'content': 'Deletes are disabled by policy; describe intended deletion instead.'
+            })
+            return
+
+        if policy == 'dry-run':
+            kind = 'directory' if os.path.isdir(filename) else 'file'
+            msg = f"Would delete {kind} {filename}{' recursively' if (kind=='directory' and recursive) else ''}"
+            self.session.add_context('assistant', {
+                'name': 'file_tool_result',
+                'content': msg
+            })
+            return
+
+        if os.path.isdir(filename):
+            success = self.fs_handler.delete_directory(filename, recursive, force=True)
+        else:
+            success = self.fs_handler.delete_file(filename, force=True)
         msg = 'Delete operation successful' if success else f'Failed to delete: {filename}'
         self.session.add_context('assistant', {
             'name': 'file_tool_result',
@@ -155,7 +268,30 @@ class AssistantFileToolAction(InteractionAction):
 
     def _handle_rename(self, old_name, new_name):
         """Handle file or directory rename"""
-        success = self.fs_handler.rename(old_name, new_name)
+        agent_mode = self.session.get_params().get('agent_mode') or self.session.user_data.get('agent_mode')
+        policy = self.session.get_params().get('agent_write_policy') if agent_mode else None
+        if policy is None:
+            success = self.fs_handler.rename(old_name, new_name)
+            msg = 'Rename operation successful' if success else f'Failed to rename {old_name} to {new_name}'
+            self.session.add_context('assistant', {
+                'name': 'file_tool_result',
+                'content': msg
+            })
+            return
+
+        if policy == 'deny':
+            self.session.add_context('assistant', {
+                'name': 'file_tool_result',
+                'content': 'Renames are disabled by policy; describe intended rename instead.'
+            })
+            return
+        if policy == 'dry-run':
+            self.session.add_context('assistant', {
+                'name': 'file_tool_result',
+                'content': f'Would rename {old_name} to {new_name}'
+            })
+            return
+        success = self.fs_handler.rename(old_name, new_name, force=True)
         msg = 'Rename operation successful' if success else f'Failed to rename {old_name} to {new_name}'
         self.session.add_context('assistant', {
             'name': 'file_tool_result',
@@ -164,7 +300,30 @@ class AssistantFileToolAction(InteractionAction):
 
     def _handle_copy(self, filename, new_name):
         """Handle file or directory copy"""
-        success = self.fs_handler.copy(filename, new_name)
+        agent_mode = self.session.get_params().get('agent_mode') or self.session.user_data.get('agent_mode')
+        policy = self.session.get_params().get('agent_write_policy') if agent_mode else None
+        if policy is None:
+            success = self.fs_handler.copy(filename, new_name)
+            msg = 'Copy operation successful' if success else f'Failed to copy {filename} to {new_name}'
+            self.session.add_context('assistant', {
+                'name': 'file_tool_result',
+                'content': msg
+            })
+            return
+
+        if policy == 'deny':
+            self.session.add_context('assistant', {
+                'name': 'file_tool_result',
+                'content': 'Copies are disabled by policy; describe intended copy instead.'
+            })
+            return
+        if policy == 'dry-run':
+            self.session.add_context('assistant', {
+                'name': 'file_tool_result',
+                'content': f'Would copy {filename} to {new_name}'
+            })
+            return
+        success = self.fs_handler.copy(filename, new_name, force=True)
         msg = 'Copy operation successful' if success else f'Failed to copy {filename} to {new_name}'
         self.session.add_context('assistant', {
             'name': 'file_tool_result',
@@ -239,7 +398,31 @@ class AssistantFileToolAction(InteractionAction):
             })
             return
 
-        # Write the edited content - the fs_handler will handle diff display and confirmation
+        agent_mode = self.session.get_params().get('agent_mode') or self.session.user_data.get('agent_mode')
+        policy = self.session.get_params().get('agent_write_policy') if agent_mode else None
+        if policy is None:
+            # Default path uses confirmation via fs_handler
+            self._handle_write(filename, edited_content)
+            return
+
+        if policy == 'deny':
+            self.session.add_context('assistant', {
+                'name': 'file_tool_result',
+                'content': 'Writes are disabled by policy; output a unified diff of the edit you would apply.'
+            })
+            return
+        if policy == 'dry-run':
+            try:
+                diff_text = self.fs_handler._generate_diff(original_content, edited_content, filename)
+            except Exception:
+                diff_text = None
+            self.session.add_context('assistant', {
+                'name': 'file_tool_result',
+                'content': diff_text or 'No changes (dry-run edit)'
+            })
+            return
+
+        # allow
         self._handle_write(filename, edited_content)
 
     def _get_formatted_conversation_history(self):

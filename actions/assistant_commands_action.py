@@ -407,4 +407,19 @@ class AssistantCommandsAction(InteractionAction):
             content_start = len(lines)
 
         content = '\n'.join(lines[content_start:])
+
+        # Defensive cleanup: drop a trailing line that is a lone '%'.
+        # This guards against rare parser edge cases where a split '%%END%%'
+        # across streaming chunks could leak a single '%' into content capture.
+        if content:
+            parts = content.splitlines()
+            # Remove trailing blank lines for inspection, preserve original otherwise
+            idx = len(parts) - 1
+            while idx >= 0 and parts[idx].strip() == "":
+                idx -= 1
+            if idx >= 0 and parts[idx].strip() == '%':
+                # Drop the stray '%', keep preceding lines (including prior blanks)
+                parts = parts[:idx]
+                content = '\n'.join(parts)
+
         return args, content

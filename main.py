@@ -13,8 +13,11 @@ from session import SessionBuilder
 @click.option('-v', '--verbose', default=False, is_flag=True, help='Show session parameters')
 @click.option('-r', '--raw', default=False, is_flag=True, help='Return raw response in completion mode')
 @click.option('-f', '--file', multiple=True, help='File to use for completion')
+@click.option('--steps', type=int, default=1, help='Number of assistant turns (Agent Steps Mode when >1)')
+@click.option('--agent-writes', type=click.Choice(['deny', 'dry-run', 'allow']), default='deny', help='Agent write policy for file tools')
+@click.option('--no-agent-status-tags', is_flag=True, default=False, help='Disable per-turn <status> tag injection')
 @click.pass_context
-def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw, file):
+def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw, file, steps, agent_writes, no_agent_status_tags):
     """
     the main entry point for the CLI click interface
     """
@@ -45,6 +48,13 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw,
         options['raw_completion'] = True
         # Disable streaming if raw output is requested
         options['stream'] = False
+    # Agent mode options (stored for later routing)
+    if steps is not None:
+        options['steps'] = int(steps)
+    if agent_writes:
+        options['agent_writes'] = agent_writes
+    if no_agent_status_tags:
+        options['no_agent_status_tags'] = True
     
     # Validate model early if provided (fail fast on invalid model)
     if 'model' in options and options['model']:
@@ -74,9 +84,19 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw,
             else:
                 session.add_context('file', f)
         
-        # Start completion mode
-        from modes.completion_mode import CompletionMode
-        mode = CompletionMode(session)
+        # Route based on steps: Agent Mode when >1, else Completion
+        requested_steps = options.get('steps', 1)
+        if requested_steps and int(requested_steps) > 1:
+            from modes.agent_mode import AgentMode
+            mode = AgentMode(
+                session,
+                steps=int(requested_steps),
+                writes_policy=options.get('agent_writes', 'deny'),
+                use_status_tags=not options.get('no_agent_status_tags', False),
+            )
+        else:
+            from modes.completion_mode import CompletionMode
+            mode = CompletionMode(session)
         mode.start()
         return
     
