@@ -10,10 +10,11 @@ class ReprintChatAction(InteractionAction):
     def run(self, args=None):
         """
         Reprints the chat conversation.
-        - By default, applies the configured output filters to assistant messages
-          (mirrors streaming display behavior).
-        - If invoked with argument 'all', bypasses filters and prints raw messages
-          exactly as stored (previous behavior).
+        - Default: apply configured output filters to assistant messages
+          (mirrors streaming display behavior) and respect `context_sent`.
+        - With 'raw': bypass filters but still respect `context_sent` (rolling window).
+        - With 'all': fetch full history and still apply filters.
+        - With 'raw all': bypass filters and print the full history exactly as stored.
         """
         ui = self.session.get_action('ui')
         chat = self.session.get_context('chat')
@@ -31,8 +32,9 @@ class ReprintChatAction(InteractionAction):
                 tokens = [str(a).lower() for a in args]
             elif isinstance(args, str):
                 tokens = [args.lower()]
-            bypass_filters = 'all' in tokens
-            fetch_all = 'all' in tokens
+            # 'raw' means bypass filters; 'all' means fetch entire history
+            bypass_filters = ('raw' in tokens)
+            fetch_all = ('all' in tokens)
 
         formatted = ""
         turns = chat.get('all' if fetch_all else None)

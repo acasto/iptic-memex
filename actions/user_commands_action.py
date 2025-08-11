@@ -96,8 +96,16 @@ class UserCommandsAction(InteractionAction):
                 "function": {"type": "action", "name": "reprint_chat"},
             },
             "reprint all": {
-                "description": "Reprint the conversation skipping output filters",
+                "description": "Reprint the full conversation (filtered)",
                 "function": {"type": "action", "name": "reprint_chat", "args": "all"},
+            },
+            "reprint raw": {
+                "description": "Reprint the conversation skipping output filters",
+                "function": {"type": "action", "name": "reprint_chat", "args": "raw"},
+            },
+            "reprint raw all": {
+                "description": "Reprint the conversation skipping output filters",
+                "function": {"type": "action", "name": "reprint_chat", "args": ["raw", "all"]},
             },
             "show settings": {
                 "description": "List all settings",
