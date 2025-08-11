@@ -29,21 +29,27 @@ class ProcessContextsAction(InteractionAction):
             output.write()
             total_tokens = 0
 
+            # Toggle per-context summary printing via config/params (DEFAULT.show_context_summary)
+            params = self.session.get_params()
+            show_context_summary = params.get('show_context_summary', True)
+
             for idx, context in enumerate(contexts):
                 if context['type'] == 'image':
-                    if auto_submit:
-                        output.write(f"Output of: {context['context'].get()['name']} (image)")
-                    else:
-                        output.write(f"In context: [{idx}] {context['context'].get()['name']} (image)")
-                else:
-                    context_data = context['context'].get()
-                    content = context_data.get('content', '')
-                    if content:
-                        tokens = self.token_counter.count_tiktoken(content)
-                        total_tokens += tokens
-                    else:
-                        tokens = 0
+                    if show_context_summary:
+                        name = context['context'].get()['name']
+                        if auto_submit:
+                            output.write(f"Output of: {name} (image)")
+                        else:
+                            output.write(f"In context: [{idx}] {name} (image)")
+                    # No tokens to add for images in this counter
+                    continue
 
+                context_data = context['context'].get()
+                content = context_data.get('content', '')
+                tokens = self.token_counter.count_tiktoken(content) if content else 0
+                total_tokens += tokens
+
+                if show_context_summary:
                     if auto_submit:
                         output.write(f"Output of: {context_data.get('name', 'unnamed')} ({tokens} tokens)")
                     else:
