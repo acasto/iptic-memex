@@ -18,9 +18,10 @@ class AssistantOutputAction(InteractionAction):
         # Separate pipelines: display (what user sees) and return (what ChatMode passes to parser)
         self._filters_display: List[Any] = []
         self._filters_return: List[Any] = []
-        self._accumulated_raw: str = ""
-        self._accumulated_display: str = ""
-        self._accumulated_return: str = ""
+        # Accumulators use list+join for performance on many small chunks
+        self._accumulated_raw_parts: List[str] = []
+        self._accumulated_display_parts: List[str] = []
+        self._accumulated_return_parts: List[str] = []
         # Defaults: blank placeholders unless configured
         self._think_placeholder = ""
         self._tool_placeholder = ""
@@ -131,17 +132,18 @@ class AssistantOutputAction(InteractionAction):
 
     def _on_token(self, token: str) -> str:
         # Accumulate raw
-        self._accumulated_raw += token
+        self._accumulated_raw_parts.append(token)
 
         # Apply pipeline for user-visible text
         visible = self._apply_filters(token, self._filters_display)
         if visible:
             self.output.write(visible, end='', flush=True)
-            self._accumulated_display += visible
+            self._accumulated_display_parts.append(visible)
 
         # Apply return-only pipeline (e.g., think filters) for internal parser input
         returned = self._apply_filters(token, self._filters_return)
-        self._accumulated_return += returned
+        if returned:
+            self._accumulated_return_parts.append(returned)
         return token
 
     def _on_complete(self, raw_full: str) -> str:
@@ -153,7 +155,7 @@ class AssistantOutputAction(InteractionAction):
                     tail = f.on_complete()
                     if isinstance(tail, str) and tail:
                         self.output.write(tail, end='', flush=True)
-                        self._accumulated_display += tail
+                        self._accumulated_display_parts.append(tail)
             except Exception:
                 # Swallow to avoid breaking UX
                 pass
@@ -164,7 +166,7 @@ class AssistantOutputAction(InteractionAction):
                 if hasattr(f, 'on_complete') and callable(getattr(f, 'on_complete')):
                     tail = f.on_complete()
                     if isinstance(tail, str) and tail:
-                        self._accumulated_return += tail
+                        self._accumulated_return_parts.append(tail)
             except Exception:
                 pass
 
@@ -177,9 +179,9 @@ class AssistantOutputAction(InteractionAction):
         Process a stream, writing filtered text to console but returning raw text.
         """
         # Reset state and (re)load filters lazily per run
-        self._accumulated_raw = ""
-        self._accumulated_display = ""
-        self._accumulated_return = ""
+        self._accumulated_raw_parts = []
+        self._accumulated_display_parts = []
+        self._accumulated_return_parts = []
         self._load_filters()
 
         raw_result = self.session.utils.stream.process_stream(
@@ -195,13 +197,13 @@ class AssistantOutputAction(InteractionAction):
 
     # ---- getters for other consumers ----
     def get_raw_output(self) -> str:
-        return self._accumulated_raw
+        return ''.join(self._accumulated_raw_parts)
 
     def get_display_output(self) -> str:
-        return self._accumulated_display
+        return ''.join(self._accumulated_display_parts)
 
     def get_sanitized_output(self) -> str:
-        return self._accumulated_return
+        return ''.join(self._accumulated_return_parts)
 
     def get_hidden_output(self) -> str:
         """Aggregate any hidden content captured by filters that expose get_hidden()."""
