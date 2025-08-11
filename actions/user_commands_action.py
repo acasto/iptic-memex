@@ -95,6 +95,10 @@ class UserCommandsAction(InteractionAction):
                 "description": "Reprint the conversation",
                 "function": {"type": "action", "name": "reprint_chat"},
             },
+            "reprint all": {
+                "description": "Reprint the conversation skipping output filters",
+                "function": {"type": "action", "name": "reprint_chat", "args": "all"},
+            },
             "show settings": {
                 "description": "List all settings",
                 "function": {"type": "action", "name": "show", "args": "settings"},
@@ -193,7 +197,7 @@ class UserCommandsAction(InteractionAction):
 
     def run(self, user_input: str = None) -> bool | None:
         if user_input is None or len(user_input.split()) > 4:  # limit command checking to messages with >4 words
-            return
+            return None
 
         # Sort commands by length (longest first) for substring matching
         sorted_commands = sorted(self.commands.keys(), key=len, reverse=True)

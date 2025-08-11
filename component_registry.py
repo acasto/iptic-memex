@@ -270,13 +270,25 @@ class ComponentRegistry:
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
 
-            # Look for a class that ends with 'Action'
+            # Prefer a class that matches the expected PascalCase name: '<SnakeToPascal>Action'
+            def snake_to_pascal(s: str) -> str:
+                return ''.join(part.capitalize() for part in s.split('_'))
+
+            expected_class = f"{snake_to_pascal(name)}Action"
+            if hasattr(module, expected_class):
+                cls = getattr(module, expected_class)
+                if isinstance(cls, type):
+                    return cls
+
+            # Fallback: pick the first 'Action' class defined in THIS module (avoid imported classes)
             for attr_name in dir(module):
                 attr = getattr(module, attr_name)
-                if (isinstance(attr, type) and
-                        attr_name.endswith('Action') and
-                        attr_name != 'InteractionAction'):
-                    # Return the action class without instantiating it yet
+                if (
+                    isinstance(attr, type)
+                    and attr_name.endswith('Action')
+                    and attr_name != 'InteractionAction'
+                    and getattr(attr, '__module__', None) == module.__name__
+                ):
                     return attr
 
             return None
