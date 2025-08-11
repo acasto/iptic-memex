@@ -73,13 +73,15 @@ class OutputFilterToolCallAction(InteractionAction):
                 start = buf.find(self.OPEN_DELIM, i)
 
                 if start == -1:
-                    # No opener → emit visible content, but keep a 1-char tail to catch split '%%'
+                    # No opener → emit visible content, but keep a tail only if it could start an opener
+                    # Specifically, retain a single trailing '%' if present to detect a split '%%'
                     if i < n:
-                        tail_len = 1
-                        keep_from = max(n - tail_len, i)
+                        keep_from = n
+                        if buf[n - 1] == self.OPEN_DELIM[0]:  # '%'
+                            keep_from = max(n - 1, i)
                         if i < keep_from:
                             out.append(buf[i:keep_from])
-                        self._carry = buf[keep_from:]
+                        self._carry = buf[keep_from:] if keep_from < n else ""
                     return ("PASS", ''.join(out))
 
                 # Emit visible content before opener
@@ -116,9 +118,14 @@ class OutputFilterToolCallAction(InteractionAction):
                 # We are inside a tool block: drop content until we see %%END%%
                 close_pos = buf.find(self.CLOSE_TOKEN, i)
                 if close_pos == -1:
-                    # No close token yet. Keep a small tail to detect boundary-spanning close.
-                    tail_len = len(self.CLOSE_TOKEN) - 1
-                    keep_from = max(n - tail_len, i)
+                    # No close token yet. Keep only the longest suffix that is a prefix of CLOSE_TOKEN.
+                    max_keep = 0
+                    max_prefix = len(self.CLOSE_TOKEN) - 1
+                    for k in range(max_prefix, 0, -1):
+                        if n - i >= k and buf[n - k:n] == self.CLOSE_TOKEN[:k]:
+                            max_keep = k
+                            break
+                    keep_from = max(n - max_keep, i)
                     self._carry = buf[keep_from:]
                     return ("PASS", ''.join(out))
                 else:
