@@ -38,10 +38,17 @@ class OutputFilterToolCallAction(InteractionAction):
         self.tool_placeholder = opts.get('tool_placeholder', self.tool_placeholder)
 
     def on_complete(self):  # noqa: D401
+        """Finalize state; do not surface partial markers.
+
+        Returns an empty string to avoid leaking incomplete markers as visible text.
+        """
+        # Never emit carry: it represents partial markers (either opener or close tail)
+        # Reset state
         self.in_block = False
         self.current_label = None
         self._emitted_placeholder = False
         self._carry = ""
+        return ""
 
     def _emit_placeholder(self) -> str:
         name = self.current_label or "tool"
@@ -64,11 +71,16 @@ class OutputFilterToolCallAction(InteractionAction):
             if not self.in_block:
                 # Find potential opener start '%%'
                 start = buf.find(self.OPEN_DELIM, i)
+
                 if start == -1:
-                    # No opener → emit remaining visible content
-                    out.append(buf[i:])
-                    i = n
-                    break
+                    # No opener → emit visible content, but keep a 1-char tail to catch split '%%'
+                    if i < n:
+                        tail_len = 1
+                        keep_from = max(n - tail_len, i)
+                        if i < keep_from:
+                            out.append(buf[i:keep_from])
+                        self._carry = buf[keep_from:]
+                    return ("PASS", ''.join(out))
 
                 # Emit visible content before opener
                 out.append(buf[i:start])

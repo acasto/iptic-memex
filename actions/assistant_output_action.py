@@ -43,6 +43,14 @@ class AssistantOutputAction(InteractionAction):
         self._think_placeholder = params.get('think_placeholder', self._think_placeholder)
         self._tool_placeholder = params.get('tool_placeholder', self._tool_placeholder)
 
+    def _debug_log(self, message: str) -> None:
+        try:
+            params = self.session.get_params() or {}
+            if params.get('debug_filters', False):
+                self.output.debug(f"[OutputFilter] {message}")
+        except Exception:
+            pass
+
     def _load_filters(self) -> None:
         names = self._parse_filters_from_params()
         self._filters_display = []
@@ -61,6 +69,10 @@ class AssistantOutputAction(InteractionAction):
             if not inst:
                 self.output.debug(f"Output filter not found: {name}")
                 continue
+            # Basic interface validation
+            if not hasattr(inst, 'process_token') or not callable(getattr(inst, 'process_token')):
+                self._debug_log(f"Filter '{name}' missing process_token(); skipping")
+                continue
             # Optional configure()
             try:
                 if hasattr(inst, 'configure') and callable(getattr(inst, 'configure')):
@@ -73,12 +85,16 @@ class AssistantOutputAction(InteractionAction):
             affects_return = getattr(inst, 'AFFECTS_RETURN', False)
             if affects_return:
                 inst_ret = self.session.get_action(action_name)
+                if not hasattr(inst_ret, 'process_token') or not callable(getattr(inst_ret, 'process_token')):
+                    self._debug_log(f"Return filter '{name}' missing process_token(); skipping")
+                    inst_ret = None
                 try:
-                    if hasattr(inst_ret, 'configure') and callable(getattr(inst_ret, 'configure')):
+                    if inst_ret and hasattr(inst_ret, 'configure') and callable(getattr(inst_ret, 'configure')):
                         inst_ret.configure(opts)
                 except Exception as e:
                     self.output.warning(f"Failed to configure return filter '{name}': {e}")
-                self._filters_return.append(inst_ret)
+                if inst_ret:
+                    self._filters_return.append(inst_ret)
 
         if self._filters_display:
             class_names = [f.__class__.__name__ for f in self._filters_display]
@@ -129,14 +145,29 @@ class AssistantOutputAction(InteractionAction):
         return token
 
     def _on_complete(self, raw_full: str) -> str:
-        # Finish filters lifecycle
-        for f in self._filters_display + self._filters_return:
+        # Finish filters lifecycle and flush any pending visible tails
+        # Display filters: may return a string to append to visible output
+        for f in self._filters_display:
             try:
                 if hasattr(f, 'on_complete') and callable(getattr(f, 'on_complete')):
-                    f.on_complete()
+                    tail = f.on_complete()
+                    if isinstance(tail, str) and tail:
+                        self.output.write(tail, end='', flush=True)
+                        self._accumulated_display += tail
             except Exception:
                 # Swallow to avoid breaking UX
                 pass
+
+        # Return-only filters: may return a string to append to sanitized output
+        for f in self._filters_return:
+            try:
+                if hasattr(f, 'on_complete') and callable(getattr(f, 'on_complete')):
+                    tail = f.on_complete()
+                    if isinstance(tail, str) and tail:
+                        self._accumulated_return += tail
+            except Exception:
+                pass
+
         # Ensure final flush
         self.output.write('', flush=True)
         return raw_full
@@ -181,6 +212,9 @@ class AssistantOutputAction(InteractionAction):
                     hidden = f.get_hidden()
                     if hidden:
                         parts.append(hidden)
+                # Optional cleanup to avoid accumulation if action reused
+                if hasattr(f, 'clear_hidden') and callable(getattr(f, 'clear_hidden')):
+                    f.clear_hidden()
             except Exception:
                 continue
         return ''.join(parts)
@@ -198,17 +232,23 @@ class AssistantOutputAction(InteractionAction):
             inst._load_filters()
             # Apply display filters to the whole text in one pass
             filtered = inst._apply_filters(text, inst._filters_display)
-            # Allow filters to finalize any state
+            # Allow filters to finalize any state and flush any visible tail
             for f in inst._filters_display:
                 try:
                     if hasattr(f, 'on_complete') and callable(getattr(f, 'on_complete')):
-                        f.on_complete()
+                        tail = f.on_complete()
+                        if isinstance(tail, str) and tail:
+                            filtered += tail
                 except Exception:
                     # Non-fatal in non-streaming path
                     pass
             return filtered
-        except Exception:
-            # On any error, return original text to avoid breaking UX
+        except Exception as e:
+            # Log in debug paths, but never break UX
+            try:
+                session.utils.output.warning(f"filter_full_text error: {e}")
+            except Exception:
+                pass
             return text
 
     @classmethod
@@ -221,12 +261,19 @@ class AssistantOutputAction(InteractionAction):
             inst = cls(session)
             inst._load_filters()
             sanitized = inst._apply_filters(text, inst._filters_return)
+            # Finalize and append any tail returned by return-affecting filters
             for f in inst._filters_return:
                 try:
                     if hasattr(f, 'on_complete') and callable(getattr(f, 'on_complete')):
-                        f.on_complete()
+                        tail = f.on_complete()
+                        if isinstance(tail, str) and tail:
+                            sanitized += tail
                 except Exception:
                     pass
             return sanitized
-        except Exception:
+        except Exception as e:
+            try:
+                session.utils.output.warning(f"filter_full_text_for_return error: {e}")
+            except Exception:
+                pass
             return text
