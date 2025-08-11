@@ -51,12 +51,19 @@ class OutputFilterToolCallAction(InteractionAction):
         return ""
 
     def _emit_placeholder(self) -> str:
+        """Emit the configured placeholder, or blank if unset.
+
+        - If tool_placeholder is an empty string or falsy, emit nothing.
+        - If formatting fails, emit nothing (avoid surprising defaults).
+        """
         name = self.current_label or "tool"
+        if not self.tool_placeholder:
+            return ""
         try:
             return self.tool_placeholder.format(name=name)
         except Exception:
-            # Fallback if placeholder template is malformed
-            return f"⟦hidden:{name}⟧"
+            # If template is malformed, suppress placeholder rather than emitting a default token
+            return ""
 
     def process_token(self, text: str) -> Decision:
         if not text:
