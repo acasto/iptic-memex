@@ -108,8 +108,9 @@ class PromptResolver:
 
 class ComponentRegistry:
     """
-    Central registry for all dynamic components and utilities.
-    Handles loading and caching of actions, contexts, and provides access to utils.
+    Central registry for dynamic components and utilities.
+    - Returns action and context classes (not instances).
+    - Session is responsible for instantiation and wiring.
     """
 
     def __init__(self, config: SessionConfig):
@@ -128,14 +129,14 @@ class ComponentRegistry:
             self._utils = UtilsHandler(self.config)
         return self._utils
 
-    def get_action(self, name: str):
-        """Get or create an action instance"""
+    def get_action_class(self, name: str) -> Optional[type]:
+        """Return the action class for the given name."""
         if name not in self._action_cache:
             self._action_cache[name] = self._load_action(name)
         return self._action_cache[name]
 
-    def create_context(self, context_type: str, data=None):
-        """Create a new context instance"""
+    def get_context_class(self, context_type: str) -> Optional[type]:
+        """Return the context class for the given type."""
         if context_type not in self._context_classes:
             # Try to load the context class
             self._load_context_class(context_type)
@@ -146,85 +147,6 @@ class ComponentRegistry:
 
         context_class = self._context_classes[context_type]
         return context_class
-
-    def create_action_with_bridge(self, name: str, session_bridge):
-        """Create an action instance with the compatibility bridge"""
-        try:
-            # Convert action name to filename and class name
-            filename = f"{name}_action.py"
-            class_name = ''.join(word.capitalize() for word in name.split('_')) + 'Action'
-
-            # Check user actions directory first
-            user_actions_dir = self.config.get_option('DEFAULT', 'user_actions', fallback=None)
-            if user_actions_dir:
-                user_dir = ConfigManager.resolve_directory_path(user_actions_dir)
-                if user_dir:
-                    action = self._try_load_action_from_directory(name, user_dir, session_bridge)
-                    if action:
-                        return action
-
-            # Fall back to project actions
-            actions_dir = os.path.join(os.path.dirname(__file__), 'actions')
-            action = self._try_load_action_from_directory(name, actions_dir, session_bridge)
-            if action:
-                return action
-
-            raise ValueError(f"Action '{name}' not found")
-
-        except Exception as e:
-            print(f"Warning: Could not create action {name}: {e}")
-            return None
-
-    def create_context_with_bridge(self, context_type: str, data, session_bridge):
-        """Create a context instance with the compatibility bridge"""
-        try:
-            if context_type not in self._context_classes:
-                self._load_context_class(context_type)
-
-            if context_type not in self._context_classes:
-                raise ValueError(f"Unknown context type: {context_type}")
-
-            context_class = self._context_classes[context_type]
-
-            # Handle special context types that need additional parameters
-            if context_type == 'prompt':
-                return context_class(session_bridge, data, self.get_prompt_resolver())
-            else:
-                return context_class(session_bridge, data)
-
-        except Exception as e:
-            print(f"Warning: Could not create context {context_type}: {e}")
-            return None
-
-    @staticmethod
-    def _try_load_action_from_directory(name: str, directory: str, session_bridge):
-        """Try to load an action from a specific directory with bridge"""
-        try:
-            # Convert action name to filename (e.g., 'load_file' -> 'load_file_action.py')
-            filename = f"{name}_action.py"
-            file_path = os.path.join(directory, filename)
-
-            if not os.path.isfile(file_path):
-                return None
-
-            # Load the module
-            spec = importlib.util.spec_from_file_location(f"{name}_action", file_path)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-
-            # Look for a class that ends with 'Action'
-            for attr_name in dir(module):
-                attr = getattr(module, attr_name)
-                if (isinstance(attr, type) and
-                        attr_name.endswith('Action') and
-                        attr_name != 'InteractionAction'):
-                    return attr(session_bridge)
-
-            return None
-
-        except Exception as e:
-            print(f"Warning: Could not load action {name} from {directory}: {e}")
-            return None
 
     def get_prompt_resolver(self) -> PromptResolver:
         """Get the prompt resolver"""

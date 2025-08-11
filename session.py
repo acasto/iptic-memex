@@ -23,8 +23,8 @@ class Session:
 
     # Convenience methods that delegate to registry
     def get_action(self, name: str):
-        """Get an action from the registry"""
-        action_class = self._registry.get_action(name)
+        """Return an action instance for the given name."""
+        action_class = self._registry.get_action_class(name)
         if action_class:
             try:
                 return action_class(self)
@@ -34,9 +34,9 @@ class Session:
         return None
 
     def create_context(self, context_type: str, data=None):
-        """Create a context via the registry"""
+        """Create and return a context instance for the given type."""
         try:
-            context_class = self._registry.create_context(context_type, data)
+            context_class = self._registry.get_context_class(context_type)
             if context_class:
                 # Handle special context types that need additional parameters
                 if context_type == 'prompt':
