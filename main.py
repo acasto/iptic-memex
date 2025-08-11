@@ -46,6 +46,18 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw,
         # Disable streaming if raw output is requested
         options['stream'] = False
     
+    # Validate model early if provided (fail fast on invalid model)
+    if 'model' in options and options['model']:
+        # Create a temporary session config to validate/normalize
+        session_config = config_manager.create_session_config()
+        normalized = session_config.normalize_model_name(options['model'])
+        if not normalized:
+            raise click.ClickException(
+                f"Unknown model '{options['model']}'. Run 'python main.py list-models' to see available models."
+            )
+        # Use normalized display name internally
+        options['model'] = normalized
+
     # Store options for later use
     ctx.obj['OPTIONS'] = options
     
