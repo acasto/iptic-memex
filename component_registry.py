@@ -154,6 +154,50 @@ class ComponentRegistry:
             self._prompt_resolver = PromptResolver(self.config)
         return self._prompt_resolver
 
+    def load_provider_class(self, provider_name: str):
+        """Load a provider class dynamically, handling aliases via config.
+
+        Looks for providers/<lower>_provider.py and a class named
+        '<ProviderName>Provider', falling back to any class ending with 'Provider'.
+        """
+        try:
+            # Resolve alias from base config if present
+            provider_config = {}
+            if self.config.base_config.has_section(provider_name):
+                provider_config = {
+                    option: self.config.base_config.get(provider_name, option)
+                    for option in self.config.base_config.options(provider_name)
+                }
+
+            actual_provider = provider_config.get('alias', provider_name)
+            module_name = f"{actual_provider.lower()}_provider"
+
+            module_path = os.path.join(os.path.dirname(__file__), 'providers', f"{module_name}.py")
+            if not os.path.isfile(module_path):
+                print(f"Warning: Provider module {module_path} not found")
+                return None
+
+            spec = importlib.util.spec_from_file_location(module_name, module_path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+            class_name = f"{actual_provider}Provider"
+            if hasattr(module, class_name):
+                return getattr(module, class_name)
+
+            for attr_name in dir(module):
+                attr = getattr(module, attr_name)
+                if (isinstance(attr, type)
+                        and attr_name.endswith('Provider')
+                        and attr_name != 'APIProvider'):
+                    return attr
+
+            print(f"Warning: No provider class found in {module_name}")
+            return None
+        except Exception as e:
+            print(f"Warning: Could not load provider {provider_name}: {e}")
+            return None
+
     def _load_context_classes(self):
         """Load all available context classes"""
         contexts_dir = os.path.join(os.path.dirname(__file__), 'contexts')

@@ -99,7 +99,8 @@ class Session:
     @property
     def params(self):
         """Current merged parameters for the session"""
-        return self.config.get_params(self.current_model)
+        # Always derive from current overrides; do not rely on a cached model
+        return self.config.get_params()
 
     def get_params(self):
         """Backward compatibility method"""
@@ -122,18 +123,63 @@ class Session:
         Preserves conversation state.
         Returns True if provider needs to be recreated.
         """
+        # Validate and normalize model to a section/display name
+        normalized = self.config.normalize_model_name(model)
+        if not normalized:
+            try:
+                self.utils.output.error(f"Unknown model '{model}'. Use 'show models' or CLI 'list-models'.")
+            except Exception:
+                print(f"Unknown model '{model}'.")
+            return False
+
+        # Compute old/new provider based on params before/after override
         old_provider_name = self.params.get('provider')
-        self.config.set_option('model', model)
+        self.config.set_option('model', normalized)
+        self.current_model = normalized
         new_provider_name = self.params.get('provider')
 
         if old_provider_name != new_provider_name:
-            # Provider needs to be recreated
+            # Rebuild provider using registry
+            old_usage = None
+            if self.provider and hasattr(self.provider, 'get_usage'):
+                try:
+                    old_usage = self.provider.get_usage()
+                except Exception:
+                    old_usage = None
+
+            provider_class = self._registry.load_provider_class(new_provider_name)
+            if not provider_class:
+                try:
+                    self.utils.output.error(f"Could not load provider '{new_provider_name}' for model '{normalized}'.")
+                except Exception:
+                    print(f"Could not load provider '{new_provider_name}'.")
+                return False
+
+            self.provider = provider_class(self)
+
+            if old_usage and hasattr(self.provider, 'set_usage'):
+                try:
+                    self.provider.set_usage(old_usage)
+                except Exception:
+                    pass
+
+            try:
+                self.utils.output.info(f"Switched to {normalized} (provider {new_provider_name}).")
+            except Exception:
+                pass
             return True
-        else:
-            # Same provider, just update its params
-            if hasattr(self.provider, 'update_params'):
+
+        # Same provider; update its params if supported
+        if self.provider and hasattr(self.provider, 'update_params'):
+            try:
                 self.provider.update_params(self.params)
-            return False
+            except Exception:
+                pass
+        try:
+            self.utils.output.info(f"Switched to {normalized}.")
+        except Exception:
+            pass
+        return False
 
     def set_flag(self, flag_name: str, value: bool):
         """Set a session flag"""
@@ -272,7 +318,11 @@ class Session:
     def set_option(self, key: str, value: str, mode: str = 'params'):
         """Set a session option - backward compatibility"""
         if mode == 'params':
-            self.config.set_option(key, value)
+            if key == 'model':
+                # Route model changes through switch_model for validation and rebuild
+                self.switch_model(value)
+            else:
+                self.config.set_option(key, value)
         elif mode == 'tools':
             # For tools, we'd need to handle this differently
             # For now, just store in session data
@@ -310,7 +360,7 @@ class SessionBuilder:
         model = options.get('model')  # Get the model from options
         provider_name = session_config.get_params(model).get('provider')
         if provider_name:
-            provider_class = self._load_provider_class(provider_name)
+            provider_class = registry.load_provider_class(provider_name)
             if provider_class:
                 session.provider = provider_class(session)
 

@@ -17,14 +17,14 @@ class SetModelAction(InteractionAction):
                     self.tc.run('chat')  # set the completion back to chat mode
                     break
                 if model in self.session.list_models():
-                    self.session.set_option('model', model)
+                    self.session.switch_model(model)
                     self.tc.run('chat')
                     break
             return
 
         model_name = ' '.join(args)
         if model_name in self.session.list_models():
-            self.session.set_option('model', model_name)
+            self.session.switch_model(model_name)
             self.tc.run('chat')  # set the completion back to chat mode
         else:
             print(f"Model {model_name} not found.")
