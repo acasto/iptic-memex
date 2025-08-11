@@ -10,7 +10,7 @@ class AgentMode(InteractionMode):
     between turns. Stops on reaching max steps or sentinel tokens.
     """
 
-    def __init__(self, session, steps: int = 1, writes_policy: str = "deny", use_status_tags: bool = True):
+    def __init__(self, session, steps: int = 1, writes_policy: str = "deny", use_status_tags: bool = True, output_mode: str | None = None):
         self.session = session
         self.steps = max(1, int(steps or 1))
         self.use_status_tags = bool(use_status_tags)
@@ -29,6 +29,15 @@ class AgentMode(InteractionMode):
             detail_max = self.session.get_option('AGENT', 'context_detail_max_chars', fallback=None)
             if detail_max is not None:
                 self.session.set_option('context_detail_max_chars', detail_max)
+            # Output mode: CLI overrides config; fallback to [AGENT].output or 'final'
+            cfg_output = self.session.get_option('AGENT', 'output', fallback='final')
+            mode = (output_mode or cfg_output or 'final').lower()
+            if mode not in ('final', 'full', 'none'):
+                mode = 'final'
+            self.session.set_option('agent_output_mode', mode)
+            # In Agent mode, only show context summaries/details when output is 'full'
+            self.session.set_option('show_context_summary', mode == 'full')
+            self.session.set_option('show_context_details', mode == 'full')
         except Exception:
             pass
 
@@ -90,7 +99,7 @@ class AgentMode(InteractionMode):
             self.session.get_context('chat').add(status_line, 'user')
 
     def _assistant_turn(self):
-        """Produce one assistant response, handle output display and return raw and sanitized text."""
+        """Produce one assistant response, handle output per agent_output_mode, and return raw and sanitized text."""
         params = self.session.get_params()
         provider = self.session.get_provider()
         output_processor = None
@@ -98,40 +107,54 @@ class AgentMode(InteractionMode):
         response_text = None
         sanitized_for_tools = None
 
-        # Label for readability (reuse chat colors)
-        response_label = self.utils.output.style_text(
-            params.get('response_label', 'Assistant:'),
-            fg=params.get('response_label_color', 'green')
-        )
-        self.utils.output.write(f"{response_label} ", end='', flush=True)
+        output_mode = params.get('agent_output_mode', 'final')
+        show_stream = (output_mode == 'full')
+        if show_stream:
+            # Label for readability (reuse chat colors)
+            response_label = self.utils.output.style_text(
+                params.get('response_label', 'Assistant:'),
+                fg=params.get('response_label_color', 'green')
+            )
+            self.utils.output.write(f"{response_label} ", end='', flush=True)
 
         if params.get('stream', False):
             stream = provider.stream_chat()
             if not stream:
-                self.utils.output.write("")
+                if show_stream:
+                    self.utils.output.write("")
                 return None, None
-            output_processor = self.session.get_action('assistant_output')
-            if output_processor:
-                response_text = output_processor.run(stream, spinner_message="")
-                # Prefer sanitized output for tool parsing
-                sanitized_for_tools = output_processor.get_sanitized_output() or response_text
+            if show_stream:
+                # Use output action to preserve filter behavior for display
+                output_processor = self.session.get_action('assistant_output')
+                if output_processor:
+                    response_text = output_processor.run(stream, spinner_message="")
+                    sanitized_for_tools = output_processor.get_sanitized_output() or response_text
+                else:
+                    response_text = ""
+                    for chunk in stream:
+                        print(chunk, end='', flush=True)
+                        response_text += chunk
+                    print()
+                    sanitized_for_tools = response_text
             else:
-                # Fallback: manual stream
-                response_text = ""
+                # Silent accumulation of full response
+                parts = []
                 for chunk in stream:
-                    print(chunk, end='', flush=True)
-                    response_text += chunk
-                print()
-                sanitized_for_tools = response_text
+                    if isinstance(chunk, str):
+                        parts.append(chunk)
+                response_text = ''.join(parts)
+                sanitized_for_tools = AssistantOutputAction.filter_full_text_for_return(response_text, self.session)
         else:
             response_text = provider.chat()
             if response_text is None:
-                self.utils.output.write("")
+                if show_stream:
+                    self.utils.output.write("")
                 return None, None
             # Apply display-side filters for parity with streaming UX
-            filtered_for_display = AssistantOutputAction.filter_full_text(response_text, self.session)
-            self.utils.output.write(filtered_for_display)
-            self.utils.output.write('')
+            if show_stream:
+                filtered_for_display = AssistantOutputAction.filter_full_text(response_text, self.session)
+                self.utils.output.write(filtered_for_display)
+                self.utils.output.write('')
             sanitized_for_tools = AssistantOutputAction.filter_full_text_for_return(response_text, self.session)
 
         return response_text, sanitized_for_tools
@@ -150,6 +173,7 @@ class AgentMode(InteractionMode):
         commands_action = self.session.get_action('assistant_commands')
 
         # N-turn loop
+        last_assistant_display = None
         for i in range(self.steps):
             final = (i == self.steps - 1)
 
@@ -164,6 +188,8 @@ class AgentMode(InteractionMode):
 
             # Record assistant message
             chat.add(response, 'assistant')
+            # Keep latest display-friendly version for final/none handling
+            last_assistant_display = AssistantOutputAction.filter_full_text(response, self.session)
 
             # Sentinel-based early exit
             if ('%%DONE%%' in response) or ('%%COMPLETE%%' in response):
@@ -193,3 +219,9 @@ class AgentMode(InteractionMode):
 
         # Final newline separation
         self.utils.output.write('')
+
+        # Output policy: print only the final assistant message when requested
+        out_mode = self.session.get_params().get('agent_output_mode', 'final')
+        if out_mode == 'final' and last_assistant_display:
+            self.utils.output.write(last_assistant_display)
+        # none => no assistant output printed

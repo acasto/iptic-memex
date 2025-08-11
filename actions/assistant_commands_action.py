@@ -114,7 +114,15 @@ class AssistantCommandsAction(InteractionAction):
                 try:
                     # Stop any existing spinner before starting a new one
                     self.session.utils.output.stop_spinner()
-                    with self.session.utils.output.spinner("Running command..."):
+                    # In agent mode, avoid interactive spinners/noise
+                    agent_mode = self.session.get_params().get('agent_mode') or self.session.user_data.get('agent_mode')
+                    if agent_mode:
+                        from contextlib import nullcontext
+                        spinner_cm = nullcontext()
+                    else:
+                        spinner_cm = self.session.utils.output.spinner("Running command...")
+
+                    with spinner_cm:
                         if handler["type"] == "method":
                             method = getattr(self, handler["name"])
                             method(cmd['args'], cmd['content'])
