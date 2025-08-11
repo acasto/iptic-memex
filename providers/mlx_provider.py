@@ -1,9 +1,12 @@
 import time
+import os
 import traceback
 from base_classes import APIProvider
 from actions.process_contexts_action import ProcessContextsAction
 
 try:
+    # Suppress Hugging Face tokenizers fork warning by explicitly setting parallelism behavior
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     from mlx_lm import load, generate, stream_generate
     from mlx_lm.sample_utils import make_sampler
     from mlx_lm.tokenizer_utils import TokenizerWrapper
