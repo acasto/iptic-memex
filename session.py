@@ -203,6 +203,25 @@ class Session:
         """Get arbitrary user data"""
         return self.user_data.get(key, default)
 
+    # Agent mode helpers
+    def in_agent_mode(self) -> bool:
+        """Return True if this session is running in Agent Mode."""
+        return bool(self.user_data.get('agent_mode'))
+
+    def get_agent_write_policy(self) -> Optional[str]:
+        """Return current agent write policy when in Agent Mode, else None."""
+        return self.user_data.get('agent_write_policy') if self.in_agent_mode() else None
+
+    def enter_agent_mode(self, writes_policy: str = "deny") -> None:
+        """Enable Agent Mode and set the write policy."""
+        self.user_data['agent_mode'] = True
+        self.user_data['agent_write_policy'] = (writes_policy or 'deny').lower()
+
+    def exit_agent_mode(self) -> None:
+        """Disable Agent Mode and clear related settings."""
+        self.user_data.pop('agent_mode', None)
+        self.user_data.pop('agent_write_policy', None)
+
     # Backward compatibility methods for existing code
     def list_models(self, showall: bool = False):
         """List models - backward compatibility"""

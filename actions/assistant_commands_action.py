@@ -115,8 +115,7 @@ class AssistantCommandsAction(InteractionAction):
                     # Stop any existing spinner before starting a new one
                     self.session.utils.output.stop_spinner()
                     # In agent mode, avoid interactive spinners/noise
-                    agent_mode = self.session.get_params().get('agent_mode') or self.session.user_data.get('agent_mode')
-                    if agent_mode:
+                    if self.session.in_agent_mode():
                         from contextlib import nullcontext
                         spinner_cm = nullcontext()
                     else:

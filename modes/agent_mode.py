@@ -15,13 +15,10 @@ class AgentMode(InteractionMode):
         self.steps = max(1, int(steps or 1))
         self.use_status_tags = bool(use_status_tags)
 
-        # Seed agent write policy for file tools
-        self.session.user_data["agent_mode"] = True
-        self.session.user_data["agent_write_policy"] = (writes_policy or "deny").lower()
-        # Also expose via params so actions can stay config/params-driven
+        # Seed agent mode and write policy for file tools
+        self.session.enter_agent_mode(writes_policy or "deny")
+        # Configure agent display/output-related params
         try:
-            self.session.set_option('agent_mode', True)
-            self.session.set_option('agent_write_policy', (writes_policy or "deny").lower())
             # Pull optional AGENT defaults for display behavior
             show_details = self.session.get_option('AGENT', 'show_context_details', fallback=None)
             if show_details is not None:
@@ -48,8 +45,8 @@ class AgentMode(InteractionMode):
         # Utilities
         self.utils = self.session.utils
 
-        # Prepare agent instruction snippet (finish signal + write policy)
-        policy = (self.session.user_data.get('agent_write_policy') or '').lower()
+        # Prepare agent instruction snippet (finish signal and write policy)
+        policy = (self.session.get_agent_write_policy() or '').lower()
         finish_instr = (
             "Finish signal: When you are done with the task, output the token %%DONE%% as the last line."
         )
@@ -205,19 +202,6 @@ class AgentMode(InteractionMode):
         for context_type in list(self.session.context.keys()):
             if context_type not in ('prompt', 'chat'):
                 self.session.remove_context_type(context_type)
-
-    def _inject_status_tags(self, turn_index: int):
-        if not self.use_status_tags:
-            return
-        final = (turn_index == self.steps - 1)
-
-        tags = [f"Turn {turn_index + 1} of {self.steps}"]
-
-        # Do not include write policy in status; it is injected into the system prompt
-
-        status_line = ''.join(f"<status>{t}</status>" for t in tags if t)
-        if status_line:
-            self.session.get_context('chat').add(status_line, 'user')
 
     def _assistant_turn(self):
         """Produce one assistant response, handle output per agent_output_mode, and return raw and sanitized text."""

@@ -83,8 +83,8 @@ class AssistantFileToolAction(InteractionAction):
             })
 
     def _handle_write(self, filename, content):
-        agent_mode = self.session.get_params().get('agent_mode') or self.session.user_data.get('agent_mode')
-        policy = self.session.get_params().get('agent_write_policy') if agent_mode else None
+        agent_mode = self.session.in_agent_mode()
+        policy = self.session.get_agent_write_policy()
         if policy is None:
             # Chat/TUI/Completion default path: prompt/confirm handled in fs_handler
             success = self.fs_handler.write_file(filename, content, create_dirs=True)
@@ -134,8 +134,8 @@ class AssistantFileToolAction(InteractionAction):
         })
 
     def _handle_append(self, filename, content):
-        agent_mode = self.session.get_params().get('agent_mode') or self.session.user_data.get('agent_mode')
-        policy = self.session.get_params().get('agent_write_policy') if agent_mode else None
+        agent_mode = self.session.in_agent_mode()
+        policy = self.session.get_agent_write_policy()
         if policy is None:
             success = self.fs_handler.write_file(filename, content, append=True, create_dirs=True)
             msg = 'Content appended successfully' if success else f'Failed to append to file: {filename}'
@@ -226,8 +226,8 @@ class AssistantFileToolAction(InteractionAction):
 
     def _handle_delete(self, filename, recursive=False):
         """Handle file or directory deletion"""
-        agent_mode = self.session.get_params().get('agent_mode') or self.session.user_data.get('agent_mode')
-        policy = self.session.get_params().get('agent_write_policy') if agent_mode else None
+        agent_mode = self.session.in_agent_mode()
+        policy = self.session.get_agent_write_policy()
         if policy is None:
             if os.path.isdir(filename):
                 success = self.fs_handler.delete_directory(filename, recursive)
@@ -268,8 +268,8 @@ class AssistantFileToolAction(InteractionAction):
 
     def _handle_rename(self, old_name, new_name):
         """Handle file or directory rename"""
-        agent_mode = self.session.get_params().get('agent_mode') or self.session.user_data.get('agent_mode')
-        policy = self.session.get_params().get('agent_write_policy') if agent_mode else None
+        agent_mode = self.session.in_agent_mode()
+        policy = self.session.get_agent_write_policy()
         if policy is None:
             success = self.fs_handler.rename(old_name, new_name)
             msg = 'Rename operation successful' if success else f'Failed to rename {old_name} to {new_name}'
@@ -300,8 +300,8 @@ class AssistantFileToolAction(InteractionAction):
 
     def _handle_copy(self, filename, new_name):
         """Handle file or directory copy"""
-        agent_mode = self.session.get_params().get('agent_mode') or self.session.user_data.get('agent_mode')
-        policy = self.session.get_params().get('agent_write_policy') if agent_mode else None
+        agent_mode = self.session.in_agent_mode()
+        policy = self.session.get_agent_write_policy()
         if policy is None:
             success = self.fs_handler.copy(filename, new_name)
             msg = 'Copy operation successful' if success else f'Failed to copy {filename} to {new_name}'
@@ -398,8 +398,8 @@ class AssistantFileToolAction(InteractionAction):
             })
             return
 
-        agent_mode = self.session.get_params().get('agent_mode') or self.session.user_data.get('agent_mode')
-        policy = self.session.get_params().get('agent_write_policy') if agent_mode else None
+        agent_mode = self.session.in_agent_mode()
+        policy = self.session.get_agent_write_policy()
         if policy is None:
             # Default path uses confirmation via fs_handler
             self._handle_write(filename, edited_content)
