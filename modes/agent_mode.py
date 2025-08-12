@@ -48,6 +48,71 @@ class AgentMode(InteractionMode):
         # Utilities
         self.utils = self.session.utils
 
+    def _dump_messages(self, header: str, include_prompt: bool = False, omit_last_assistant: bool = False):
+        """Debug helper: dump system prompt and conversation messages."""
+        try:
+            out = self.utils.output
+            out.write(f"=== {header} ===")
+
+            # System prompt (optional; print once at start)
+            if include_prompt:
+                prompt_context = self.session.get_context('prompt')
+                if prompt_context:
+                    prompt_data = prompt_context.get()
+                    content = prompt_data.get('content') if isinstance(prompt_data, dict) else None
+                    if content:
+                        out.write("--- SYSTEM PROMPT ---")
+                        out.write(str(content))
+
+            # Conversation messages (prefer provider view)
+            provider = self.session.get_provider()
+            messages = []
+            if provider and hasattr(provider, 'get_messages'):
+                try:
+                    messages = provider.get_messages() or []
+                except Exception:
+                    messages = []
+            if not messages:
+                chat = self.session.get_context('chat')
+                messages = chat.get("all") if chat else []
+            out.write("--- MESSAGES ---")
+
+            # Optionally omit the most recent assistant message (e.g., when already streamed)
+            omit_idx = -1
+            if omit_last_assistant:
+                for idx in range(len(messages) - 1, -1, -1):
+                    if messages[idx].get('role') == 'assistant':
+                        omit_idx = idx
+                        break
+
+            for i, message in enumerate(messages):
+                role = message.get('role', 'unknown')
+                # Skip system messages here to avoid re-printing the prompt on every turn
+                if role == 'system':
+                    continue
+                if i == omit_idx:
+                    # Keep the role header but omit the content to avoid duplication
+                    out.write(f"[{i}] {role.upper()}:")
+                    continue
+                # Extract text for modern content or legacy 'message'
+                text = ''
+                if 'message' in message and message['message']:
+                    text = message['message']
+                elif 'content' in message:
+                    data = message['content']
+                    if isinstance(data, list):
+                        text_parts = []
+                        for item in data:
+                            if isinstance(item, dict) and item.get('type') == 'text':
+                                text_parts.append(item.get('text', ''))
+                        text = ' '.join(text_parts)
+                    elif isinstance(data, str):
+                        text = data
+                out.write(f"[{i}] {role.upper()}: {text}")
+        except Exception:
+            # Debug dump should never break the agent loop
+            pass
+
     def _prepare_user_turn_with_contexts(self, turn_index: int):
         """Gather current contexts (including agent status) and add a new user turn."""
         # Build agent status as a lightweight context
@@ -68,11 +133,35 @@ class AgentMode(InteractionMode):
                 'content': status_text
             })
 
-        # Collect contexts for this turn and attach to a blank user message
+        # Collect contexts for this turn and attach to a user message
         process_contexts = self.session.get_action('process_contexts')
         contexts = process_contexts.process_contexts_for_user(auto_submit=True) if process_contexts else []
+
+        # If stdin was provided via -f -, extract its content as the actual user message
+        stdin_content = None
+        stdin_idx = None
+        for idx, c in enumerate(contexts):
+            try:
+                meta = c['context'].get()
+                if meta and meta.get('name') == 'stdin':
+                    stdin_content = meta.get('content')
+                    stdin_idx = idx
+                    break
+            except Exception:
+                continue
+
+        if stdin_idx is not None:
+            # Remove stdin from contexts so it isn't rendered as a file context
+            contexts.pop(stdin_idx)
+            # If prompt wasn't explicitly set, mirror completion mode by removing default prompt
+            try:
+                if 'prompt' not in getattr(self.session.config, 'overrides', {}):
+                    self.session.remove_context_type('prompt')
+            except Exception:
+                pass
+
         chat = self.session.get_context('chat')
-        chat.add('', 'user', contexts)
+        chat.add(stdin_content or '', 'user', contexts)
 
         # Clear temporary contexts after attaching
         for context_type in list(self.session.context.keys()):
@@ -132,9 +221,9 @@ class AgentMode(InteractionMode):
                 else:
                     response_text = ""
                     for chunk in stream:
-                        print(chunk, end='', flush=True)
+                        self.utils.output.write(chunk, end='', flush=True)
                         response_text += chunk
-                    print()
+                    self.utils.output.write('')
                     sanitized_for_tools = response_text
             else:
                 # Silent accumulation of full response
@@ -172,56 +261,92 @@ class AgentMode(InteractionMode):
 
         commands_action = self.session.get_action('assistant_commands')
 
-        # N-turn loop
-        last_assistant_display = None
-        for i in range(self.steps):
-            final = (i == self.steps - 1)
+        out_mode = (self.session.get_params().get('agent_output_mode', 'final') or 'final').lower()
 
-            # Prepare per-turn user message from current contexts (tools results, status, etc.)
-            self._prepare_user_turn_with_contexts(i)
+        # In final/none, suppress leading blank spacing and newline bursts from chat-mode flows.
+        suppress_ctx = self.utils.output.suppress_stdout_blanks(suppress_blank_lines=True, collapse_bursts=True) \
+            if out_mode in ('final', 'none') else None
 
-            # Get assistant output (with streaming if configured)
-            response, sanitized = self._assistant_turn()
-            if not response:
-                self.utils.output.debug(f"[Agent] Empty response on turn {i+1}; stopping.")
-                break
+        with (suppress_ctx if suppress_ctx is not None else self.utils.output.suppress_stdout_blanks(False, False)):
+            # N-turn loop
+            last_assistant_display = None
+            debug_dump = bool(self.session.get_params().get('agent_debug', False))
+            for i in range(self.steps):
+                final = (i == self.steps - 1)
 
-            # Record assistant message
-            chat.add(response, 'assistant')
-            # Keep latest display-friendly version for final/none handling
-            last_assistant_display = AssistantOutputAction.filter_full_text(response, self.session)
+                # Prepare per-turn user message from current contexts (tools results, status, etc.)
+                self._prepare_user_turn_with_contexts(i)
 
-            # Sentinel-based early exit
-            if ('%%DONE%%' in response) or ('%%COMPLETE%%' in response):
-                self.utils.output.debug(f"[Agent] Sentinel detected on turn {i+1}; stopping.")
-                break
+                if debug_dump:
+                    # Include system prompt only at the first turn
+                    # Omit the last assistant message in dumps to avoid duplication
+                    self._dump_messages(f"BEFORE TURN {i+1}", include_prompt=(i == 0), omit_last_assistant=True)
 
-            # Tool execution based on assistant output
-            ran_tools = False
-            if commands_action and sanitized is not None:
-                try:
-                    # Heuristic: if there are no parsed commands, optionally early exit
-                    parsed = commands_action.parse_commands(sanitized)
-                    if parsed:
-                        ran_tools = True
-                        commands_action.run(sanitized)
-                except Exception as e:
-                    # Bubble errors into assistant context for next turn
-                    self.session.add_context('assistant', {
-                        'name': 'command_error',
-                        'content': f'Error running assistant commands: {e}'
-                    })
+                # Get assistant output (with streaming if configured)
+                response, sanitized = self._assistant_turn()
+                if not response:
+                    self.utils.output.debug(f"[Agent] Empty response on turn {i+1}; stopping.")
+                    break
 
-            # Optional early exit heuristic: if no tools and not final
-            if not final and not ran_tools:
-                self.utils.output.debug(f"[Agent] No tools invoked on turn {i+1}; stopping early.")
-                break
+                # Record assistant message
+                chat.add(response, 'assistant')
+                # Keep latest display-friendly version for final/none handling
+                last_assistant_display = AssistantOutputAction.filter_full_text(response, self.session)
 
-        # Final newline separation
-        self.utils.output.write('')
+                # Suppress AFTER dump for the final turn to avoid duplicating the final answer
+                # If needed later, we can re-enable for non-final turns only
+                if debug_dump and not final:
+                    # Always omit the most recent assistant to avoid duplication in logs
+                    self._dump_messages(f"AFTER TURN {i+1}", omit_last_assistant=True)
 
-        # Output policy: print only the final assistant message when requested
-        out_mode = self.session.get_params().get('agent_output_mode', 'final')
-        if out_mode == 'final' and last_assistant_display:
-            self.utils.output.write(last_assistant_display)
-        # none => no assistant output printed
+                # Sentinel-based early exit
+                if ('%%DONE%%' in response) or ('%%COMPLETE%%' in response):
+                    self.utils.output.debug(f"[Agent] Sentinel detected on turn {i+1}; stopping.")
+                    break
+
+                # Tool execution based on assistant output
+                ran_tools = False
+                if commands_action and sanitized is not None:
+                    try:
+                        # Heuristic: if there are no parsed commands, optionally early exit
+                        parsed = commands_action.parse_commands(sanitized)
+                        if parsed:
+                            ran_tools = True
+                            commands_action.run(sanitized)
+                    except Exception as e:
+                        # Bubble errors into assistant context for next turn
+                        self.session.add_context('assistant', {
+                            'name': 'command_error',
+                            'content': f'Error running assistant commands: {e}'
+                        })
+
+                # Optional early exit heuristic: if no tools and not final
+                if not final and not ran_tools:
+                    self.utils.output.debug(f"[Agent] No tools invoked on turn {i+1}; stopping early.")
+                    break
+
+            # No trailing spacer here; avoid introducing a blank before final output
+
+        # Output policy after the loop
+        if out_mode == 'final':
+            # If raw mode requested, emit only the raw response (programmatic use)
+            if self.session.get_params().get('raw_completion', False):
+                provider = self.session.get_provider()
+                if provider and hasattr(provider, 'get_full_response'):
+                    raw = provider.get_full_response()
+                    try:
+                        import json
+                        raw_str = json.dumps(raw, indent=2, ensure_ascii=False) if not isinstance(raw, str) else raw
+                    except Exception:
+                        raw_str = str(raw)
+                    self.utils.output.write(raw_str, end='')
+            elif last_assistant_display:
+                final_text = last_assistant_display
+                # Trim a single leading newline (CRLF or LF) that some providers produce
+                if isinstance(final_text, str):
+                    if final_text.startswith('\r\n'):
+                        final_text = final_text[2:]
+                    elif final_text.startswith('\n'):
+                        final_text = final_text[1:]
+                self.utils.output.write(final_text)
+        # 'none': no assistant output here; 'full': already streamed

@@ -26,8 +26,8 @@ class ProcessContextsAction(InteractionAction):
         contexts = self.session.get_action("process_contexts").get_contexts(self.session)
 
         if len(contexts) > 0:
-            output.write()
             total_tokens = 0
+            printed_any = False  # Track if we emitted any summary/details output
 
             # Toggle per-context summary printing via config/params (DEFAULT.show_context_summary)
             params = self.session.get_params()
@@ -37,6 +37,10 @@ class ProcessContextsAction(InteractionAction):
             show_context_details = params.get('show_context_details', False)
             detail_max_chars = params.get('context_detail_max_chars', 4000)
 
+            # For interactive chat, add a spacer before summaries/details
+            if (not auto_submit) and (show_context_summary or show_context_details):
+                output.write()
+
             for idx, context in enumerate(contexts):
                 if context['type'] == 'image':
                     if show_context_summary:
@@ -45,6 +49,7 @@ class ProcessContextsAction(InteractionAction):
                             output.write(f"Output of: {name} (image)")
                         else:
                             output.write(f"In context: [{idx}] {name} (image)")
+                        printed_any = True
                     # No tokens to add for images in this counter
                     continue
 
@@ -58,6 +63,7 @@ class ProcessContextsAction(InteractionAction):
                         output.write(f"Output of: {context_data.get('name', 'unnamed')} ({tokens} tokens)")
                     else:
                         output.write(f"In context: [{idx}] {context_data.get('name', 'unnamed')} ({tokens} tokens)")
+                    printed_any = True
 
                 # Print details for assistant/agent contexts (e.g., diffs, errors) when enabled
                 if show_context_details and context['type'] in ('assistant', 'agent') and content:
@@ -71,6 +77,7 @@ class ProcessContextsAction(InteractionAction):
                             output.write(f"\n… (truncated {len(text) - detail_max_chars} chars)\n")
                         else:
                             output.write(text)
+                        printed_any = True
 
             # Check total tokens against large_input_limit if auto_submit is True
             if auto_submit and total_tokens > 0:
@@ -85,7 +92,9 @@ class ProcessContextsAction(InteractionAction):
                             'content': f"Warning: Input size ({total_tokens} tokens) exceeds recommended limit ({limit})."
                         })
 
-            output.write()
+            # Only emit a trailing spacer in interactive mode
+            if printed_any and (not auto_submit):
+                output.write()
 
         return contexts
 

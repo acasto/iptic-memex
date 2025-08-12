@@ -100,6 +100,7 @@ class PromptResolver:
                     with open(file_path, 'r', encoding='utf-8') as f:
                         return f.read().strip()
                 except (IOError, UnicodeDecodeError) as e:
+                    # PromptResolver does not have access to utils/output handler
                     print(f"Warning: Could not read prompt file {file_path}: {e}")
                     continue
 
@@ -142,7 +143,10 @@ class ComponentRegistry:
             self._load_context_class(context_type)
 
         if context_type not in self._context_classes:
-            print(f"Warning: Unknown context type: {context_type}")
+            try:
+                self.utils.output.warning(f"Unknown context type: {context_type}")
+            except Exception:
+                print(f"Warning: Unknown context type: {context_type}")
             return None
 
         context_class = self._context_classes[context_type]
@@ -174,7 +178,10 @@ class ComponentRegistry:
 
             module_path = os.path.join(os.path.dirname(__file__), 'providers', f"{module_name}.py")
             if not os.path.isfile(module_path):
-                print(f"Warning: Provider module {module_path} not found")
+                try:
+                    self.utils.output.warning(f"Provider module {module_path} not found")
+                except Exception:
+                    print(f"Warning: Provider module {module_path} not found")
                 return None
 
             spec = importlib.util.spec_from_file_location(module_name, module_path)
@@ -192,10 +199,16 @@ class ComponentRegistry:
                         and attr_name != 'APIProvider'):
                     return attr
 
-            print(f"Warning: No provider class found in {module_name}")
+            try:
+                self.utils.output.warning(f"No provider class found in {module_name}")
+            except Exception:
+                print(f"Warning: No provider class found in {module_name}")
             return None
         except Exception as e:
-            print(f"Warning: Could not load provider {provider_name}: {e}")
+            try:
+                self.utils.output.warning(f"Could not load provider {provider_name}: {e}")
+            except Exception:
+                print(f"Warning: Could not load provider {provider_name}: {e}")
             return None
 
     def _load_context_classes(self):
@@ -232,7 +245,10 @@ class ComponentRegistry:
                     break
 
         except Exception as e:
-            print(f"Warning: Could not load context {context_type}: {e}")
+            try:
+                self.utils.output.warning(f"Could not load context {context_type}: {e}")
+            except Exception:
+                print(f"Warning: Could not load context {context_type}: {e}")
 
     def _load_action(self, name: str):
         """Dynamic action loading logic (similar to current Session)"""
@@ -251,7 +267,10 @@ class ComponentRegistry:
         if action:
             return action
 
-        print(f"Warning: Action '{name}' not found")
+        try:
+            self.utils.output.warning(f"Action '{name}' not found")
+        except Exception:
+            print(f"Warning: Action '{name}' not found")
         return None
 
     @staticmethod
@@ -294,7 +313,10 @@ class ComponentRegistry:
             return None
 
         except Exception as e:
-            print(f"Warning: Could not load action {name} from {directory}: {e}")
+            try:
+                self.utils.output.warning(f"Could not load action {name} from {directory}: {e}")
+            except Exception:
+                print(f"Warning: Could not load action {name} from {directory}: {e}")
             return None
 
     def list_available_actions(self) -> List[str]:

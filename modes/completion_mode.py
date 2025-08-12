@@ -49,7 +49,7 @@ class CompletionMode(InteractionMode):
         
         provider = self.session.get_provider()
         if not provider:
-            print("No provider available")
+            self.session.utils.output.error("No provider available")
             return
 
         if params.get('raw_completion'):
@@ -58,7 +58,7 @@ class CompletionMode(InteractionMode):
             self.session.set_option('stream', False)
             provider.chat()
             if hasattr(provider, 'get_full_response'):
-                print(provider.get_full_response())
+                self.session.utils.output.write(provider.get_full_response(), end='')
         else:
             # Normal completion: stream only if CLI flag used
             stream = params.get('stream_completion', False)
@@ -70,12 +70,12 @@ class CompletionMode(InteractionMode):
                     response = provider.stream_chat()
                     if response:
                         for chunk in response:
-                            print(chunk, end='', flush=True)
+                            self.session.utils.output.write(chunk, end='', flush=True)
                             if 'stream_delay' in params:
                                 time.sleep(float(params['stream_delay']))
-                    print()
+                    self.session.utils.output.write('')
             else:
                 if hasattr(provider, 'chat'):
                     response = provider.chat()
                     if response:
-                        print(response)
+                        self.session.utils.output.write(response)

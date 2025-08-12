@@ -45,6 +45,8 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw,
         options['stream'] = True
     if verbose:
         ctx.obj['VERBOSE'] = verbose
+        # Enable agent-mode debug dumps when verbose is set
+        options['agent_debug'] = True
     if raw:
         options['raw_completion'] = True
         # Disable streaming if raw output is requested

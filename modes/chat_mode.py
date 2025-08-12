@@ -66,9 +66,9 @@ class ChatMode(InteractionMode):
                     # Fallback if assistant_output action not available
                     response = ""
                     for chunk in stream:
-                        print(chunk, end='', flush=True)
+                        self.utils.output.write(chunk, end='', flush=True)
                         response += chunk
-                    print()
+                    self.utils.output.write('')
             else:
                 response = self.session.get_provider().chat()
                 if response is None:

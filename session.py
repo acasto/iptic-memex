@@ -29,7 +29,10 @@ class Session:
             try:
                 return action_class(self)
             except Exception as e:
-                print(f"Warning: Could not instantiate action '{name}': {e}")
+                try:
+                    self.utils.output.warning(f"Could not instantiate action '{name}': {e}")
+                except Exception:
+                    print(f"Warning: Could not instantiate action '{name}': {e}")
                 return None
         return None
 
@@ -46,7 +49,10 @@ class Session:
                     return context_class(self, data)
             return None
         except Exception as e:
-            print(f"Warning: Could not create context '{context_type}': {e}")
+            try:
+                self.utils.output.warning(f"Could not create context '{context_type}': {e}")
+            except Exception:
+                print(f"Warning: Could not create context '{context_type}': {e}")
             return None
 
     def add_context(self, context_type: str, data=None):
@@ -387,6 +393,10 @@ class SessionBuilder:
 
         provider_class = self._load_provider_class(provider_name)
         if not provider_class:
+            try:
+                session.utils.output.warning(f"Could not load provider '{provider_name}' during rebuild.")
+            except Exception:
+                pass
             return
 
         # Preserve any provider-specific state if needed

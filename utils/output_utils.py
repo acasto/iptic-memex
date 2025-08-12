@@ -445,3 +445,97 @@ class OutputHandler:
         if self._current_spinner:
             self._current_spinner.stop()
             self._current_spinner = None
+
+    # --- Stdout filtering helpers for non-interactive modes ---
+    class _StdoutFilter:
+        """
+        Lightweight stdout wrapper to suppress extraneous blank lines.
+        - Drops leading blank-only writes (e.g., initial "\n").
+        - Optionally collapses consecutive newline bursts.
+        Pass-through for all non-blank content.
+        """
+
+        def __init__(self, stream: TextIO, suppress_blank_lines: bool = True, collapse_bursts: bool = True):
+            self._stream = stream
+            self._suppress_blank_lines = suppress_blank_lines
+            self._collapse_bursts = collapse_bursts
+            self._seen_nonblank = False
+            self._last_char = ''
+
+        def write(self, s: str) -> int:
+            if not s:
+                return 0
+
+            # Determine if this chunk is blank-only (spaces/tabs/newlines)
+            is_blank_only = (s.strip() == '')
+
+            # Suppress leading blank lines before any real output
+            if self._suppress_blank_lines and not self._seen_nonblank and is_blank_only and ('\n' in s or '\r' in s):
+                return 0
+
+            # Optionally collapse repeated newline bursts
+            if self._collapse_bursts and is_blank_only:
+                # If last char was a newline and this is only whitespace/newlines, drop
+                if self._last_char == '\n' and all(ch in (' ', '\t', '\n', '\r') for ch in s):
+                    return 0
+
+            # Track if we encountered any non-blank content
+            if not is_blank_only:
+                self._seen_nonblank = True
+
+            # Update last_char
+            self._last_char = s[-1]
+
+            return self._stream.write(s)
+
+        def flush(self) -> None:
+            try:
+                self._stream.flush()
+            except Exception:
+                pass
+
+        def isatty(self) -> bool:
+            try:
+                return self._stream.isatty()
+            except Exception:
+                return False
+
+        # Provide minimal compatibility attributes
+        @property
+        def encoding(self):
+            return getattr(self._stream, 'encoding', None)
+
+    class _StdoutFilterContext:
+        def __init__(self, outer: 'OutputHandler', suppress_blank_lines: bool = True, collapse_bursts: bool = True):
+            self._outer = outer
+            self._suppress_blank_lines = suppress_blank_lines
+            self._collapse_bursts = collapse_bursts
+            self._orig_stdout = None
+            self._orig_stream = None
+            self._filter = None
+
+        def __enter__(self):
+            import sys as _sys
+            self._orig_stdout = _sys.stdout
+            # If OutputHandler writes to sys.stdout, it will pick up the filter automatically
+            self._orig_stream = self._outer._stream
+            self._filter = OutputHandler._StdoutFilter(self._orig_stdout, self._suppress_blank_lines, self._collapse_bursts)
+            _sys.stdout = self._filter
+            # If our handler writes to the same stdout, keep as-is; if not, leave it untouched
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            import sys as _sys
+            try:
+                if self._filter:
+                    self._filter.flush()
+            finally:
+                _sys.stdout = self._orig_stdout
+
+    def suppress_stdout_blanks(self, suppress_blank_lines: bool = True, collapse_bursts: bool = True):
+        """
+        Context manager that temporarily wraps sys.stdout to suppress extraneous blank lines.
+        Useful for agent 'final' or 'none' output modes where intermediate blank spacing
+        (from chat/TUI flows) should not appear.
+        """
+        return OutputHandler._StdoutFilterContext(self, suppress_blank_lines, collapse_bursts)
