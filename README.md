@@ -15,6 +15,7 @@ envisioned a device that would compress and store all of their knowledge. https:
   - **Interactive 'chat' mode**: Engage in extended, multi-turn conversations with full context management and conversation history.
   - **Completion Mode**: For simple, one-shot queries, pipe your input directly into Memex. Useful for scripting and building LLM powered tools (e.g., summarize a file, describe an image)
   - **Completion Mode with Raw Response**: Get raw responses from an LLM provider, useful for debugging or when you need to access additional parts of the response object such as citations.
+  - **Agent Mode (N-turn, non-interactive)**: Run up to N assistant turns with tool calls and configurable write policy; stream every turn or print only the final answer.
   
 - **Advanced Context Management**
   - Load content from text files, PDFs, DOCX, XLSX, and even images.
@@ -115,6 +116,33 @@ See [INSTALL.md](INSTALL.md) for details on how to adjust requirements.txt as ne
 ```bash
     echo "What is PI?" | memex -f -
  ```
+  - Stdin becomes the actual user message (not a file context), which keeps instructions clean and avoids wrapped file tags:
+    ```bash
+    echo "Summarize the following text:" | python main.py -f -
+    ```
+
+- **Agent Mode** (non-interactive):
+  - Run multiple turns, stream everything:
+    ```bash
+    echo "Implement X and show a diff" | python main.py --steps 3 --agent-output full -f -
+    ```
+  - Final-only output (default):
+    ```bash
+    echo "Summarize this file" | python main.py --steps 2 -f notes.md
+    ```
+  - Raw-only final (JSON/string) for scripting:
+    ```bash
+    echo "Summarize" | python main.py --steps 2 -r --agent-output final -f -
+    ```
+  - Deny writes; require diffs:
+    ```bash
+    python main.py --steps 3 --agent-writes deny -f project.md
+    ```
+  - Stdin as your message (not a file context):
+    - When passing `-f -`, the stdin text becomes the actual user message for the turn (it won’t appear wrapped in file tags). This keeps instructions clean and avoids the model echoing `<|results:stdin|>`.
+    ```bash
+    echo "Refactor the code and list changes" | python main.py --steps 2 -f -
+    ```
 
 - **Chat Mode Quick Reference**
   - **Context Loading**
