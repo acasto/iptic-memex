@@ -48,6 +48,28 @@ class AgentMode(InteractionMode):
         # Utilities
         self.utils = self.session.utils
 
+        # Prepare agent instruction snippet (finish signal + write policy)
+        policy = (self.session.user_data.get('agent_write_policy') or '').lower()
+        finish_instr = (
+            "Finish signal: When you are done with the task, output the token %%DONE%% as the last line."
+        )
+        if policy == 'deny':
+            write_instr = (
+                "Write policy: File writes are disabled. Do not modify files. If changes are needed, provide unified diffs (diff -u) showing exact edits."
+            )
+        elif policy == 'dry-run':
+            write_instr = (
+                "Write policy: Dry run. Do not modify files. Provide the unified diffs (diff -u) you would apply."
+            )
+        else:
+            write_instr = None
+
+        lines = [finish_instr]
+        if write_instr:
+            lines.append(write_instr)
+        self._agent_instructions = "\n\n" + "\n".join(lines)
+        self._agent_prompt_injected = False
+
     def _dump_messages(self, header: str, include_prompt: bool = False, omit_last_assistant: bool = False):
         """Debug helper: dump system prompt and conversation messages."""
         try:
@@ -117,14 +139,8 @@ class AgentMode(InteractionMode):
         """Gather current contexts (including agent status) and add a new user turn."""
         # Build agent status as a lightweight context
         status_parts = [f"Turn {turn_index + 1} of {self.steps}"]
-        if turn_index == self.steps - 1:
-            status_parts.append("Final turn — include %%DONE%% if complete.")
 
-        policy = self.session.user_data.get('agent_write_policy', 'deny')
-        if policy == 'deny':
-            status_parts.append("Writes are disabled; output a unified diff instead of writing.")
-        elif policy == 'dry-run':
-            status_parts.append("Dry run; output the diff you would apply.")
+        # Do not include write policy in status; it is injected into the system prompt
 
         status_text = ''.join(f"<status>{t}</status>" for t in status_parts if t)
         if status_text:
@@ -153,10 +169,32 @@ class AgentMode(InteractionMode):
         if stdin_idx is not None:
             # Remove stdin from contexts so it isn't rendered as a file context
             contexts.pop(stdin_idx)
-            # If prompt wasn't explicitly set, mirror completion mode by removing default prompt
+            # If prompt wasn't explicitly set, replace default prompt with agent instructions
             try:
-                if 'prompt' not in getattr(self.session.config, 'overrides', {}):
-                    self.session.remove_context_type('prompt')
+                overrides = getattr(self.session.config, 'overrides', {})
+                have_explicit_prompt = ('prompt' in overrides)
+                prompt_ctx = self.session.get_context('prompt')
+                if not have_explicit_prompt:
+                    if prompt_ctx:
+                        prompt_ctx.get()['content'] = self._agent_instructions.strip()
+                    else:
+                        self.session.add_context('prompt', self._agent_instructions.strip())
+                    self._agent_prompt_injected = True
+            except Exception:
+                pass
+
+        # On first turn, if we haven't injected the instructions yet, append to the prompt if present
+        if turn_index == 0 and not self._agent_prompt_injected:
+            try:
+                prompt_ctx = self.session.get_context('prompt')
+                if prompt_ctx:
+                    content = prompt_ctx.get().get('content', '')
+                    prompt_ctx.get()['content'] = (content + self._agent_instructions)
+                    self._agent_prompt_injected = True
+                else:
+                    # No prompt exists (user disabled); add minimal instructions-only prompt
+                    self.session.add_context('prompt', self._agent_instructions.strip())
+                    self._agent_prompt_injected = True
             except Exception:
                 pass
 
@@ -174,14 +212,8 @@ class AgentMode(InteractionMode):
         final = (turn_index == self.steps - 1)
 
         tags = [f"Turn {turn_index + 1} of {self.steps}"]
-        if final:
-            tags.append("Final turn — include %%DONE%% if complete.")
 
-        policy = self.session.user_data.get('agent_write_policy', 'deny')
-        if policy == 'deny':
-            tags.append("Writes are disabled; output a unified diff instead of writing.")
-        elif policy == 'dry-run':
-            tags.append("Dry run; output the diff you would apply.")
+        # Do not include write policy in status; it is injected into the system prompt
 
         status_line = ''.join(f"<status>{t}</status>" for t in tags if t)
         if status_line:
@@ -300,7 +332,7 @@ class AgentMode(InteractionMode):
                     self._dump_messages(f"AFTER TURN {i+1}", omit_last_assistant=True)
 
                 # Sentinel-based early exit
-                if ('%%DONE%%' in response) or ('%%COMPLETE%%' in response):
+                if ('%%DONE%%' in response) or ('%%COMPLETED%%' in response) or ('%%COMPLETE%%' in response):
                     self.utils.output.debug(f"[Agent] Sentinel detected on turn {i+1}; stopping.")
                     break
 
@@ -339,6 +371,10 @@ class AgentMode(InteractionMode):
                         raw_str = json.dumps(raw, indent=2, ensure_ascii=False) if not isinstance(raw, str) else raw
                     except Exception:
                         raw_str = str(raw)
+                    # Strip finish sentinel tokens from raw if it's a string
+                    if isinstance(raw_str, str):
+                        for tag in ('%%DONE%%', '%%COMPLETED%%', '%%COMPLETE%%'):
+                            raw_str = raw_str.replace(tag, '')
                     self.utils.output.write(raw_str, end='')
             elif last_assistant_display:
                 final_text = last_assistant_display
@@ -348,5 +384,8 @@ class AgentMode(InteractionMode):
                         final_text = final_text[2:]
                     elif final_text.startswith('\n'):
                         final_text = final_text[1:]
+                    # Remove finish sentinel tokens in final output
+                    for tag in ('%%DONE%%', '%%COMPLETED%%', '%%COMPLETE%%'):
+                        final_text = final_text.replace(tag, '')
                 self.utils.output.write(final_text)
         # 'none': no assistant output here; 'full': already streamed
