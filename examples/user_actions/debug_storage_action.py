@@ -233,9 +233,10 @@ class DebugStorageAction(InteractionAction):
                 row_id = parts[1]
                 first_col = column_names[0]  # Use first column as ID
                 
-                result = provider.execute(f"DELETE FROM {self.current_table} WHERE {first_col} = ?", (row_id,))
-                changes = provider.execute("SELECT changes()")[0][0]
-                if changes > 0:
+                # Check existence before delete, since provider uses a new connection per call
+                exists = provider.execute(f"SELECT 1 FROM {self.current_table} WHERE {first_col} = ? LIMIT 1", (row_id,))
+                if exists:
+                    provider.execute(f"DELETE FROM {self.current_table} WHERE {first_col} = ?", (row_id,))
                     print(f"Removed row where {first_col} = {row_id}")
                 else:
                     print(f"No row found where {first_col} = {row_id}")

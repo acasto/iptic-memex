@@ -25,6 +25,14 @@ class StorageProvider(ABC):
     def execute(self, query: str, params: tuple = None) -> Any:
         pass
 
+    @abstractmethod
+    def execute_insert(self, query: str, params: tuple = None) -> Optional[int]:
+        """
+        Execute an INSERT and return the database-assigned row id if available.
+        Returns None on failure.
+        """
+        pass
+
 
 class SQLiteProvider(StorageProvider):
     def __init__(self, db_path: str, output_handler: Optional[Any] = None):
@@ -74,6 +82,21 @@ class SQLiteProvider(StorageProvider):
         except sqlite3.Error as e:
             if self.output:
                 self.output.error(f"Database error executing query: {str(e)}")
+            return None
+
+    def execute_insert(self, query: str, params: tuple = None) -> Optional[int]:
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                if params:
+                    cursor.execute(query, params)
+                else:
+                    cursor.execute(query)
+                conn.commit()
+                return cursor.lastrowid
+        except sqlite3.Error as e:
+            if self.output:
+                self.output.error(f"Database error executing insert: {str(e)}")
             return None
 
 
@@ -146,7 +169,8 @@ class StorageHandler:
             INSERT OR REPLACE INTO keyvalue (key, value, updated_at)
             VALUES (?, ?, CURRENT_TIMESTAMP)
         """
-        return bool(self.provider.execute(query, (key, value)))
+        # execute() returns [] on success for DML, which is falsy; treat non-None as success
+        return self.provider.execute(query, (key, value)) is not None
 
     def get(self, key: str) -> Optional[str]:
         """
@@ -174,10 +198,11 @@ class StorageHandler:
         Returns:
             True if successful, False on failure
         """
-        return bool(self.provider.execute(
+        # execute() returns [] on success for DML, which is falsy; treat non-None as success
+        return self.provider.execute(
             "DELETE FROM keyvalue WHERE key = ?",
             (key,)
-        ))
+        ) is not None
 
     def list_keys(self) -> List[str]:
         """

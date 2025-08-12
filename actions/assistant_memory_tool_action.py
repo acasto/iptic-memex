@@ -55,13 +55,46 @@ class AssistantMemoryToolAction(InteractionAction):
                 })
                 return
 
-            # Save the memory record into the "memories" table
-            query = "INSERT INTO memories (memory, project) VALUES (?, ?)"
-            self.session.utils.storage.provider.execute(query, (memory_content, project))
-            self.session.add_context('assistant', {
-                'name': 'assistant_feedback',
-                'content': "Memory saved successfully."
-            })
+            insert_sql = "INSERT INTO memories (memory, project) VALUES (?, ?)"
+            params = (memory_content, project)
+
+            # Preferred: provider-supported insert that returns the ID
+            exec_insert = getattr(self.session.utils.storage.provider, "execute_insert", None)
+            new_id = None
+
+            if callable(exec_insert):
+                new_id = self.session.utils.storage.provider.execute_insert(insert_sql, params)
+            else:
+                # Fallback 1: Try SQLite INSERT ... RETURNING id (single call, same connection)
+                returning_sql = insert_sql + " RETURNING id"
+                rows = self.session.utils.storage.provider.execute(returning_sql, params)
+                if rows and len(rows) > 0 and rows[0] and rows[0][0] is not None:
+                    new_id = rows[0][0]
+                else:
+                    # Fallback 2: Plain insert, then best-effort SELECT to get the latest matching row's ID
+                    self.session.utils.storage.provider.execute(insert_sql, params)
+                    # Handle NULL vs non-NULL project matching
+                    select_sql = """
+                        SELECT id FROM memories
+                        WHERE memory = ?
+                          AND ( (project IS NULL AND ? IS NULL) OR project = ? )
+                        ORDER BY id DESC
+                        LIMIT 1
+                    """
+                    sel_rows = self.session.utils.storage.provider.execute(select_sql, (memory_content, project, project))
+                    if sel_rows and sel_rows[0] and sel_rows[0][0] is not None:
+                        new_id = sel_rows[0][0]
+
+            if new_id is not None:
+                self.session.add_context('assistant', {
+                    'name': 'assistant_feedback',
+                    'content': f"Memory saved successfully with ID {new_id}."
+                })
+            else:
+                self.session.add_context('assistant', {
+                    'name': 'assistant_feedback',
+                    'content': "Memory saved successfully."
+                })
 
         elif action == "read":
             memory_id = args.get("id")
