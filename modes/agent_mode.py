@@ -265,111 +265,118 @@ class AgentMode(InteractionMode):
         return response_text, sanitized_for_tools
 
     def start(self):
-        chat = self.session.get_context('chat')
-        if not chat:
-            self.utils.output.error("AgentStepsMode: chat context not available")
-            return
+        try:
+            chat = self.session.get_context('chat')
+            if not chat:
+                self.utils.output.error("AgentStepsMode: chat context not available")
+                return
 
-        provider = self.session.get_provider()
-        if not provider:
-            self.utils.output.error("AgentStepsMode: no provider available")
-            return
+            provider = self.session.get_provider()
+            if not provider:
+                self.utils.output.error("AgentStepsMode: no provider available")
+                return
 
-        commands_action = self.session.get_action('assistant_commands')
+            commands_action = self.session.get_action('assistant_commands')
 
-        out_mode = (self.session.get_params().get('agent_output_mode', 'final') or 'final').lower()
+            out_mode = (self.session.get_params().get('agent_output_mode', 'final') or 'final').lower()
 
-        # In final/none, suppress leading blank spacing and newline bursts from chat-mode flows.
-        suppress_ctx = self.utils.output.suppress_stdout_blanks(suppress_blank_lines=True, collapse_bursts=True) \
-            if out_mode in ('final', 'none') else None
+            # In final/none, suppress leading blank spacing and newline bursts from chat-mode flows.
+            suppress_ctx = self.utils.output.suppress_stdout_blanks(suppress_blank_lines=True, collapse_bursts=True) \
+                if out_mode in ('final', 'none') else None
 
-        with (suppress_ctx if suppress_ctx is not None else self.utils.output.suppress_stdout_blanks(False, False)):
-            # N-turn loop
-            last_assistant_display = None
-            debug_dump = bool(self.session.get_params().get('agent_debug', False))
-            for i in range(self.steps):
-                final = (i == self.steps - 1)
+            with (suppress_ctx if suppress_ctx is not None else self.utils.output.suppress_stdout_blanks(False, False)):
+                # N-turn loop
+                last_assistant_display = None
+                debug_dump = bool(self.session.get_params().get('agent_debug', False))
+                for i in range(self.steps):
+                    final = (i == self.steps - 1)
 
-                # Prepare per-turn user message from current contexts (tools results, status, etc.)
-                self._prepare_user_turn_with_contexts(i)
+                    # Prepare per-turn user message from current contexts (tools results, status, etc.)
+                    self._prepare_user_turn_with_contexts(i)
 
-                if debug_dump:
-                    # Include system prompt only at the first turn
-                    # Omit the last assistant message in dumps to avoid duplication
-                    self._dump_messages(f"BEFORE TURN {i+1}", include_prompt=(i == 0), omit_last_assistant=True)
+                    if debug_dump:
+                        # Include system prompt only at the first turn
+                        # Omit the last assistant message in dumps to avoid duplication
+                        self._dump_messages(f"BEFORE TURN {i+1}", include_prompt=(i == 0), omit_last_assistant=True)
 
-                # Get assistant output (with streaming if configured)
-                response, sanitized = self._assistant_turn()
-                if not response:
-                    self.utils.output.debug(f"[Agent] Empty response on turn {i+1}; stopping.")
-                    break
+                    # Get assistant output (with streaming if configured)
+                    response, sanitized = self._assistant_turn()
+                    if not response:
+                        self.utils.output.debug(f"[Agent] Empty response on turn {i+1}; stopping.")
+                        break
 
-                # Record assistant message
-                chat.add(response, 'assistant')
-                # Keep latest display-friendly version for final/none handling
-                last_assistant_display = AssistantOutputAction.filter_full_text(response, self.session)
+                    # Record assistant message
+                    chat.add(response, 'assistant')
+                    # Keep latest display-friendly version for final/none handling
+                    last_assistant_display = AssistantOutputAction.filter_full_text(response, self.session)
 
-                # Suppress AFTER dump for the final turn to avoid duplicating the final answer
-                # If needed later, we can re-enable for non-final turns only
-                if debug_dump and not final:
-                    # Always omit the most recent assistant to avoid duplication in logs
-                    self._dump_messages(f"AFTER TURN {i+1}", omit_last_assistant=True)
+                    # Suppress AFTER dump for the final turn to avoid duplicating the final answer
+                    # If needed later, we can re-enable for non-final turns only
+                    if debug_dump and not final:
+                        # Always omit the most recent assistant to avoid duplication in logs
+                        self._dump_messages(f"AFTER TURN {i+1}", omit_last_assistant=True)
 
-                # Sentinel-based early exit
-                if ('%%DONE%%' in response) or ('%%COMPLETED%%' in response) or ('%%COMPLETE%%' in response):
-                    self.utils.output.debug(f"[Agent] Sentinel detected on turn {i+1}; stopping.")
-                    break
+                    # Sentinel-based early exit
+                    if ('%%DONE%%' in response) or ('%%COMPLETED%%' in response) or ('%%COMPLETE%%' in response):
+                        self.utils.output.debug(f"[Agent] Sentinel detected on turn {i+1}; stopping.")
+                        break
 
-                # Tool execution based on assistant output
-                ran_tools = False
-                if commands_action and sanitized is not None:
-                    try:
-                        # Heuristic: if there are no parsed commands, optionally early exit
-                        parsed = commands_action.parse_commands(sanitized)
-                        if parsed:
-                            ran_tools = True
-                            commands_action.run(sanitized)
-                    except Exception as e:
-                        # Bubble errors into assistant context for next turn
-                        self.session.add_context('assistant', {
-                            'name': 'command_error',
-                            'content': f'Error running assistant commands: {e}'
-                        })
+                    # Tool execution based on assistant output
+                    ran_tools = False
+                    if commands_action and sanitized is not None:
+                        try:
+                            # Heuristic: if there are no parsed commands, optionally early exit
+                            parsed = commands_action.parse_commands(sanitized)
+                            if parsed:
+                                ran_tools = True
+                                commands_action.run(sanitized)
+                        except Exception as e:
+                            # Bubble errors into assistant context for next turn
+                            self.session.add_context('assistant', {
+                                'name': 'command_error',
+                                'content': f'Error running assistant commands: {e}'
+                            })
 
-                # Optional early exit heuristic: if no tools and not final
-                if not final and not ran_tools:
-                    self.utils.output.debug(f"[Agent] No tools invoked on turn {i+1}; stopping early.")
-                    break
+                    # Optional early exit heuristic: if no tools and not final
+                    if not final and not ran_tools:
+                        self.utils.output.debug(f"[Agent] No tools invoked on turn {i+1}; stopping early.")
+                        break
 
-            # No trailing spacer here; avoid introducing a blank before final output
+                # No trailing spacer here; avoid introducing a blank before final output
 
-        # Output policy after the loop
-        if out_mode == 'final':
-            # If raw mode requested, emit only the raw response (programmatic use)
-            if self.session.get_params().get('raw_completion', False):
-                provider = self.session.get_provider()
-                if provider and hasattr(provider, 'get_full_response'):
-                    raw = provider.get_full_response()
-                    try:
-                        import json
-                        raw_str = json.dumps(raw, indent=2, ensure_ascii=False) if not isinstance(raw, str) else raw
-                    except Exception:
-                        raw_str = str(raw)
-                    # Strip finish sentinel tokens from raw if it's a string
-                    if isinstance(raw_str, str):
+            # Output policy after the loop
+            if out_mode == 'final':
+                # If raw mode requested, emit only the raw response (programmatic use)
+                if self.session.get_params().get('raw_completion', False):
+                    provider = self.session.get_provider()
+                    if provider and hasattr(provider, 'get_full_response'):
+                        raw = provider.get_full_response()
+                        try:
+                            import json
+                            raw_str = json.dumps(raw, indent=2, ensure_ascii=False) if not isinstance(raw, str) else raw
+                        except Exception:
+                            raw_str = str(raw)
+                        # Strip finish sentinel tokens from raw if it's a string
+                        if isinstance(raw_str, str):
+                            for tag in ('%%DONE%%', '%%COMPLETED%%', '%%COMPLETE%%'):
+                                raw_str = raw_str.replace(tag, '')
+                        self.utils.output.write(raw_str, end='')
+                elif last_assistant_display:
+                    final_text = last_assistant_display
+                    # Trim a single leading newline (CRLF or LF) that some providers produce
+                    if isinstance(final_text, str):
+                        if final_text.startswith('\r\n'):
+                            final_text = final_text[2:]
+                        elif final_text.startswith('\n'):
+                            final_text = final_text[1:]
+                        # Remove finish sentinel tokens in final output
                         for tag in ('%%DONE%%', '%%COMPLETED%%', '%%COMPLETE%%'):
-                            raw_str = raw_str.replace(tag, '')
-                    self.utils.output.write(raw_str, end='')
-            elif last_assistant_display:
-                final_text = last_assistant_display
-                # Trim a single leading newline (CRLF or LF) that some providers produce
-                if isinstance(final_text, str):
-                    if final_text.startswith('\r\n'):
-                        final_text = final_text[2:]
-                    elif final_text.startswith('\n'):
-                        final_text = final_text[1:]
-                    # Remove finish sentinel tokens in final output
-                    for tag in ('%%DONE%%', '%%COMPLETED%%', '%%COMPLETE%%'):
-                        final_text = final_text.replace(tag, '')
-                self.utils.output.write(final_text)
-        # 'none': no assistant output here; 'full': already streamed
+                            final_text = final_text.replace(tag, '')
+                    self.utils.output.write(final_text)
+            # 'none': no assistant output here; 'full': already streamed
+        finally:
+            # Ensure Agent Mode flags are always cleaned up
+            try:
+                self.session.exit_agent_mode()
+            except Exception:
+                pass

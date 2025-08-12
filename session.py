@@ -1,6 +1,7 @@
+from __future__ import annotations
 import os
 import importlib.util
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Literal, TypedDict, cast
 from config_manager import SessionConfig
 from component_registry import ComponentRegistry
 
@@ -204,21 +205,51 @@ class Session:
         return self.user_data.get(key, default)
 
     # Agent mode helpers
+    WritePolicy = Literal['deny', 'dry-run', 'allow']
+
+    class _AgentState(TypedDict, total=False):
+        enabled: bool
+        write_policy: WritePolicy
+
+    _ALLOWED_POLICIES: set[str] = {"deny", "dry-run", "allow"}
+
+    def _normalize_write_policy(self, policy: Optional[str]) -> WritePolicy:
+        p = (policy or 'deny').lower()
+        return cast(Session.WritePolicy, p if p in self._ALLOWED_POLICIES else 'deny')
+
     def in_agent_mode(self) -> bool:
         """Return True if this session is running in Agent Mode."""
+        agent = cast(Optional[Session._AgentState], self.user_data.get('agent'))
+        if isinstance(agent, dict):
+            return bool(agent.get('enabled'))
+        # Backward compatibility with older flags
         return bool(self.user_data.get('agent_mode'))
 
-    def get_agent_write_policy(self) -> Optional[str]:
+    def get_agent_write_policy(self) -> Optional[WritePolicy]:
         """Return current agent write policy when in Agent Mode, else None."""
-        return self.user_data.get('agent_write_policy') if self.in_agent_mode() else None
+        if not self.in_agent_mode():
+            return None
+        agent = cast(Optional[Session._AgentState], self.user_data.get('agent'))
+        if isinstance(agent, dict) and 'write_policy' in agent:
+            return self._normalize_write_policy(cast(str, agent.get('write_policy')))
+        # Backward compatibility
+        return self._normalize_write_policy(self.user_data.get('agent_write_policy'))
 
-    def enter_agent_mode(self, writes_policy: str = "deny") -> None:
-        """Enable Agent Mode and set the write policy."""
-        self.user_data['agent_mode'] = True
-        self.user_data['agent_write_policy'] = (writes_policy or 'deny').lower()
+    def enter_agent_mode(self, writes_policy: WritePolicy | str = "deny") -> None:
+        """Enable Agent Mode and set the write policy with validation/clamp."""
+        normalized = self._normalize_write_policy(str(writes_policy) if writes_policy is not None else 'deny')
+        agent_state: Session._AgentState = {'enabled': True, 'write_policy': normalized}
+        self.user_data['agent'] = agent_state
+        # Backward compatibility flags are no longer required, but keep them cleared to avoid drift
+        self.user_data.pop('agent_mode', None)
+        self.user_data.pop('agent_write_policy', None)
 
     def exit_agent_mode(self) -> None:
-        """Disable Agent Mode and clear related settings."""
+        """Disable Agent Mode and clear related settings (both new and legacy)."""
+        # Namespaced state
+        if 'agent' in self.user_data:
+            self.user_data.pop('agent', None)
+        # Legacy flags
         self.user_data.pop('agent_mode', None)
         self.user_data.pop('agent_write_policy', None)
 
