@@ -185,6 +185,39 @@ def tui(ctx, file):
 
 @cli.command()
 @click.pass_context
+@click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
+@click.option('--host', default=None, help='Host interface to bind (overrides config)')
+@click.option('--port', type=int, default=None, help='Port to bind (overrides config)')
+def web(ctx, file, host, port):
+    """Start Web mode (local browser UI)"""
+    # Get builder and options from context
+    builder = ctx.obj['BUILDER']
+    options = ctx.obj.get('OPTIONS', {})
+
+    # Build session for Web mode
+    session = builder.build(mode='web', **options)
+    ctx.obj['SESSION'] = session
+
+    # Add file contexts if provided
+    if len(file) > 0:
+        for f in file:
+            session.add_context('file', f)
+
+    # Start Web mode
+    try:
+        from modes.web_mode import WebMode
+        mode = WebMode(session, builder, host=host, port=port)
+        mode.start()
+    except ImportError as e:
+        print("Error importing Web components:", e)
+    except Exception as e:
+        print(f"Error starting Web mode: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+@cli.command()
+@click.pass_context
 @click.option('-a', '--all', 'showall', is_flag=True, help="Show all models")
 @click.option('-d', '--details', is_flag=True, help="Show model details")
 def list_models(ctx, showall, details):

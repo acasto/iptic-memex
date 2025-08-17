@@ -32,6 +32,21 @@ class UtilsHandler:
             self._output = OutputHandler(self.config)
         return self._output
 
+    def replace_output(self, output_handler):
+        """
+        Replace the current output handler instance with a compatible sink.
+
+        The replacement should implement at least:
+        - write(message, level=..., style=..., prefix=..., end='\n', flush=False, spacing=None)
+        - debug/info/warning/error/critical helpers
+        - spinner()/stop_spinner()
+        - suppress_stdout_blanks(suppress_blank_lines: bool, collapse_bursts: bool)
+
+        This hook enables alternative front-ends (e.g., TUI or Web) to route
+        display output without changing action logic.
+        """
+        self._output = output_handler
+
     @property
     def input(self):
         if self._input is None:

@@ -18,3 +18,5 @@ llama-cpp-python
 pytz
 mlx
 mlx-lm
+starlette>=0.37
+uvicorn>=0.30
