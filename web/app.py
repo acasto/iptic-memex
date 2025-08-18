@@ -48,6 +48,15 @@ INDEX_HTML = """
       textarea { width: 100%; height: 90px; }
       button { padding: .5rem 1rem; }
       #status { margin-bottom: 0.75rem; color: #555; font-size: 0.95rem; }
+      #panel { transition: background 120ms ease, border-color 120ms ease; }
+      #panel.dragover { border-color: #4a90e2; background: #f0f7ff; }
+      .status-line { font-size: 0.95rem; margin: 0.25rem 0; color: #334; }
+      .status-warn { color: #a66a00; }
+      .status-error { color: #a61b29; }
+      .status-info { color: #334; }
+      .spinner { opacity: 0.85; }
+      @keyframes pulse { 0% { opacity: .6 } 50% { opacity: 1 } 100% { opacity: .6 } }
+      .spinner { animation: pulse 1.2s ease-in-out infinite; }
     </style>
   </head>
   <body>
@@ -58,6 +67,7 @@ INDEX_HTML = """
     <div style="margin-top:1rem;">
       <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem;">
         <button id="attach" title="Load file" style="padding:.25rem .5rem;">📎 Attach</button>
+        <button id="options" title="Set option" style="padding:.25rem .5rem;">⚙️ Options</button>
         <label><input id="stream" type="checkbox" /> Stream</label>
       </div>
       <textarea id="msg" placeholder="Type a message..."></textarea>
@@ -85,6 +95,7 @@ class WebApp:
         routes = [
             Route('/', self.index, methods=['GET']),
             Route('/api/status', self.api_status, methods=['GET']),
+            Route('/api/params', self.api_params, methods=['GET']),
             Route('/api/chat', self.api_chat, methods=['POST']),
             Route('/api/stream', self.api_stream, methods=['GET']),
             Route('/api/action/start', self.api_action_start, methods=['POST']),
@@ -113,6 +124,14 @@ class WebApp:
         model = params.get('model')
         provider = params.get('provider')
         return JSONResponse({'ok': True, 'model': model, 'provider': provider})
+
+    async def api_params(self, request: Request):
+        try:
+            params = self.session.get_params() or {}
+        except Exception:
+            params = {}
+        # Optionally filter if needed later; for now, return as-is for local dev
+        return JSONResponse({'ok': True, 'params': params})
 
     async def api_chat(self, request: Request):
         try:

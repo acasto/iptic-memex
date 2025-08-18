@@ -21,11 +21,38 @@ class LoadFileAction(StepwiseAction):
 
     def _load_files(self, patterns: List[str]) -> List[str]:
         loaded: List[str] = []
+        # Compute uploads dir (if present) to detect ephemeral uploaded files
+        try:
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            uploads_dir = os.path.join(project_root, 'web', 'uploads')
+            uploads_dir_abs = os.path.abspath(uploads_dir)
+        except Exception:
+            uploads_dir_abs = None
         for pat in patterns:
             matches = glob.glob(pat)
             for path in matches:
                 if os.path.isfile(path):
-                    self.session.add_context('file', path)
+                    ctx = self.session.add_context('file', path)
+                    # If this came from a web upload, adjust metadata and remove temp file
+                    try:
+                        if uploads_dir_abs and os.path.abspath(path).startswith(uploads_dir_abs):
+                            original_name = os.path.basename(path)
+                            # Rewrite context display name and mark origin
+                            try:
+                                if hasattr(ctx, 'file') and isinstance(ctx.file, dict):
+                                    ctx.file['server_path'] = path
+                                    ctx.file['origin'] = 'upload'
+                                    # Prefer original filename for display
+                                    ctx.file['name'] = original_name
+                            except Exception:
+                                pass
+                            # Remove uploaded temp file now that content is in context
+                            try:
+                                _ = self.session.utils.fs.delete_file(path)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
                     loaded.append(path)
         return loaded
 

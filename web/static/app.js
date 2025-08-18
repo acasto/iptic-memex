@@ -46,7 +46,7 @@
             .then(function(up){
               if (!up || up.ok === false || up._status !== 200) {
                 // Fallback: start interactive load_file if upload not available
-                renderStatus((up && up.error && up.error.message) ? up.error.message : 'Upload not supported; please enter a path');
+                renderStatus((up && up.error && up.error.message) ? up.error.message : 'Upload not supported; please enter a path', 'warn');
                 return fetch('/api/action/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'load_file', args: {}, content: null }) })
                   .then(function(res){ if(!res.ok) return res.text().then(function(t){ throw new Error('HTTP '+res.status+': '+t); }); return res.json(); })
                   .then(function(data){ if (data && data.needs_interaction && data.state_token) { renderInteractionInPanel(data.needs_interaction, data.state_token); } });
@@ -57,7 +57,7 @@
                 .then(function(res){ if(!res.ok) return res.text().then(function(t){ throw new Error('HTTP '+res.status+': '+t); }); return res.json(); })
                 .then(function(data){
                   if (data && data.ok && data.done) {
-                    renderStatus('Loaded ' + paths.length + ' file(s).');
+                    renderStatus('Loaded ' + paths.length + ' file(s).', 'info');
                   } else if (data && data.needs_interaction && data.state_token) {
                     // Fallback: show interaction if action still requests input
                     renderInteractionInPanel(data.needs_interaction, data.state_token);
@@ -66,12 +66,128 @@
                   }
                 });
             })
-            .catch(function(err){ renderStatus('Attach failed: ' + (err && err.message ? err.message : err)); })
+            .catch(function(err){ renderStatus('Attach failed: ' + (err && err.message ? err.message : err), 'error'); })
             .finally(function(){ try { picker.remove(); } catch(e){} });
         });
         picker.click();
-      } catch(e) { renderStatus('Attach error: ' + e); }
+      } catch(e) { renderStatus('Attach error: ' + e, 'error'); }
     });
+  }
+
+  // Options button: compact form to set options via set_option action
+  var optionsBtn = document.getElementById('options');
+  if (optionsBtn) {
+    optionsBtn.addEventListener('click', function(){
+      try {
+        clearPanel(); panel.style.display = 'block';
+        var wrap = document.createElement('div'); wrap.className = 'interaction';
+        var hdr = document.createElement('div'); hdr.style.display = 'flex'; hdr.style.justifyContent = 'space-between'; hdr.style.alignItems = 'center'; hdr.style.marginBottom = '.5rem';
+        var title = document.createElement('div'); title.textContent = 'Set Option'; title.style.fontWeight = '600';
+        var close = document.createElement('button'); close.textContent = '×'; close.title = 'Close'; close.onclick = function(){ clearPanel(); };
+        hdr.appendChild(title); hdr.appendChild(close); wrap.appendChild(hdr);
+
+        var modeRow = document.createElement('div');
+        var modeLbl = document.createElement('label'); modeLbl.textContent = 'Mode:'; modeLbl.style.marginRight = '.5rem';
+        var modeSel = document.createElement('select');
+        var opt1 = document.createElement('option'); opt1.value = 'params'; opt1.textContent = 'Params'; modeSel.appendChild(opt1);
+        var opt2 = document.createElement('option'); opt2.value = 'tools'; opt2.textContent = 'Tools'; modeSel.appendChild(opt2);
+        modeRow.appendChild(modeLbl); modeRow.appendChild(modeSel);
+        wrap.appendChild(modeRow);
+
+        var nameRow = document.createElement('div'); nameRow.style.marginTop = '.5rem';
+        var nameLbl = document.createElement('label'); nameLbl.textContent = 'Option:'; nameLbl.style.marginRight = '.5rem';
+        var nameInp = document.createElement('input'); nameInp.type = 'text'; nameInp.placeholder = 'e.g., model or stream'; nameInp.style.minWidth = '40%'; nameInp.setAttribute('list', 'option-names');
+        nameRow.appendChild(nameLbl); nameRow.appendChild(nameInp);
+        wrap.appendChild(nameRow);
+
+        var valRow = document.createElement('div'); valRow.style.marginTop = '.5rem';
+        var valLbl = document.createElement('label'); valLbl.textContent = 'Value:'; valLbl.style.marginRight = '.5rem';
+        var valInp = document.createElement('input'); valInp.type = 'text'; valInp.placeholder = 'e.g., gpt-4o or true'; valInp.style.minWidth = '40%';
+        valRow.appendChild(valLbl); valRow.appendChild(valInp);
+        wrap.appendChild(valRow);
+
+        // Presets
+        var presetsRow = document.createElement('div'); presetsRow.style.marginTop = '.5rem';
+        var presetsLbl = document.createElement('label'); presetsLbl.textContent = 'Preset:'; presetsLbl.style.marginRight = '.5rem';
+        var presetSel = document.createElement('select');
+        ['model','provider','stream','temperature','top_p','max_tokens'].forEach(function(k){ var o=document.createElement('option'); o.value=k; o.textContent=k; presetSel.appendChild(o); });
+        presetsRow.appendChild(presetsLbl); presetsRow.appendChild(presetSel);
+        var applyPreset = document.createElement('button'); applyPreset.textContent = 'Use'; applyPreset.style.marginLeft = '.5rem'; applyPreset.onclick = function(){ nameInp.value = presetSel.value; if (presetSel.value === 'stream') { valInp.value = 'true'; } };
+        presetsRow.appendChild(applyPreset);
+        wrap.appendChild(presetsRow);
+
+        // Datalist for known option names populated from /api/params
+        var dataList = document.createElement('datalist'); dataList.id = 'option-names';
+        wrap.appendChild(dataList);
+
+        // Fetch current params and inject into datalist; also show current value hint
+        fetch('/api/params').then(function(r){ return r.json(); }).then(function(p){
+          try {
+            var params = (p && p.params) ? p.params : {};
+            dataList.innerHTML = '';
+            Object.keys(params || {}).forEach(function(k){ var opt = document.createElement('option'); opt.value = k; dataList.appendChild(opt); });
+            nameInp.addEventListener('input', function(){ var k = nameInp.value; if (params && params.hasOwnProperty(k)) { valInp.placeholder = 'current: ' + String(params[k]); } });
+          } catch(e) { /* ignore */ }
+        }).catch(function(){ /* ignore */ });
+
+        var btnRow = document.createElement('div'); btnRow.style.marginTop = '.75rem';
+        var submit = document.createElement('button'); submit.textContent = 'Apply'; submit.onclick = function(){
+          var mode = modeSel.value || 'params';
+          var option = (nameInp.value || '').trim();
+          var value = (valInp.value || '').trim();
+          if (!option) { renderStatus('Please enter an option name', 'warn'); return; }
+          var spin = showSpinner('Applying option...');
+          fetch('/api/action/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'set_option', args: { mode: mode, option: option, value: value }, content: null }) })
+            .then(function(res){ if(!res.ok) return res.text().then(function(t){ throw new Error('HTTP '+res.status+': '+t); }); return res.json(); })
+            .then(function(data){ hideSpinner(spin); if (data && data.ok) { renderStatus('Option applied', 'info'); clearPanel(); } else { renderStatus('Failed to apply option', 'error'); } })
+            .catch(function(err){ hideSpinner(spin); renderStatus('Apply failed: ' + (err && err.message ? err.message : err), 'error'); });
+        };
+        var cancel = document.createElement('button'); cancel.textContent = 'Cancel'; cancel.style.marginLeft = '.5rem'; cancel.onclick = function(){ clearPanel(); };
+        btnRow.appendChild(submit); btnRow.appendChild(cancel);
+        wrap.appendChild(btnRow);
+
+        panel.appendChild(wrap);
+      } catch(e) { renderStatus('Options error: ' + e, 'error'); }
+    });
+  }
+
+  // Drag & drop quick attach
+  (function(){
+    var dragDepth = 0;
+    function prevent(e){ e.preventDefault(); e.stopPropagation(); }
+    function showHint(){ if (!panel) return; panel.style.display='block'; panel.classList.add('dragover'); if (!panel.textContent.trim()) renderStatus('Drop files anywhere to attach', 'info'); }
+    function hideHint(){ if (!panel) return; panel.classList.remove('dragover'); }
+    document.addEventListener('dragenter', function(e){ prevent(e); dragDepth++; showHint(); });
+    document.addEventListener('dragleave', function(e){ prevent(e); dragDepth = Math.max(0, dragDepth-1); if (dragDepth===0) hideHint(); });
+    document.addEventListener('dragover', prevent);
+    document.addEventListener('drop', function(e){
+      prevent(e); dragDepth = 0; hideHint();
+      var files = e.dataTransfer && e.dataTransfer.files; if (!files || !files.length) return;
+      uploadAndLoadFiles(files);
+    });
+  })();
+
+  function uploadAndLoadFiles(fileList){
+    var form = new FormData();
+    Array.prototype.forEach.call(fileList, function(f){ form.append('files', f); });
+    var spin = showSpinner('Uploading ' + fileList.length + ' file(s)...');
+    fetch('/api/upload', { method: 'POST', body: form })
+      .then(function(res){ return res.json().catch(function(){ return { ok: false, error: { message: 'Invalid JSON' }, _status: res.status }; }).then(function(body){ body._status = res.status; return body; }); })
+      .then(function(up){
+        if (!up || up.ok === false || up._status !== 200) {
+          hideSpinner(spin);
+          renderStatus((up && up.error && up.error.message) ? up.error.message : 'Upload not supported; please enter a path', 'warn');
+          return fetch('/api/action/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'load_file', args: {}, content: null }) })
+            .then(function(res){ if(!res.ok) return res.text().then(function(t){ throw new Error('HTTP '+res.status+': '+t); }); return res.json(); })
+            .then(function(data){ if (data && data.needs_interaction && data.state_token) { renderInteractionInPanel(data.needs_interaction, data.state_token); } });
+        }
+        var paths = (up && up.files) ? up.files.map(function(x){ return x.path; }) : [];
+        if (!paths.length) { hideSpinner(spin); renderStatus('No files uploaded', 'warn'); return; }
+        return fetch('/api/action/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'load_file', args: { files: paths }, content: null }) })
+          .then(function(res){ if(!res.ok) return res.text().then(function(t){ throw new Error('HTTP '+res.status+': '+t); }); return res.json(); })
+          .then(function(data){ hideSpinner(spin); if (data && data.ok && data.done) { renderStatus('Loaded ' + paths.length + ' file(s).', 'info'); } });
+      })
+      .catch(function(err){ hideSpinner(spin); renderStatus('Attach failed: ' + (err && err.message ? err.message : err), 'error'); });
   }
 
   sendBtn.addEventListener('click', function(){
@@ -314,18 +430,36 @@ function renderUpdatesInPanel(updates) {
       var msg = null;
       if (ev && ev.message) msg = ev.message;
       else if (ev && ev.text) msg = ev.text;
-      if (msg) renderStatus(msg);
+      if (msg) renderStatus(msg, ev.type);
     });
   } catch (e) { /* ignore */ }
 }
 
-function renderStatus(text) {
+function renderStatus(text, kind) {
   if (!panel) return;
   panel.style.display = 'block';
   var d = document.createElement('div');
   d.className = 'status-line';
+  if (kind === 'warning' || kind === 'warn') d.classList.add('status-warn');
+  else if (kind === 'error') d.classList.add('status-error');
+  else d.classList.add('status-info');
   d.textContent = text;
   panel.appendChild(d);
+}
+
+function showSpinner(text) {
+  if (!panel) return null;
+  panel.style.display = 'block';
+  var d = document.createElement('div');
+  d.className = 'status-line spinner';
+  d.textContent = '⏳ ' + (text || 'Working...');
+  panel.appendChild(d);
+  return d;
+}
+
+function hideSpinner(spinEl) {
+  if (!spinEl) return;
+  try { spinEl.remove(); } catch(e){}
 }
 
 function clearPanel() {
