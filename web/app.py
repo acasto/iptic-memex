@@ -54,12 +54,14 @@ INDEX_HTML = """
     <h1>Iptic Memex - Web</h1>
     <div id="status">Loading status...</div>
     <div id="log"></div>
+    <div id="panel" style="border:1px solid #ddd;border-radius:6px;padding:0.75rem;margin:0.75rem 0;display:none;"></div>
     <div style="margin-top:1rem;">
-      <textarea id="msg" placeholder="Type a message..."></textarea>
-      <div>
+      <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem;">
+        <button id="attach" title="Load file" style="padding:.25rem .5rem;">📎 Attach</button>
         <label><input id="stream" type="checkbox" /> Stream</label>
       </div>
-      <button id="send">Send</button>
+      <textarea id="msg" placeholder="Type a message..."></textarea>
+      <div><button id="send">Send</button></div>
     </div>
 
     <script src="/static/app.js"></script>
@@ -87,6 +89,8 @@ class WebApp:
             Route('/api/stream', self.api_stream, methods=['GET']),
             Route('/api/action/start', self.api_action_start, methods=['POST']),
             Route('/api/action/resume', self.api_action_resume, methods=['POST']),
+            Route('/api/action/cancel', self.api_action_cancel, methods=['POST']),
+            Route('/api/upload', self.api_upload, methods=['POST']),
         ]
         self._app = Starlette(routes=routes)
         # Static files (app.js)
@@ -262,7 +266,24 @@ class WebApp:
         from turns import TurnRunner, TurnOptions
         utils = self.session.utils
         original_output = utils.output
-        utils.replace_output(WebOutput())
+        web_output = WebOutput()
+        utils.replace_output(web_output)
+        # Capture UI emits during this call
+        emitted: List[Dict[str, Any]] = []
+        original_ui = self.session.ui
+        original_emit = getattr(original_ui, 'emit', None)
+        def _capture_emit(event_type: str, data: Dict[str, Any]) -> None:
+            try:
+                item = dict(data)
+                item['type'] = event_type
+                emitted.append(item)
+            except Exception:
+                pass
+        if original_emit:
+            try:
+                original_ui.emit = _capture_emit  # type: ignore[attr-defined]
+            except Exception:
+                pass
         try:
             from base_classes import InteractionNeeded
             runner = TurnRunner(self.session)
@@ -280,10 +301,15 @@ class WebApp:
                     "done": False,
                     "needs_interaction": {"kind": need.kind, "spec": spec},
                     "state_token": token,
-                    "updates": [],
+                    "updates": emitted,
                     "text": str(spec.get('prompt') or spec.get('message') or ''),
                 })
         finally:
+            try:
+                if original_emit:
+                    original_ui.emit = original_emit  # type: ignore[attr-defined]
+            except Exception:
+                pass
             utils.replace_output(original_output)
 
         visible = result.last_text or ''
@@ -304,6 +330,7 @@ class WebApp:
             'text': visible,
             'usage': usage,
             'cost': cost,
+            'updates': emitted,
         })
 
     async def api_stream(self, request: Request):
@@ -446,6 +473,22 @@ class WebApp:
         def run_streaming_turn():
             original_output = self.session.utils.output
             self.session.utils.replace_output(web_output)
+            # Capture UI emits during turn to surface in final 'done' event
+            emitted: List[Dict[str, Any]] = []
+            original_ui = self.session.ui
+            original_emit = getattr(original_ui, 'emit', None)
+            def _capture_emit(event_type: str, data: Dict[str, Any]) -> None:
+                try:
+                    item = dict(data)
+                    item['type'] = event_type
+                    emitted.append(item)
+                except Exception:
+                    pass
+            if original_emit:
+                try:
+                    original_ui.emit = _capture_emit  # type: ignore[attr-defined]
+                except Exception:
+                    pass
             try:
                 from turns import TurnRunner, TurnOptions
                 from base_classes import InteractionNeeded
@@ -465,6 +508,7 @@ class WebApp:
                         "needs_interaction": {"kind": need.kind, "spec": spec},
                         "state_token": token,
                         "handled": True,
+                        "updates": emitted,
                     })
                     return
 
@@ -483,10 +527,17 @@ class WebApp:
                     "text": result.last_text or '',
                     "usage": usage,
                     "cost": cost,
+                    "updates": emitted,
                 })
             except Exception as e:
                 loop.call_soon_threadsafe(queue.put_nowait, {"type": "error", "message": str(e)})
             finally:
+                # Restore UI emit and output
+                try:
+                    if original_emit:
+                        original_ui.emit = original_emit  # type: ignore[attr-defined]
+                except Exception:
+                    pass
                 self.session.utils.replace_output(original_output)
 
         # Start worker thread
@@ -513,6 +564,7 @@ class WebApp:
                             "needs_interaction": event.get('needs_interaction'),
                             "state_token": event.get('state_token'),
                             "handled": event.get('handled'),
+                            "updates": event.get('updates') or [],
                         })
                         yield f"event: done\ndata: {data}\n\n"
                         break
@@ -545,6 +597,8 @@ class WebApp:
         phase: str
         data: Dict[str, Any]
         issued_at: float
+        issued_at_str: str
+        nonce: str
         used: bool = False
         version: int = 1
 
@@ -557,10 +611,12 @@ class WebApp:
 
     def _issue_token(self, action_name: str, step: int, phase: str, data: Dict[str, Any]) -> str:
         issued_at = time.time()
+        issued_at_str = f"{issued_at}"
         nonce = secrets.token_hex(8)
-        parts = f"{self._session_id()}|{action_name}|{step}|{issued_at}|{nonce}".encode('utf-8')
+        parts = f"{self._session_id()}|{action_name}|{step}|{issued_at_str}|{nonce}".encode('utf-8')
         sig = self._sign(parts)
         token = f"{sig}.{nonce}"
+        # Persist state for this token; verification will recompute signature from stored fields
         self._states[token] = WebApp.ActionState(
             session_id=self._session_id(),
             action_name=action_name,
@@ -568,6 +624,8 @@ class WebApp:
             phase=phase,
             data=data,
             issued_at=issued_at,
+            issued_at_str=issued_at_str,
+            nonce=nonce,
             used=False,
             version=1,
         )
@@ -583,7 +641,17 @@ class WebApp:
             return None, "Session mismatch"
         if time.time() - st.issued_at > ttl_seconds:
             return None, "Token expired"
-        # Cannot recompute signature without the exact parts stored; minimal MVP validation above
+        # Integrity check: verify HMAC signature embedded in token matches stored attributes
+        try:
+            sig_prefix, nonce_from_token = token.split('.', 1)
+            if nonce_from_token != st.nonce:
+                return None, "Nonce mismatch"
+            parts = f"{st.session_id}|{st.action_name}|{st.step}|{st.issued_at_str}|{st.nonce}".encode('utf-8')
+            expected = self._sign(parts)
+            if not hmac.compare_digest(sig_prefix, expected):
+                return None, "Invalid token signature"
+        except Exception:
+            return None, "Malformed token"
         return st, None
 
     async def api_action_start(self, request: Request):
@@ -785,10 +853,61 @@ class WebApp:
                 pass
             utils.replace_output(original_output)
 
-        status, data = drive_until_boundary(res, emitted)
+        status, data = drive_until_boundary(res, st.step)
         if status == 'done':
             return JSONResponse({"ok": True, "done": True, **data})
         elif status == 'needs':
             return JSONResponse({"ok": True, "done": False, **data})
         else:
             return JSONResponse({"ok": False, "error": {"recoverable": True, "message": data.get('message', 'Unexpected result')}}, status_code=500)
+
+    async def api_action_cancel(self, request: Request):
+        try:
+            payload: Dict[str, Any] = await request.json()
+        except Exception:
+            return PlainTextResponse('Invalid JSON', status_code=400)
+        token = payload.get('state_token') or ''
+        if not token:
+            return PlainTextResponse('Missing "state_token"', status_code=400)
+        st, err = self._verify_token(token)
+        if not st:
+            return JSONResponse({"ok": False, "error": {"recoverable": True, "message": err or 'Invalid token'}}, status_code=400)
+        st.used = True
+        return JSONResponse({"ok": True, "done": True, "cancelled": True})
+
+    async def api_upload(self, request: Request):
+        try:
+            form = await request.form()
+        except Exception as e:
+            msg = str(e) or 'Invalid form'
+            if 'python-multipart' in msg.lower():
+                return JSONResponse({"ok": False, "error": {"recoverable": True, "message": "Missing dependency 'python-multipart' for file uploads."}}, status_code=400)
+            return JSONResponse({"ok": False, "error": {"recoverable": True, "message": msg}}, status_code=400)
+        files = form.getlist('files') if hasattr(form, 'getlist') else []
+        if not files:
+            return JSONResponse({"ok": False, "error": {"recoverable": True, "message": 'No files in form'}}, status_code=400)
+        # Save uploads to a temp dir under web/uploads
+        upload_dir = os.path.join(os.path.dirname(__file__), 'uploads')
+        os.makedirs(upload_dir, exist_ok=True)
+        saved = []
+        for up in files:
+            try:
+                filename = getattr(up, 'filename', 'upload.bin')
+                # Basic sanitization
+                safe = ''.join(ch for ch in filename if ch.isalnum() or ch in ('-', '_', '.', ' ')) or 'upload.bin'
+                # Ensure unique name
+                base = os.path.splitext(safe)[0]
+                ext = os.path.splitext(safe)[1]
+                path = os.path.join(upload_dir, safe)
+                i = 1
+                while os.path.exists(path):
+                    path = os.path.join(upload_dir, f"{base}_{i}{ext}")
+                    i += 1
+                # Write content
+                content = await up.read()  # type: ignore[attr-defined]
+                with open(path, 'wb') as f:
+                    f.write(content)
+                saved.append({"name": filename, "path": path, "size": len(content)})
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": {"recoverable": True, "message": str(e)}}, status_code=500)
+        return JSONResponse({"ok": True, "files": saved})

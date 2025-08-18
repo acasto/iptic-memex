@@ -173,6 +173,16 @@ Notes:
 - Web/TUI streaming is MVP. When actions need input mid-stream, the server emits a terminal `done` SSE with a `needs_interaction` token; the client resumes over JSON.
 - A few advanced, loop-heavy commands are intentionally CLI-only today (e.g., `manage_chats`, `save_code`, examples `debug_storage`). Web/TUI will display a friendly warning if invoked.
 
+Development self-test (Web)
+- Quick check: `python web/selftest.py` runs a headless e2e against the Starlette app using a fake session.
+- Covers: `/api/status`, non-stream `/api/chat`, SSE `/api/stream`, action `needs_interaction` start → resume, token reuse/expiry.
+- No external services required.
+
+Pytest
+- Run all tests: `pytest -q` (or `make test`)
+- Web-only: `pytest -q tests/web/test_webapp.py` (or `make test-web`)
+- If missing deps: `pip install pytest starlette httpx` (no network calls in tests).
+
 ---
 
 ## Configuration Details
