@@ -37,7 +37,40 @@
 - When adding providers, document required keys and safe defaults; avoid enabling risky shell/file operations by default.
 
 ## Actions & Commands
-- Actions live in `actions/<snake>_action.py` with class `<PascalCase>Action(InteractionAction)` and a `run(...)` method. Access helpers via `self.session.utils` (I/O, spinners) and configs via `self.session.get_option(...)`.
+- Actions live in `actions/<snake>_action.py`.
+- New actions should subclass `StepwiseAction` and implement `start(args, content)` and `resume(state_token, response)`.
+  - Use `session.ui.ask_text/ask_bool/ask_choice/ask_files` for prompts (CLI blocks; Web/TUI raises `InteractionNeeded`).
+  - Use `session.ui.emit('status'|'warning'|'error'|'progress', {...})` for updates instead of `print`.
+  - Return `Completed({...})` when done; optionally return `Updates([...])` to stream intermediate events.
+  - `StepwiseAction.run(...)` remains for CLI back‑compat; it will drive `start/resume` until `Completed`.
+- Helper/internal actions that never prompt (e.g., filesystem helpers, simple runners) may still subclass `InteractionAction` and expose utility methods.
+- Access helpers via `self.session.utils` (I/O, spinners) and configs via `self.session.get_option(...)`.
+
+Minimal template (Stepwise)
+
+```python
+from base_classes import StepwiseAction, Completed
+
+class MyAction(StepwiseAction):
+    def __init__(self, session):
+        self.session = session
+
+    def start(self, args=None, content=None):
+        # Prompt for input (blocks in CLI, raises InteractionNeeded in Web/TUI)
+        name = self.session.ui.ask_text("Enter a name:")
+        # Emit an update
+        self.session.ui.emit('status', {'message': f'Creating {name}...'})
+        # Do work, then finish
+        return Completed({'ok': True, 'name': name})
+
+    def resume(self, state_token: str, response):
+        # Handle a follow‑up response for Web/TUI resumes if needed
+        return Completed({'ok': True, 'resumed': True})
+```
+
+Gating and CLI‑only flows
+- If an action is intentionally CLI‑only (interactive loops, REPLs), guard with `if not session.ui.capabilities.blocking:` and `ui.emit('warning', ...)` instead of `print`.
+- Prefer converting multi‑step/confirm flows to Stepwise so they work uniformly across Chat, Agent, Web, and TUI.
 - Assistant commands are parsed from assistant output by `assistant_commands_action.py` using blocks:
   `%%CMD%% command="echo" arguments="hello"\n...optional content...\n%%END%%`. Reference content blocks with `%%BLOCK:note%% ... %%END%%` and `block="note"`.
 - Command mapping: `{ "CMD": { "args": ["command","arguments"], "auto_submit": true, "function": {"type":"action","name":"assistant_cmd_tool"}}}` resolves to `actions/assistant_cmd_tool_action.py` → `AssistantCmdToolAction.run(args, content)`.
