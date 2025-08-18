@@ -96,7 +96,9 @@ class WebApp:
             Route('/', self.index, methods=['GET']),
             Route('/api/status', self.api_status, methods=['GET']),
             Route('/api/params', self.api_params, methods=['GET']),
+            Route('/api/models', self.api_models, methods=['GET']),
             Route('/api/chat', self.api_chat, methods=['POST']),
+            Route('/api/stream/start', self.api_stream_start, methods=['POST']),
             Route('/api/stream', self.api_stream, methods=['GET']),
             Route('/api/action/start', self.api_action_start, methods=['POST']),
             Route('/api/action/resume', self.api_action_resume, methods=['POST']),
@@ -132,6 +134,18 @@ class WebApp:
             params = {}
         # Optionally filter if needed later; for now, return as-is for local dev
         return JSONResponse({'ok': True, 'params': params})
+
+    async def api_models(self, request: Request):
+        try:
+            # Active models only by default
+            models = list((self.session.list_models(showall=False) or {}).keys())
+        except Exception:
+            models = []
+        try:
+            providers = list((self.session.list_providers(showall=False) or {}).keys())
+        except Exception:
+            providers = []
+        return JSONResponse({'ok': True, 'models': models, 'providers': providers})
 
     async def api_chat(self, request: Request):
         try:
@@ -352,6 +366,18 @@ class WebApp:
             'updates': emitted,
         })
 
+    async def api_stream_start(self, request: Request):
+        try:
+            payload: Dict[str, Any] = await request.json()
+        except Exception:
+            return PlainTextResponse('Invalid JSON', status_code=400)
+        message = (payload.get('message') or '').strip()
+        if not message:
+            return PlainTextResponse('Missing "message"', status_code=400)
+        # Issue a short-lived token carrying the message; client opens SSE with this token
+        token = self._issue_token('stream', 1, 'stream', {"message": message})
+        return JSONResponse({"ok": True, "token": token})
+
     async def api_stream(self, request: Request):
         """SSE stream: streams assistant tokens for a single message."""
         from web.output_sink import WebOutput
@@ -359,9 +385,22 @@ class WebApp:
         import json
         import threading
 
-        message = (request.query_params.get('message') or '').strip()
-        if not message:
-            return PlainTextResponse('Missing "message"', status_code=400)
+        # Prefer token-based message handoff to avoid logging sensitive content in query strings
+        token = (request.query_params.get('token') or '').strip()
+        if token:
+            st, err = self._verify_token(token)
+            if not st:
+                return JSONResponse({"ok": False, "error": {"recoverable": True, "message": err or 'Invalid token'}}, status_code=400)
+            if st.phase != 'stream':
+                return JSONResponse({"ok": False, "error": {"recoverable": True, "message": 'Invalid stream token'}}, status_code=400)
+            message = (st.data or {}).get('message') or ''
+            # Mark token used (single-use)
+            st.used = True
+        else:
+            # Backward compatibility: allow message in query param (discouraged)
+            message = (request.query_params.get('message') or '').strip()
+            if not message:
+                return PlainTextResponse('Missing "message"', status_code=400)
 
         # Early: command handling parity with /api/chat (do not open stream when handled)
         try:

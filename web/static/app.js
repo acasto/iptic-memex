@@ -7,14 +7,31 @@
 
   // Fetch status (model/provider)
   try {
-    fetch('/api/status')
+    function refreshStatus(){
+      fetch('/api/status')
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          var model = data && data.model ? data.model : 'unknown';
+          var provider = data && data.provider ? data.provider : '';
+          statusEl.textContent = 'Ready. Model: ' + model + (provider ? (' - Provider: ' + provider) : '');
+        })
+        .catch(function(){ statusEl.textContent = 'Ready.'; });
+    }
+    window.__refreshStatus = refreshStatus;
+    refreshStatus();
+    // Also fetch current params to set initial UI state (e.g., stream checkbox)
+    fetch('/api/params')
       .then(function(r){ return r.json(); })
-      .then(function(data){
-        var model = data && data.model ? data.model : 'unknown';
-        var provider = data && data.provider ? data.provider : '';
-        statusEl.textContent = 'Ready. Model: ' + model + (provider ? (' - Provider: ' + provider) : '');
+      .then(function(p){
+        try {
+          var params = (p && p.params) ? p.params : {};
+          var streamEl = document.getElementById('stream');
+          if (streamEl && typeof params.stream !== 'undefined') {
+            streamEl.checked = !!params.stream;
+          }
+        } catch (e) { /* ignore */ }
       })
-      .catch(function(){ statusEl.textContent = 'Ready.'; });
+      .catch(function(){ /* ignore */ });
   } catch(e) { statusEl.textContent = 'Ready.'; }
 
   // Enter to send, Shift+Enter for newline
@@ -102,44 +119,94 @@
 
         var valRow = document.createElement('div'); valRow.style.marginTop = '.5rem';
         var valLbl = document.createElement('label'); valLbl.textContent = 'Value:'; valLbl.style.marginRight = '.5rem';
-        var valInp = document.createElement('input'); valInp.type = 'text'; valInp.placeholder = 'e.g., gpt-4o or true'; valInp.style.minWidth = '40%';
-        valRow.appendChild(valLbl); valRow.appendChild(valInp);
+        var valField = document.createElement('span');
+        valRow.appendChild(valLbl); valRow.appendChild(valField);
         wrap.appendChild(valRow);
-
-        // Presets
-        var presetsRow = document.createElement('div'); presetsRow.style.marginTop = '.5rem';
-        var presetsLbl = document.createElement('label'); presetsLbl.textContent = 'Preset:'; presetsLbl.style.marginRight = '.5rem';
-        var presetSel = document.createElement('select');
-        ['model','provider','stream','temperature','top_p','max_tokens'].forEach(function(k){ var o=document.createElement('option'); o.value=k; o.textContent=k; presetSel.appendChild(o); });
-        presetsRow.appendChild(presetsLbl); presetsRow.appendChild(presetSel);
-        var applyPreset = document.createElement('button'); applyPreset.textContent = 'Use'; applyPreset.style.marginLeft = '.5rem'; applyPreset.onclick = function(){ nameInp.value = presetSel.value; if (presetSel.value === 'stream') { valInp.value = 'true'; } };
-        presetsRow.appendChild(applyPreset);
-        wrap.appendChild(presetsRow);
 
         // Datalist for known option names populated from /api/params
         var dataList = document.createElement('datalist'); dataList.id = 'option-names';
         wrap.appendChild(dataList);
 
         // Fetch current params and inject into datalist; also show current value hint
+        var currentParams = {};
         fetch('/api/params').then(function(r){ return r.json(); }).then(function(p){
           try {
             var params = (p && p.params) ? p.params : {};
+            currentParams = params;
             dataList.innerHTML = '';
             Object.keys(params || {}).forEach(function(k){ var opt = document.createElement('option'); opt.value = k; dataList.appendChild(opt); });
-            nameInp.addEventListener('input', function(){ var k = nameInp.value; if (params && params.hasOwnProperty(k)) { valInp.placeholder = 'current: ' + String(params[k]); } });
+            nameInp.addEventListener('input', function(){ var k = nameInp.value; updateValueControl(k, currentParams); });
           } catch(e) { /* ignore */ }
         }).catch(function(){ /* ignore */ });
+
+        // Models/providers cached for selects
+        var cachedModels = null, cachedProviders = null;
+        function fetchModels(){
+          return fetch('/api/models').then(function(r){ return r.json(); }).then(function(d){ cachedModels = (d && d.models) ? d.models : []; cachedProviders = (d && d.providers) ? d.providers : []; }).catch(function(){});
+        }
+
+        // Build appropriate value control based on option name
+        var currentValueEl = null;
+        function updateValueControl(optionName, params){
+          var p = params || {};
+          var hint = (p && optionName in p) ? ('current: ' + String(p[optionName])) : '';
+          // Clear field
+          valField.innerHTML = '';
+          currentValueEl = null;
+          if (!optionName) {
+            var inp = document.createElement('input'); inp.type = 'text'; inp.placeholder = 'value'; inp.style.minWidth = '40%';
+            valField.appendChild(inp); currentValueEl = inp; return;
+          }
+          var lower = optionName.toLowerCase();
+          if (lower === 'stream' || lower === 'colors' || lower === 'highlighting') {
+            var sel = document.createElement('select');
+            ['true','false'].forEach(function(v){ var o=document.createElement('option'); o.value=v; o.textContent=v; sel.appendChild(o); });
+            valField.appendChild(sel); currentValueEl = sel; return;
+          }
+          if (lower === 'temperature' || lower === 'top_p') {
+            var wrapCtl = document.createElement('span');
+            var rng = document.createElement('input'); rng.type='range'; rng.min='0'; rng.max='1'; rng.step='0.01'; rng.value = (lower === 'temperature' ? '0.7' : '1.0');
+            var out = document.createElement('input'); out.type='number'; out.min='0'; out.max='1'; out.step='0.01'; out.value=rng.value; out.style.width='5rem'; out.style.marginLeft='.5rem';
+            rng.oninput = function(){ out.value = rng.value; };
+            out.oninput = function(){ rng.value = out.value; };
+            wrapCtl.appendChild(rng); wrapCtl.appendChild(out);
+            if (hint) { var h = document.createElement('span'); h.textContent = '  ('+hint+')'; h.style.marginLeft='.5rem'; wrapCtl.appendChild(h); }
+            valField.appendChild(wrapCtl); currentValueEl = out; return;
+          }
+          if (lower === 'max_tokens') {
+            var num = document.createElement('input'); num.type='number'; num.min='1'; num.max='128000'; num.step='1'; num.placeholder = hint || 'e.g., 4096'; num.style.minWidth='10rem';
+            valField.appendChild(num); currentValueEl = num; return;
+          }
+          if (lower === 'model' || lower === 'provider') {
+            var sel2 = document.createElement('select'); sel2.style.minWidth='40%';
+            var ensure = function(){ if (lower === 'model') { (cachedModels||[]).forEach(function(m){ var o=document.createElement('option'); o.value=m; o.textContent=m; sel2.appendChild(o); }); }
+                                   else { (cachedProviders||[]).forEach(function(pv){ var o=document.createElement('option'); o.value=pv; o.textContent=pv; sel2.appendChild(o); }); } };
+            if (cachedModels === null || cachedProviders === null) { fetchModels().then(function(){ ensure(); }); } else { ensure(); }
+            if (hint) sel2.title = hint;
+            valField.appendChild(sel2); currentValueEl = sel2; return;
+          }
+          // Default text input
+          var inp2 = document.createElement('input'); inp2.type='text'; inp2.placeholder = hint || 'value'; inp2.style.minWidth='40%';
+          valField.appendChild(inp2); currentValueEl = inp2;
+        }
+
+        // Initialize control
+        updateValueControl('', currentParams);
 
         var btnRow = document.createElement('div'); btnRow.style.marginTop = '.75rem';
         var submit = document.createElement('button'); submit.textContent = 'Apply'; submit.onclick = function(){
           var mode = modeSel.value || 'params';
           var option = (nameInp.value || '').trim();
-          var value = (valInp.value || '').trim();
+          var value = '';
+          if (currentValueEl) {
+            if (currentValueEl.tagName === 'SELECT') value = currentValueEl.value;
+            else value = (currentValueEl.value || '').trim();
+          }
           if (!option) { renderStatus('Please enter an option name', 'warn'); return; }
           var spin = showSpinner('Applying option...');
           fetch('/api/action/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'set_option', args: { mode: mode, option: option, value: value }, content: null }) })
             .then(function(res){ if(!res.ok) return res.text().then(function(t){ throw new Error('HTTP '+res.status+': '+t); }); return res.json(); })
-            .then(function(data){ hideSpinner(spin); if (data && data.ok) { renderStatus('Option applied', 'info'); clearPanel(); } else { renderStatus('Failed to apply option', 'error'); } })
+            .then(function(data){ hideSpinner(spin); if (data && data.ok) { renderStatus('Option applied', 'info'); clearPanel(); if (window.__refreshStatus) window.__refreshStatus(); } else { renderStatus('Failed to apply option', 'error'); } })
             .catch(function(err){ hideSpinner(spin); renderStatus('Apply failed: ' + (err && err.message ? err.message : err), 'error'); });
         };
         var cancel = document.createElement('button'); cancel.textContent = 'Cancel'; cancel.style.marginLeft = '.5rem'; cancel.onclick = function(){ clearPanel(); };
@@ -222,6 +289,9 @@
           } else {
             append('assistant', textOut || '[empty]');
           }
+          // Refresh status if command affected model/provider
+          var cmd = data && data.command ? String(data.command) : '';
+          if (cmd === 'set_model' || cmd === 'set_option') { if (window.__refreshStatus) window.__refreshStatus(); }
         })
         .catch(function(err){ append('error', String(err && err.message ? err.message : err)); });
       } catch(err) {
@@ -248,36 +318,45 @@
   function startStream(text) {
     var target = append('assistant', '');
     try {
-      var es = new EventSource('/api/stream?message=' + encodeURIComponent(text));
-      es.addEventListener('token', function(ev){
-        try { var data = JSON.parse(ev.data); target.textContent += data.text; } catch (e) {}
-      });
-      es.addEventListener('error', function(ev){
-        try { var data = JSON.parse(ev.data); target.textContent += ' [error] ' + (data.message || ''); } catch (e) { target.textContent += ' [error]'; }
-        try { es.close(); } catch (e) {}
-        // Fallback to non-stream single-shot
-        fetch('/api/chat', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text}) })
-          .then(function(res){ if(!res.ok) return res.text().then(function(t){ throw new Error('HTTP '+res.status+': '+t); }); return res.json(); })
-          .then(function(data){ if (!target.textContent.trim()) target.textContent = (data && data.text) ? data.text : ''; })
-          .catch(function(){ /* ignore */ });
-      });
-      es.addEventListener('done', function(ev){
-        try {
-          var data = JSON.parse(ev.data);
-          if (!target.textContent) target.textContent = data.text || '';
-          if (data && data.updates && data.updates.length) {
-            renderUpdatesInPanel(data.updates);
-          }
-          if (data && data.handled && data.needs_interaction && data.state_token) {
-            renderInteractionInPanel(data.needs_interaction, data.state_token);
-          } else if (data && data.needs_interaction && data.state_token) {
-            renderInteractionInPanel(data.needs_interaction, data.state_token);
-          }
-        } catch (e) {}
-        es.close();
-      });
+      fetch('/api/stream/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: text }) })
+        .then(function(res){ if(!res.ok) return res.text().then(function(t){ throw new Error('HTTP '+res.status+': '+t); }); return res.json(); })
+        .then(function(init){
+          var token = init && init.token; if (!token) throw new Error('No stream token');
+          var es = new EventSource('/api/stream?token=' + encodeURIComponent(token));
+          es.addEventListener('token', function(ev){
+            try { var data = JSON.parse(ev.data); target.textContent += data.text; } catch (e) {}
+          });
+          es.addEventListener('error', function(ev){
+            try { var data = JSON.parse(ev.data); target.textContent += ' [error] ' + (data.message || ''); } catch (e) { target.textContent += ' [error]'; }
+            try { es.close(); } catch (e) {}
+            fetch('/api/chat', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text}) })
+              .then(function(res){ if(!res.ok) return res.text().then(function(t){ throw new Error('HTTP '+res.status+': '+t); }); return res.json(); })
+              .then(function(data){ if (!target.textContent.trim()) target.textContent = (data && data.text) ? data.text : ''; })
+              .catch(function(){ /* ignore */ });
+          });
+          es.addEventListener('done', function(ev){
+            try {
+              var data = JSON.parse(ev.data);
+              if (!target.textContent) target.textContent = data.text || '';
+              if (data && data.updates && data.updates.length) { renderUpdatesInPanel(data.updates); }
+              if (data && data.handled && data.needs_interaction && data.state_token) {
+                renderInteractionInPanel(data.needs_interaction, data.state_token);
+              } else if (data && data.needs_interaction && data.state_token) {
+                renderInteractionInPanel(data.needs_interaction, data.state_token);
+              }
+              var cmd = data && data.command ? String(data.command) : '';
+              if (cmd === 'set_model' || cmd === 'set_option') { if (window.__refreshStatus) window.__refreshStatus(); }
+            } catch (e) {}
+            es.close();
+          });
+        })
+        .catch(function(err){
+          fetch('/api/chat', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text}) })
+            .then(function(res){ if(!res.ok) return res.text().then(function(t){ throw new Error('HTTP '+res.status+': '+t); }); return res.json(); })
+            .then(function(data){ if (!target.textContent.trim()) target.textContent = (data && data.text) ? data.text : ''; })
+            .catch(function(){ /* ignore */ });
+        });
     } catch(err) {
-      // Fallback immediately
       fetch('/api/chat', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text}) })
         .then(function(res){ if(!res.ok) return res.text().then(function(t){ throw new Error('HTTP '+res.status+': '+t); }); return res.json(); })
         .then(function(data){ if (!target.textContent.trim()) target.textContent = (data && data.text) ? data.text : ''; })

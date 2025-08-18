@@ -183,6 +183,18 @@ Pytest
 - Web-only: `pytest -q tests/web/test_webapp.py` (or `make test-web`)
 - If missing deps: `pip install pytest starlette httpx` (no network calls in tests).
 
+Web uploads and file handling
+- Attach files via the 📎 button or drag-and-drop anywhere in the page. Files are uploaded to a temp folder and immediately loaded into context.
+- After loading, uploads are deleted from disk to avoid lingering copies; file contexts carry metadata:
+  - `name`: original filename for display (not a local path)
+  - `origin`: `'upload'`
+  - `server_path`: absolute path where the file landed (ephemeral)
+- Browsers don’t expose local absolute paths; the assistant won’t see your local path in Web mode. For editing workflows, use server‑side file tools (writes to the server’s workspace) or export/download from context (coming soon).
+
+Options panel
+- Click ⚙️ Options to set session params or tools options from a compact form.
+- Includes presets for common keys and autocompletes from `/api/params`; shows current values for quick reference.
+
 ---
 
 ## Configuration Details

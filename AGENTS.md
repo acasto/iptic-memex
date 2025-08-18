@@ -22,9 +22,10 @@
 - Prefer small, composable modules mirroring existing layout (e.g., new provider in `providers/`, new mode in `modes/`).
 
 ## Testing Guidelines
-- No formal test suite yet. Add `pytest` tests under `tests/`, mirroring module paths.
-- Name tests `test_*.py`; aim for fast, unit-level coverage around providers, parsers, and CLI mode handlers.
-- Quick smoke tests: run `python main.py --help`, `python main.py chat`, and exercise a simple prompt.
+- Unit and integration tests use `pytest` under `tests/` (mirrors module layout).
+- Quick runs: `pytest -q` (or `make test`) and Web-only: `pytest -q tests/web/` (or `make test-web`).
+- Headless smoke: `python web/selftest.py` runs a fake-session e2e for `/api/status`, `/api/chat`, SSE `/api/stream`, stepwise start→resume, and token reuse/expiry.
+- Suites cover Web (SSE done + interaction handoff, auto-submit, multi-step), TUI adapters (InteractionNeeded), TurnRunner (auto-submit/sentinel), and modes (Chat/Agent/Completion).
 
 ## Commit & PR Guidelines
 - Commits: concise, imperative mood (e.g., "Add MLX provider"; "Fix usage tracking"). Group related changes.
@@ -93,12 +94,13 @@ Gating and CLI‑only flows
   - The `TurnRunner` orchestrates the follow-up across all modes: reprocess contexts (silent when requested) → add a synthetic empty user turn → run the next assistant turn.
   - Chat, Agent, and Web (stream and non‑stream) all use the same logic; no mode‑specific drift.
 
-## Web/TUI Runner Notes (MVP)
-- Web endpoints: `/api/action/start|resume` for stepwise actions; `/api/chat` and `/api/stream` for chat.
-- Command handling: `/api/chat` matches `user_commands_action` to run action/method commands before calling the model.
-- Interactions: `InteractionNeeded` produces `{needs_interaction, state_token}`; client renders a prompt and calls `/api/action/resume`.
-- Streaming: `TurnRunner` powers streaming turns. When a tool needs interaction mid‑stream, the server sends a terminal SSE `done` event with the prompt + token; the client resumes over JSON.
-- Isolation: web-specific plumbing (output sink, token store) is confined to `web/` and does not change action code.
+## Web/TUI Runner Notes
+- Endpoints: `/api/action/start|resume` for stepwise actions; `/api/chat` (non-stream) and `/api/stream` (SSE).
+- Command handling: `/api/chat` first matches `user_commands_action` to run actions/methods (e.g., `set model ...`) without contacting the LLM.
+- Interactions: `InteractionNeeded` yields `{needs_interaction, state_token}`; the client renders a widget and resumes via `/api/action/resume`. A cancel endpoint marks the token used.
+- Streaming: `TurnRunner` powers SSE. If a tool requests interaction mid‑stream, the server sends a terminal `done` event with `{needs_interaction, state_token}`; the client resumes via JSON.
+- Secure streaming start: the browser POSTs `/api/stream/start` with `{message}` and receives a short‑lived HMAC token; it then opens `EventSource('/api/stream?token=...')` to avoid logging sensitive content in URLs.
+- UI/UX: Web renders an updates/interaction panel (status/warning/error/progress) separate from the chat log, with Cancel and close controls. Attachments: 📎 button and drag‑and‑drop upload to `/api/upload`, then call `load_file` with server paths to skip prompts. Uploaded files are read into context and deleted immediately; file contexts record `{name, origin:'upload', server_path}`.
 
 ## Action Conversion Checklist
 - Replace stdin/stdout with `session.ui.ask_*` and `session.ui.emit(...)`.
