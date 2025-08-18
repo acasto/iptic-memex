@@ -1,11 +1,11 @@
-from base_classes import InteractionAction
+from base_classes import StepwiseAction, Completed
 import re
 import subprocess
 import tempfile
 import os
 
 
-class RunCodeAction(InteractionAction):
+class RunCodeAction(StepwiseAction):
     def __init__(self, session):
         self.session = session
         self.chat = session.get_context('chat')
@@ -17,31 +17,78 @@ class RunCodeAction(InteractionAction):
             # Add more languages here in the future
         }
 
-    def run(self, args=None):
-        n = 1  # Default to last message
-        if args and len(args) > 0:
+    def start(self, args=None, content=None) -> Completed:
+        n = 1
+        if isinstance(args, (list, tuple)) and args:
             try:
                 n = int(args[0])
-            except ValueError:
-                print("Invalid argument. Using default.")
+            except Exception:
+                n = 1
+        elif isinstance(args, dict):
+            try:
+                n = int(args.get('n', 1))
+            except Exception:
+                n = 1
 
-        # turns = self.chat.get()[-n:]
         turns = self.chat.get()
-        code_blocks = self.extract_code_blocks(turns)
+        code_blocks = self.extract_code_blocks(turns[-(n*10):] if turns else [])
 
         if not code_blocks:
-            print("No code blocks found in the recent messages.")
-            return
+            try:
+                self.session.ui.emit('status', {'message': 'No code blocks found in the recent messages.'})
+            except Exception:
+                pass
+            return Completed({'ok': False, 'error': 'no_blocks'})
 
         if len(code_blocks) > 1:
-            selected_block = self.select_code_block(code_blocks)
+            # Build choice labels with previews
+            options = []
+            mapping = {}
+            for i, block in enumerate(code_blocks, 1):
+                label = self.create_preview(block)
+                key = f"{i}"
+                mapping[key] = block
+                options.append(key + ': ' + label.replace('\n', ' '))
+            choice = self.session.ui.ask_choice('Multiple code blocks found. Select one:', options, default=options[0])
+            # Extract index
+            try:
+                idx = int(str(choice).split(':', 1)[0]) - 1
+                selected_block = code_blocks[idx]
+            except Exception:
+                selected_block = code_blocks[0]
         else:
             selected_block = code_blocks[0]
 
-        if selected_block:
-            output = self.run_code_block(selected_block)
-            if output:
-                self.offer_to_save_output(output)
+        output = self.run_code_block(selected_block)
+        if output:
+            # Ask to save only in blocking UIs
+            if getattr(self.session.ui.capabilities, 'blocking', False):
+                if self.session.ui.ask_bool('Save this output to context?', default=False):
+                    name = self.session.ui.ask_text('Context name:', default='Code Output')
+                    self._save_output(name, output)
+                    try:
+                        self.session.ui.emit('status', {'message': f"Output saved as '{name}'"})
+                    except Exception:
+                        pass
+            return Completed({'ok': True, 'saved': False, 'output': output})
+        return Completed({'ok': False, 'error': 'execution_failed'})
+
+    def resume(self, state_token: str, response) -> Completed:
+        # For Web/TUI: first resume is from ask_choice selection label
+        if isinstance(response, dict) and 'response' in response:
+            response = response['response']
+        # Recompute blocks and choose based on label index
+        turns = self.chat.get()
+        code_blocks = self.extract_code_blocks(turns)
+        try:
+            idx = int(str(response).split(':', 1)[0]) - 1
+            selected_block = code_blocks[idx]
+        except Exception:
+            selected_block = code_blocks[0] if code_blocks else None
+        if not selected_block:
+            return Completed({'ok': False, 'error': 'no_blocks'})
+        output = self.run_code_block(selected_block)
+        return Completed({'ok': True, 'output': output})
 
     def extract_code_blocks(self, turns):
         # Combine all assistant messages into one text to handle multi-turn code blocks
@@ -96,27 +143,15 @@ class RunCodeAction(InteractionAction):
         return f"Language: {language or 'unspecified'}\n{preview}"
 
     def select_code_block(self, code_blocks):
-        print("Multiple code blocks found. Please select one (or 'q' to quit):")
-        for i, block in enumerate(code_blocks, 1):
-            preview = self.create_preview(block)
-            print(f"{i}.{preview}\n")
-
-        while True:
-            choice = input("Enter the number of the code block you want to run: ")
-            if choice.lower() == 'q':
-                return None
-            try:
-                choice_num = int(choice)
-                if 1 <= choice_num <= len(code_blocks):
-                    return code_blocks[choice_num - 1]
-                else:
-                    print("Invalid choice. Please try again.")
-            except ValueError:
-                print("Invalid input. Please enter a number or 'q' to quit.")
+        # Legacy path unused; selection handled via ask_choice in start/resume
+        return None
 
     def run_code_block(self, code_block):
         if code_block is None:
-            print("Code execution cancelled.")
+            try:
+                self.session.ui.emit('status', {'message': 'Code execution cancelled.'})
+            except Exception:
+                pass
             return None
 
         language, code = code_block
@@ -124,16 +159,27 @@ class RunCodeAction(InteractionAction):
             language = self.guess_language(code)
 
         if language not in self.supported_languages:
-            print(f"Unsupported language: {language}")
+            try:
+                self.session.ui.emit('error', {'message': f"Unsupported language: {language}"})
+            except Exception:
+                pass
             return None
 
-        print(f"Language: {language}")
-        print("Code to be executed:")
-        print(code)
-        confirm = input("Do you want to run this code? (y/n): ")
-        if confirm.lower() != 'y':
-            print("Code execution cancelled.")
-            return None
+        # Confirm execution in blocking UI only
+        if getattr(self.session.ui.capabilities, 'blocking', False):
+            try:
+                self.session.ui.emit('status', {'message': f"Language: {language}"})
+                self.session.ui.emit('status', {'message': 'Code to be executed:'})
+                self.session.ui.emit('status', {'message': code})
+            except Exception:
+                pass
+            confirm = self.session.ui.ask_bool('Do you want to run this code?', default=False)
+            if not confirm:
+                try:
+                    self.session.ui.emit('status', {'message': 'Code execution cancelled.'})
+                except Exception:
+                    pass
+                return None
 
         lang_info = self.supported_languages[language]
         with tempfile.NamedTemporaryFile(mode='w', suffix=lang_info['extension'], delete=False) as temp_file:
@@ -143,31 +189,34 @@ class RunCodeAction(InteractionAction):
         try:
             command = [lang_info['command'], temp_file_path]
             result = subprocess.run(command, capture_output=True, text=True, timeout=30)
-            print("\nExecution Result:")
-            print(result.stdout)
-            if result.stderr:
-                print("Errors:")
-                print(result.stderr)
-            return f"Stdout:\n{result.stdout}\n\nStderr:\n{result.stderr}"
+            output = f"Stdout:\n{result.stdout}\n\nStderr:\n{result.stderr}"
+            try:
+                self.session.ui.emit('status', {'message': '\nExecution Result:'})
+                self.session.ui.emit('status', {'message': result.stdout})
+                if result.stderr:
+                    self.session.ui.emit('warning', {'message': 'Errors:'})
+                    self.session.ui.emit('status', {'message': result.stderr})
+            except Exception:
+                pass
+            return output
         except subprocess.TimeoutExpired:
-            print("Execution timed out after 30 seconds.")
+            try:
+                self.session.ui.emit('error', {'message': 'Execution timed out after 30 seconds.'})
+            except Exception:
+                pass
         except Exception as e:
-            print(f"An error occurred: {str(e)}")
+            try:
+                self.session.ui.emit('error', {'message': f"An error occurred: {str(e)}"})
+            except Exception:
+                pass
         finally:
             os.unlink(temp_file_path)
 
         return None
 
     def offer_to_save_output(self, output):
-        save_output = input("Do you want to save this output to context? (y/n): ")
-        if save_output.lower() == 'y':
-            context_name = input("Enter a name for this output context (default: 'Code Output'): ") or "Code Output"
-            self.session.add_context('multiline_input', {
-                'name': context_name,
-                'content': output
-            })
-            print(f"Output saved to context as '{context_name}'")
-
+        # Deprecated in Stepwise path; kept for compatibility if referenced elsewhere
+        pass
     def guess_language(self, code):
         # Simple language guessing based on common patterns
         if code.strip().startswith('#!/bin/bash') or 'echo' in code:

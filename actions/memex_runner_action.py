@@ -44,5 +44,8 @@ class MemexRunnerAction(InteractionAction):
             result = subprocess.run(command, **final_kwargs)
             return result
         except (subprocess.SubprocessError, FileNotFoundError) as e:
-            print(f"Error running memex command: {e}")
+            try:
+                self.session.ui.emit('error', {'message': f"Error running memex command: {e}"})
+            except Exception:
+                pass
             return None

@@ -16,6 +16,7 @@ envisioned a device that would compress and store all of their knowledge. https:
   - **Completion Mode**: For simple, one-shot queries, pipe your input directly into Memex. Useful for scripting and building LLM powered tools (e.g., summarize a file, describe an image)
   - **Completion Mode with Raw Response**: Get raw responses from an LLM provider, useful for debugging or when you need to access additional parts of the response object such as citations.
   - **Agent Mode (N-turn, non-interactive)**: Run up to N assistant turns with tool calls and configurable write policy; stream every turn or print only the final answer.
+  - **Web/TUI (MVP)**: Stepwise interactions backed by a shared TurnRunner. Actions prompt via UI adapters (ask_*), and the server handles `needs_interaction` handoffs.
   
 - **Advanced Context Management**
   - Load content from text files, PDFs, DOCX, XLSX, and even images.
@@ -50,6 +51,7 @@ envisioned a device that would compress and store all of their knowledge. https:
   - A modular design that lets you easily extend or customize functionalities.
   - Support for user actions that can override or extend core actions, register user or assistant commands, and more.
   - An extensible SQLite persistence layer (currently used for stats and memories). 
+  - Mode-agnostic actions: Most actions are now Stepwise and use UI adapters (`ask_text/ask_bool/ask_choice/ask_files`, `emit`). CLI retains richer loops; Web/TUI receive structured prompts.
 
 ---
 
@@ -144,7 +146,7 @@ See [INSTALL.md](INSTALL.md) for details on how to adjust requirements.txt as ne
     echo "Refactor the code and list changes" | python main.py --steps 2 -f -
     ```
 
-- **Chat Mode Quick Reference**
+  - **Chat Mode Quick Reference**
   - **Context Loading**
     - `load file`, `load pdf`, `load doc`, `load sheet`, `load code`, `load multiline`, `load image` Import content from various file types or multiline text.
     - `load web`, `load soup`, `load search`  Add web content or perform a web search with summarized results.
@@ -163,9 +165,13 @@ See [INSTALL.md](INSTALL.md) for details on how to adjust requirements.txt as ne
     - `show settings`, `show settings tools`, `show models`, `show messages`, `show usage`, `show cost` Inspect current configuration, active models, message history, token usage, and costs.
     - `set option`, `set option tools` Dynamically modify core settings and tool settings. 
   - **Integrated Tools**
-    - `run code` Extract and execute code blocks (Python or Bash) from the assistant’s response (requires confirmation).
-    - `save code` Save code blocks from the assistant’s response to a file.
-    - `run command` Run an arbitrary shell command from the user side to include the output for the assistant.
+   - `run code` Extract and execute code blocks (Python or Bash) from the assistant’s response (requires confirmation).
+   - `save code` Save code blocks from the assistant’s response to a file.
+   - `run command` Run an arbitrary shell command from the user side to include the output for the assistant.
+  
+Notes:
+- Web/TUI streaming is MVP. When actions need input mid-stream, the server emits a terminal `done` SSE with a `needs_interaction` token; the client resumes over JSON.
+- A few advanced, loop-heavy commands are intentionally CLI-only today (e.g., `manage_chats`, `save_code`, examples `debug_storage`). Web/TUI will display a friendly warning if invoked.
 
 ---
 

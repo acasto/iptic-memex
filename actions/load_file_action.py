@@ -1,59 +1,127 @@
-# load_file_action.py
+"""Load file action (stepwise-capable).
+
+Converted to StepwiseAction with CLI-backward-compatible behavior.
+"""
+
+from __future__ import annotations
+
 import os
 import glob
-from base_classes import InteractionAction
+from typing import Any, Dict, List
+
+from base_classes import StepwiseAction, Completed, Updates
 
 
-class LoadFileAction(InteractionAction):
+class LoadFileAction(StepwiseAction):
     def __init__(self, session):
         self.session = session
         self.tc = session.utils.tab_completion
         self.tc.set_session(session)
         self.utils = session.utils
 
-    def run(self, args: list = None):
-        """
-        Loads a specified file (or files) into the session as a 'file' context.
-        If no args are passed, prompts the user repeatedly to enter a filename
-        or 'q' to quit. Uses the new input handler to gather user input instead
-        of raw input().
-        """
-        # If the user didn't specify any arguments, prompt them
-        if not args:
-            # Switch tab completion to 'file_path' mode
-            self.tc.run('file_path')
+    def _load_files(self, patterns: List[str]) -> List[str]:
+        loaded: List[str] = []
+        for pat in patterns:
+            matches = glob.glob(pat)
+            for path in matches:
+                if os.path.isfile(path):
+                    self.session.add_context('file', path)
+                    loaded.append(path)
+        return loaded
 
-            while True:
-                # Use the new input handler for user input
-                filename = self.utils.input.get_input(
-                    prompt="Enter filename (or q to exit): ",
-                    multiline=False,
-                    allow_empty=True  # Let them press Enter with no input
-                )
-
-                if filename.lower() == 'q':
-                    # Switch back to chat mode
-                    self.tc.run('chat')
-                    break
-
-                # Use glob to find matching files
-                files = glob.glob(filename)
-                if files:
-                    for file in files:
-                        if os.path.isfile(file):
-                            self.session.add_context('file', file)
-                    # Switch tab completion back to chat mode
-                    self.tc.run('chat')
-                    break
-                else:
-                    print(f"No files found matching '{filename}'. Please try again.")
-
-            return
-
-        # If there are args, join them into a single filename and load
-        filename = ' '.join(args)
-        if os.path.isfile(filename):
-            self.session.add_context('file', filename)
+    # CLI: run remains supported via StepwiseAction driver
+    def start(self, args: Dict | List[str] | None = None, content: Any | None = None) -> Completed | Updates:
+        # If args provided, treat them as file patterns
+        if args:
+            patterns: List[str]
+            if isinstance(args, list):
+                patterns = args
+            elif isinstance(args, dict):
+                patterns = args.get('files') or []
+                if isinstance(patterns, str):
+                    patterns = [patterns]
+                if not patterns and 'pattern' in args:
+                    patterns = [str(args['pattern'])]
+            else:
+                patterns = []
+            loaded = self._load_files(patterns)
             self.tc.run('chat')
-        else:
-            print(f"File '{filename}' not found.")
+            return Completed({'ok': True, 'loaded': loaded})
+
+        # Interactive path
+        self.tc.run('file_path')
+        from base_classes import InteractionNeeded
+        try:
+            filename = self.session.ui.ask_text("Enter filename (or q to exit): ")
+        except InteractionNeeded:
+            # Propagate to Web/TUI so the server can return needs_interaction
+            raise
+        except Exception:
+            # If UI not set or any other error, fall back to input handler (CLI)
+            filename = self.utils.input.get_input(prompt="Enter filename (or q to exit): ")
+
+        if filename.lower().strip() == 'q':
+            self.tc.run('chat')
+            return Completed({'ok': True, 'loaded': [], 'cancelled': True})
+
+        # In CLI we can loop if nothing found to mirror old behavior
+        if isinstance(self.session.ui.__class__.__name__, str) and getattr(self.session.ui, 'ask_text', None):
+            # Try once; if no matches in CLI, reprompt until found or quit
+            if hasattr(self.session.ui, 'capabilities'):
+                pass  # no-op; simple attempt below
+
+        files = glob.glob(filename)
+        if not files:
+            # In blocking UIs (CLI), re-prompt synchronously
+            is_blocking = False
+            try:
+                is_blocking = bool(getattr(self.session.ui, 'capabilities', None) and self.session.ui.capabilities.blocking)
+            except Exception:
+                is_blocking = False
+            if is_blocking:
+                while True:
+                    self.utils.output.warning(f"No files found matching '{filename}'. Please try again.")
+                    filename = self.utils.input.get_input(prompt="Enter filename (or q to exit): ")
+                    if filename.lower().strip() == 'q':
+                        self.tc.run('chat')
+                        return Completed({'ok': True, 'loaded': [], 'cancelled': True})
+                    files = glob.glob(filename)
+                    if files:
+                        break
+            else:
+                # Web/TUI will have thrown InteractionNeeded earlier; return empty
+                self.tc.run('chat')
+                return Completed({'ok': True, 'loaded': []})
+
+        loaded = []
+        for file in files:
+            if os.path.isfile(file):
+                self.session.add_context('file', file)
+                loaded.append(file)
+        self.tc.run('chat')
+        return Completed({'ok': True, 'loaded': loaded})
+
+    def resume(self, state_token: str, response: Any) -> Completed | Updates:
+        # Expect response to be a filename string or list of patterns
+        patterns: List[str] = []
+        if isinstance(response, str):
+            patterns = [response]
+        elif isinstance(response, list):
+            patterns = [str(x) for x in response]
+        elif isinstance(response, dict):
+            # Support nested {'response': value}
+            val = response.get('response')
+            if isinstance(val, (str, list)):
+                if isinstance(val, str):
+                    patterns = [val]
+                else:
+                    patterns = [str(x) for x in val]
+            else:
+                r = response.get('files') or response.get('pattern') or response.get('filename')
+                if isinstance(r, str):
+                    patterns = [r]
+                elif isinstance(r, list):
+                    patterns = [str(x) for x in r]
+        loaded = self._load_files(patterns)
+        self.tc.run('chat')
+        return Completed({'ok': True, 'loaded': loaded, 'resumed': True})

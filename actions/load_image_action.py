@@ -1,9 +1,9 @@
 import os
 import subprocess
-from base_classes import InteractionAction
+from base_classes import StepwiseAction, Completed
 
 
-class LoadImageAction(InteractionAction):
+class LoadImageAction(StepwiseAction):
     """Action for loading images into context"""
 
     def __init__(self, session):
@@ -12,40 +12,51 @@ class LoadImageAction(InteractionAction):
         self.tc.set_session(session)
         self.supported_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif')
 
-    def run(self, args: list = None):
-        """Load and optionally summarize image file(s)"""
-        # Check if this is a summary request or if we should fall back to summary
+    def start(self, args: list | dict | None = None, content=None) -> Completed:
+        """Load and optionally summarize image file(s) (Stepwise)."""
         model = self.session.get_params().get('model')
-        force_summary = args and args[0] == "summary"
+        force_summary = False
+        filename = None
+        if isinstance(args, (list, tuple)):
+            if args and str(args[0]).lower() == 'summary':
+                force_summary = True
+                args = args[1:]
+            if args:
+                filename = " ".join(str(a) for a in args)
+        elif isinstance(args, dict):
+            force_summary = bool(args.get('summary'))
+            filename = args.get('file') or args.get('path')
+
         use_summary = force_summary or not (model and self.session.get_option_from_model('vision', model))
 
-        if use_summary:
-            args = args[1:] if force_summary and len(args) > 1 else args
-
-        # Rest of the file loading logic...
-        if not args:
+        if not filename:
             self.tc.run('image')
-            while True:
-                filename = self.session.utils.input.get_input(
-                    prompt="Enter image filename (or q to exit): ",
-                    multiline=False,
-                    allow_empty=True
-                )
+            filename = self.session.ui.ask_text("Enter image filename (or q to exit): ")
+            if str(filename).strip().lower() == 'q':
+                self.tc.run('chat')
+                return Completed({'ok': True, 'cancelled': True})
 
-                if filename.lower() == 'q':
-                    self.tc.run('chat')
-                    break
+        if not os.path.isfile(str(filename)):
+            try:
+                self.session.ui.emit('error', {'message': f"Image file '{filename}' not found."})
+            except Exception:
+                pass
+            self.tc.run('chat')
+            return Completed({'ok': False, 'error': 'not_found', 'file': filename})
 
-                if os.path.isfile(filename):
-                    if use_summary:
-                        self._summarize_image(filename)
-                    else:
-                        self.session.add_context('image', filename)
-                    self.tc.run('chat')
-                    break
-                else:
-                    print(f"Image file '{filename}' not found.")
-            return
+        if use_summary:
+            self._summarize_image(str(filename))
+            result = {'ok': True, 'mode': 'summary', 'file': str(filename)}
+        else:
+            self.session.add_context('image', str(filename))
+            try:
+                self.session.ui.emit('status', {'message': f"Loaded image: {filename}"})
+            except Exception:
+                pass
+            result = {'ok': True, 'mode': 'image', 'file': str(filename)}
+
+        self.tc.run('chat')
+        return Completed(result)
 
     def _summarize_image(self, image_path):
         """Helper method to get summary of an image"""
@@ -53,15 +64,34 @@ class LoadImageAction(InteractionAction):
             vision_prompt = self.session.get_tools().get('vision_prompt')
             vision_model = self.session.get_tools().get('vision_model')
             if not vision_model:
-                print("No vision model configured")
+                try:
+                    self.session.ui.emit('error', {'message': 'No vision model configured'})
+                except Exception:
+                    pass
                 return
             if not vision_prompt:
-                print("No vision prompt configured")
+                try:
+                    self.session.ui.emit('error', {'message': 'No vision prompt configured'})
+                except Exception:
+                    pass
                 return
 
-            result = subprocess.run(['memex', '-m', vision_model, '-p', vision_prompt, '-f', image_path],
-                                    capture_output=True, text=True)
-            summary = result.stdout if result.returncode == 0 else f"Error: {result.stderr}"
+            # Prefer MemexRunnerAction if available
+            summary = None
+            try:
+                runner = self.session.get_action('memex_runner')
+                res = runner.run('-m', vision_model, '-p', vision_prompt, '-f', image_path, check=False)
+                if res and hasattr(res, 'stdout'):
+                    summary = res.stdout
+                elif res and hasattr(res, 'returncode') and res.returncode != 0 and hasattr(res, 'stderr'):
+                    summary = f"Error: {res.stderr}"
+            except Exception:
+                # Fallback to subprocess directly
+                try:
+                    result = subprocess.run(['memex', '-m', vision_model, '-p', vision_prompt, '-f', image_path], capture_output=True, text=True)
+                    summary = result.stdout if result.returncode == 0 else f"Error: {result.stderr}"
+                except Exception as e2:
+                    summary = f"Error: {e2}"
 
             # Add the summary as raw text context
             self.session.add_context('multiline_input', {
@@ -70,10 +100,7 @@ class LoadImageAction(InteractionAction):
             })
 
         except subprocess.SubprocessError as e:
-            self.session.add_context('assistant', {
-                'name': 'file_tool_error',
-                'content': f'Failed to get file summary: {str(e)}'
-            })
+            self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Failed to get file summary: {str(e)}'})
 
     @staticmethod
     def can_run(session) -> bool:

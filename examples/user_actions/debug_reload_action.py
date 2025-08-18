@@ -17,7 +17,10 @@ class DebugReloadAction(InteractionAction):
     def run(self, args=None):
         registry = getattr(self.session, "_registry", None)
         if registry is None:
-            print("Registry not available; cannot reload")
+            try:
+                self.session.ui.emit('error', {'message': 'Registry not available; cannot reload'})
+            except Exception:
+                pass
             return
 
         # Clear action class cache
@@ -25,7 +28,10 @@ class DebugReloadAction(InteractionAction):
         try:
             registry._action_cache.clear()
         except Exception as e:
-            print(f"Error clearing action cache: {e}")
+            try:
+                self.session.ui.emit('error', {'message': f"Error clearing action cache: {e}"})
+            except Exception:
+                pass
 
         # Clear loaded context classes
         context_count = len(getattr(registry, "_context_classes", {}))
@@ -34,7 +40,10 @@ class DebugReloadAction(InteractionAction):
             # Re-scan contexts directory for fresh classes on demand
             # Actual (re)loading occurs lazily when contexts are requested.
         except Exception as e:
-            print(f"Error clearing context classes: {e}")
+            try:
+                self.session.ui.emit('error', {'message': f"Error clearing context classes: {e}"})
+            except Exception:
+                pass
 
         # Clear prompt resolver cache if available
         prompt_cleared = False
@@ -46,10 +55,8 @@ class DebugReloadAction(InteractionAction):
         except Exception:
             pass
 
-        print(
-            "Reloaded: "
-            f"actions={action_count} contexts={context_count}"
-            + (" prompts=cleared" if prompt_cleared else "")
-        )
-        print("Changes will apply on next use of each component.")
-
+        try:
+            self.session.ui.emit('status', {'message': "Reloaded: " + f"actions={action_count} contexts={context_count}" + (" prompts=cleared" if prompt_cleared else "")})
+            self.session.ui.emit('status', {'message': 'Changes will apply on next use of each component.'})
+        except Exception:
+            pass

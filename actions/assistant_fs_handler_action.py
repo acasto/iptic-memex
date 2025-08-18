@@ -84,6 +84,22 @@ class AssistantFsHandlerAction(InteractionAction):
             return None
         return self.fs.read_file(resolved_path, binary=binary, encoding=encoding)
 
+    def _confirm(self, prompt: str, default: bool = False) -> bool:
+        """Ask for confirmation via the UI adapter; fallback to CLI input if needed."""
+        ui = getattr(self.session, 'ui', None)
+        if ui and hasattr(ui, 'ask_bool'):
+            from base_classes import InteractionNeeded
+            try:
+                return bool(ui.ask_bool(prompt, default=default))
+            except InteractionNeeded:
+                # Propagate to Web/TUI so the mode can respond with needs_interaction
+                raise
+            except Exception:
+                # Fall through to CLI input on non-interaction errors
+                pass
+        # Fallback to legacy CLI input handler
+        return bool(self.session.utils.input.get_bool(prompt, default=default))
+
     def write_file(self, file_path: str, content, binary=False, encoding='utf-8',
                    create_dirs=False, append=False, force=False):
         """Write to a file with path validation and optional confirmation"""
@@ -120,8 +136,7 @@ class AssistantFsHandlerAction(InteractionAction):
             if not force and needs_confirm:
                 self.session.utils.output.stop_spinner()
                 mode = "append to" if append else "overwrite"
-                if not self.session.utils.input.get_bool(f"File {file_path} exists. Confirm {mode}? [y/N]: ",
-                                                         default=False):
+                if not self._confirm(f"File {file_path} exists. Confirm {mode}? [y/N]: ", default=False):
                     self.session.add_context('assistant', {
                         'name': 'fs_info',
                         'content': f'File operation cancelled by user'
@@ -129,7 +144,7 @@ class AssistantFsHandlerAction(InteractionAction):
                     return False
         elif not force and needs_confirm:
             self.session.utils.output.stop_spinner()
-            if not self.session.utils.input.get_bool(f"Confirm write to new file {file_path}? [y/N]: ", default=False):
+            if not self._confirm(f"Confirm write to new file {file_path}? [y/N]: ", default=False):
                 self.session.add_context('assistant', {
                     'name': 'fs_info',
                     'content': f'File operation cancelled by user'
@@ -213,7 +228,7 @@ class AssistantFsHandlerAction(InteractionAction):
 
         if not force and self.session.get_tools().get('write_confirm', True):
             self.session.utils.output.stop_spinner()
-            if not self.session.utils.input.get_bool(f"Confirm delete file {file_path}? [y/N]: ", default=False):
+            if not self._confirm(f"Confirm delete file {file_path}? [y/N]: ", default=False):
                 self.session.add_context('assistant', {
                     'name': 'fs_info',
                     'content': f'File deletion cancelled by user'
@@ -231,7 +246,7 @@ class AssistantFsHandlerAction(InteractionAction):
         if not force and self.session.get_tools().get('write_confirm', True):
             self.session.utils.output.stop_spinner()
             operation = "recursively delete" if recursive else "delete"
-            if not self.session.utils.input.get_bool(f"Confirm {operation} directory {dir_path}? [y/N]: ", default=False):
+            if not self._confirm(f"Confirm {operation} directory {dir_path}? [y/N]: ", default=False):
                 self.session.add_context('assistant', {
                     'name': 'fs_info',
                     'content': f'Directory deletion cancelled by user'
@@ -252,7 +267,7 @@ class AssistantFsHandlerAction(InteractionAction):
 
         if not force and self.session.get_tools().get('write_confirm', True):
             self.session.utils.output.stop_spinner()
-            if not self.session.utils.input.get_bool(f"Confirm rename {old_path} to {new_path}? [y/N]: ", default=False):
+            if not self._confirm(f"Confirm rename {old_path} to {new_path}? [y/N]: ", default=False):
                 self.session.add_context('assistant', {
                     'name': 'fs_info',
                     'content': f'Rename operation cancelled by user'
@@ -273,7 +288,7 @@ class AssistantFsHandlerAction(InteractionAction):
 
         if not force and self.session.get_tools().get('write_confirm', True):
             self.session.utils.output.stop_spinner()
-            if not self.session.utils.input.get_bool(f"Confirm copy {src_path} to {dst_path}? [y/N]: ", default=False):
+            if not self._confirm(f"Confirm copy {src_path} to {dst_path}? [y/N]: ", default=False):
                 self.session.add_context('assistant', {
                     'name': 'fs_info',
                     'content': f'Copy operation cancelled by user'

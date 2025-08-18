@@ -1,16 +1,16 @@
-from base_classes import InteractionAction
+from __future__ import annotations
+
+from base_classes import StepwiseAction, Completed
 import subprocess
 import os
 import tempfile
+from typing import Any, Dict
 
 
-class AssistantFileToolAction(InteractionAction):
+class AssistantFileToolAction(StepwiseAction):
     """
-    Action for handling file operations with different modes:
-    - read: Read file into context
-    - write: Write content to file
-    - append: Append content to file
-    - summary: Run command through subprocess on file
+    File operations with optional confirmations, stepwise-capable for Web/TUI.
+    Modes: read, write, append, edit, summarize, delete, rename, copy
     """
 
     def __init__(self, session):
@@ -19,139 +19,149 @@ class AssistantFileToolAction(InteractionAction):
         self.token_counter = session.get_action('count_tokens')
         self.memex_runner = session.get_action('memex_runner')
 
-    def run(self, args: dict, content: str = ""):
-        mode = args.get('mode', '').lower()
+    # ---- Stepwise protocol -------------------------------------------------
+    def start(self, args: Dict, content: str = "") -> Completed:
+        mode = str(args.get('mode', '')).lower()
         filename = args.get('file', '')
-
         if not filename:
-            self.session.add_context('assistant', {
-                'name': 'file_tool_error',
-                'content': 'No filename provided'
-            })
-            return
+            self.session.add_context('assistant', {'name': 'file_tool_error', 'content': 'No filename provided'})
+            return Completed({'ok': False, 'error': 'No filename provided'})
 
-        mode_handlers = {
+        handlers = {
             'read': self._handle_read,
             'write': lambda f: self._handle_write(f, content),
             'edit': lambda f: self._handle_edit(f, content),
             'append': lambda f: self._handle_append(f, content),
             'summarize': self._handle_summary,
-            'delete': lambda f: self._handle_delete(f, args.get('recursive', '').lower() == 'true'),
+            'delete': lambda f: self._handle_delete(f, str(args.get('recursive', '')).lower() == 'true'),
             'rename': lambda f: self._handle_rename(f, args.get('new_name')),
             'copy': lambda f: self._handle_copy(f, args.get('new_name')),
         }
+        handler = handlers.get(mode)
+        if not handler:
+            self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Invalid mode: {mode}'})
+            return Completed({'ok': False, 'error': f'Invalid mode: {mode}'})
+        if mode in ('rename', 'copy') and not args.get('new_name'):
+            self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'New name required for {mode} operation'})
+            return Completed({'ok': False, 'error': f'New name required for {mode} operation'})
+        handler(filename)
+        return Completed({'ok': True, 'mode': mode, 'file': filename})
 
-        handler = mode_handlers.get(mode)
-        if handler:
-            # For rename and copy, we need to check for new_name before calling the handler
-            if mode in ['rename', 'copy'] and not args.get('new_name'):
-                self.session.add_context('assistant', {
-                    'name': 'file_tool_error',
-                    'content': f'New name required for {mode} operation'
-                })
-                return
-            handler(filename)
-        else:
-            self.session.add_context('assistant', {
-                'name': 'file_tool_error',
-                'content': f'Invalid mode: {mode}'
-            })
+    def resume(self, state_token: str, response: Any) -> Completed:
+        try:
+            if isinstance(response, dict) and 'state' in response:
+                state = response.get('state') or {}
+                args = (state.get('args') or {})
+                content = (state.get('content') or '')
+                user_resp = response.get('response')
+                if isinstance(user_resp, bool) and not user_resp:
+                    self.session.add_context('assistant', {'name': 'file_tool_result', 'content': 'User canceled operation'})
+                    return Completed({'ok': True, 'canceled': True})
 
-    def _handle_read(self, filename):
+                mode = str(args.get('mode', '')).lower()
+                filename = args.get('file') or args.get('path') or ''
+                if mode in ('write', 'append'):
+                    if mode == 'write':
+                        self._handle_write(filename, content, force=True)
+                    else:
+                        self._handle_append(filename, content, force=True)
+                    return Completed({'ok': True, 'mode': mode, 'file': filename, 'confirmed': True})
+                if mode == 'delete':
+                    recursive = str(args.get('recursive', '')).lower() == 'true'
+                    self._handle_delete(filename, recursive, force=True)
+                    return Completed({'ok': True, 'mode': mode, 'file': filename, 'confirmed': True})
+                if mode == 'rename':
+                    new_name = args.get('new_name')
+                    self._handle_rename(filename, new_name, force=True)
+                    return Completed({'ok': True, 'mode': mode, 'file': filename, 'new_name': new_name, 'confirmed': True})
+                if mode == 'copy':
+                    new_name = args.get('new_name')
+                    self._handle_copy(filename, new_name, force=True)
+                    return Completed({'ok': True, 'mode': mode, 'file': filename, 'new_name': new_name, 'confirmed': True})
+                if mode == 'read':
+                    if filename:
+                        self.session.add_context('file', filename)
+                        try:
+                            self.session.ui.emit('status', {'message': f'Loaded file: {filename}'})
+                        except Exception:
+                            pass
+                        return Completed({'ok': True, 'file': filename, 'confirmed': True})
+                    return Completed({'ok': False, 'error': 'Missing filename on resume'})
+        except Exception:
+            pass
+        return Completed({'ok': True, 'resumed': True})
+
+    # ---- Handlers ----------------------------------------------------------
+    def _handle_read(self, filename: str) -> None:
+        try:
+            self.session.ui.emit('progress', {'progress': 0.1, 'message': f'Reading {filename}...'})
+        except Exception:
+            pass
         content = self.fs_handler.read_file(filename)
-        if content is not None:
-            token_count = self.token_counter.count_tiktoken(content)
-            limit = int(self.session.get_tools().get('large_input_limit', 4000))
+        if content is None:
+            self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Failed to read file: {filename}'})
+            return
 
-            if token_count > limit:
-                if self.session.get_tools().get('confirm_large_input', True):
-                    self.session.set_flag('auto_submit', False)
-                    self.session.utils.output.write(
-                        f"File exceeds token limit ({limit}) for assistant. Auto-submit disabled.")
-                else:
-                    self.session.add_context('assistant', {
-                        'name': 'file_tool_error',
-                        'content': f'File exceeds token limit ({limit}). Consider using head/tail commands instead.'
-                    })
+        token_count = self.token_counter.count_tiktoken(content)
+        limit = int(self.session.get_tools().get('large_input_limit', 4000))
+        if token_count > limit:
+            if self.session.get_tools().get('confirm_large_input', True):
+                confirmed = self.session.ui.ask_bool(f"File exceeds token limit ({limit}). Load anyway?", default=False)
+                if not confirmed:
+                    self.session.add_context('assistant', {'name': 'file_tool_result', 'content': 'User canceled large file load'})
                     return
+            else:
+                self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'File exceeds token limit ({limit}). Consider using head/tail commands instead.'})
+                return
 
-            self.session.add_context('file', filename)
-        else:
-            self.session.add_context('assistant', {
-                'name': 'file_tool_error',
-                'content': f'Failed to read file: {filename}'
-            })
+        self.session.add_context('file', filename)
+        try:
+            self.session.ui.emit('status', {'message': f'Loaded file: {filename}'})
+        except Exception:
+            pass
 
-    def _handle_write(self, filename, content):
-        agent_mode = self.session.in_agent_mode()
+    def _handle_write(self, filename: str, content: str, force: bool = False) -> None:
         policy = self.session.get_agent_write_policy()
         if policy is None:
-            # Chat/TUI/Completion default path: prompt/confirm handled in fs_handler
-            success = self.fs_handler.write_file(filename, content, create_dirs=True)
+            success = self.fs_handler.write_file(filename, content, create_dirs=True, force=force)
             msg = 'File written successfully' if success else f'Failed to write file: {filename}'
-            self.session.add_context('assistant', {
-                'name': 'file_tool_result',
-                'content': msg
-            })
+            self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
             return
-
         if policy == 'deny':
-            self.session.add_context('assistant', {
-                'name': 'file_tool_result',
-                'content': 'Writes are disabled by policy; output a unified diff of changes you would apply.'
-            })
+            self.session.add_context('assistant', {'name': 'file_tool_result', 'content': 'Writes are disabled by policy; output a unified diff of changes you would apply.'})
             return
-
         if policy == 'dry-run':
-            # Avoid noisy read errors: only read if file exists
             try:
                 resolved = self.fs_handler.resolve_path(filename, must_exist=True)
             except TypeError:
-                # Backward compatibility if resolve_path signature differs
                 resolved = self.fs_handler.resolve_path(filename)
                 if resolved and not os.path.exists(resolved):
                     resolved = None
-            if resolved:
-                original = self.fs_handler.read_file(filename) or ''
-            else:
-                original = ''
+            original = self.fs_handler.read_file(filename) or '' if resolved else ''
             try:
                 diff_text = self.fs_handler._generate_diff(original, content, filename)
             except Exception:
                 diff_text = None
-            self.session.add_context('assistant', {
-                'name': 'file_tool_result',
-                'content': diff_text or 'No changes (dry-run)'
-            })
+            self.session.add_context('assistant', {'name': 'file_tool_result', 'content': diff_text or 'No changes (dry-run)'})
             return
-
-        # allow: perform write non-interactively
+        try:
+            self.session.ui.emit('progress', {'progress': 0.1, 'message': f'Writing {filename}...'})
+        except Exception:
+            pass
         success = self.fs_handler.write_file(filename, content, create_dirs=True, force=True)
         msg = 'File written successfully' if success else f'Failed to write file: {filename}'
-        self.session.add_context('assistant', {
-            'name': 'file_tool_result',
-            'content': msg
-        })
+        self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
 
-    def _handle_append(self, filename, content):
-        agent_mode = self.session.in_agent_mode()
+    def _handle_append(self, filename: str, content: str, force: bool = False) -> None:
         policy = self.session.get_agent_write_policy()
         if policy is None:
-            success = self.fs_handler.write_file(filename, content, append=True, create_dirs=True)
+            success = self.fs_handler.write_file(filename, content, append=True, create_dirs=True, force=force)
             msg = 'Content appended successfully' if success else f'Failed to append to file: {filename}'
-            self.session.add_context('assistant', {
-                'name': 'file_tool_result',
-                'content': msg
-            })
+            self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
             return
-
         if policy == 'deny':
-            self.session.add_context('assistant', {
-                'name': 'file_tool_result',
-                'content': 'Appends are disabled by policy; output a unified diff of appended changes.'
-            })
+            self.session.add_context('assistant', {'name': 'file_tool_result', 'content': 'Appends are disabled by policy; output a unified diff of appended changes.'})
             return
-
         if policy == 'dry-run':
             try:
                 resolved = self.fs_handler.resolve_path(filename, must_exist=True)
@@ -159,224 +169,149 @@ class AssistantFileToolAction(InteractionAction):
                 resolved = self.fs_handler.resolve_path(filename)
                 if resolved and not os.path.exists(resolved):
                     resolved = None
-            if resolved:
-                original = self.fs_handler.read_file(filename) or ''
-            else:
-                original = ''
-            # Emulate append with newline handling kept simple
+            original = self.fs_handler.read_file(filename) or '' if resolved else ''
             new_content = original + ('' if original.endswith('\n') or not isinstance(content, str) else '\n') + content
             try:
                 diff_text = self.fs_handler._generate_diff(original, new_content, filename)
             except Exception:
                 diff_text = None
-            self.session.add_context('assistant', {
-                'name': 'file_tool_result',
-                'content': diff_text or 'No changes (dry-run append)'
-            })
+            self.session.add_context('assistant', {'name': 'file_tool_result', 'content': diff_text or 'No changes (dry-run append)'})
             return
-
+        try:
+            self.session.ui.emit('progress', {'progress': 0.1, 'message': f'Appending to {filename}...'})
+        except Exception:
+            pass
         success = self.fs_handler.write_file(filename, content, append=True, create_dirs=True, force=True)
         msg = 'Content appended successfully' if success else f'Failed to append to file: {filename}'
-        self.session.add_context('assistant', {
-            'name': 'file_tool_result',
-            'content': msg
-        })
+        self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
 
-    def _handle_summary(self, filename):
+    def _handle_summary(self, filename: str) -> None:
         resolved_path = self.fs_handler.resolve_path(filename)
         if resolved_path is None:
             return
-
         try:
             summary_prompt = self.session.get_tools().get('summary_prompt')
             summary_model = self.session.get_tools().get('summary_model')
             if not summary_model:
-                self.session.add_context('assistant', {
-                    'name': 'file_tool_error',
-                    'content': 'No summary model configured'
-                })
+                self.session.add_context('assistant', {'name': 'file_tool_error', 'content': 'No summary model configured'})
                 return
-
+            try:
+                self.session.ui.emit('progress', {'progress': 0.1, 'message': f'Summarizing {filename}...'})
+            except Exception:
+                pass
             result = self.memex_runner.run('-m', summary_model, '-p', summary_prompt, '-f', resolved_path)
             summary = result.stdout if result.returncode == 0 else f"Error: {result.stderr}"
-
-            # Check summary against token limit
             token_count = self.token_counter.count_tiktoken(summary)
             limit = int(self.session.get_tools().get('large_input_limit', 4000))
-
             if token_count > limit:
                 if self.session.get_tools().get('confirm_large_input', True):
                     self.session.set_flag('auto_submit', False)
                 else:
-                    self.session.add_context('assistant', {
-                        'name': 'file_tool_error',
-                        'content': f'Summary exceeds token limit ({limit}). Try using a different summarization approach.'
-                    })
+                    self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Summary exceeds token limit ({limit}). Try using a different summarization approach.'})
                 return
-
-            self.session.add_context('assistant', {
-                'name': f'Summary of: {filename}',
-                'content': summary
-            })
+            self.session.add_context('assistant', {'name': f'Summary of: {filename}', 'content': summary})
         except subprocess.SubprocessError as e:
-            self.session.add_context('assistant', {
-                'name': 'file_tool_error',
-                'content': f'Failed to get file summary: {str(e)}'
-            })
+            self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Failed to get file summary: {str(e)}'})
 
-    def _handle_delete(self, filename, recursive=False):
-        """Handle file or directory deletion"""
-        agent_mode = self.session.in_agent_mode()
+    def _handle_delete(self, filename: str, recursive: bool = False, force: bool = False) -> None:
         policy = self.session.get_agent_write_policy()
         if policy is None:
             if os.path.isdir(filename):
-                success = self.fs_handler.delete_directory(filename, recursive)
+                success = self.fs_handler.delete_directory(filename, recursive, force=force)
             else:
-                success = self.fs_handler.delete_file(filename)
+                success = self.fs_handler.delete_file(filename, force=force)
             msg = 'Delete operation successful' if success else f'Failed to delete: {filename}'
-            self.session.add_context('assistant', {
-                'name': 'file_tool_result',
-                'content': msg
-            })
+            self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
             return
-
         if policy == 'deny':
-            self.session.add_context('assistant', {
-                'name': 'file_tool_result',
-                'content': 'Deletes are disabled by policy; describe intended deletion instead.'
-            })
+            self.session.add_context('assistant', {'name': 'file_tool_result', 'content': 'Deletes are disabled by policy; describe intended deletion instead.'})
             return
-
         if policy == 'dry-run':
             kind = 'directory' if os.path.isdir(filename) else 'file'
             msg = f"Would delete {kind} {filename}{' recursively' if (kind=='directory' and recursive) else ''}"
-            self.session.add_context('assistant', {
-                'name': 'file_tool_result',
-                'content': msg
-            })
+            self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
             return
-
         if os.path.isdir(filename):
             success = self.fs_handler.delete_directory(filename, recursive, force=True)
         else:
             success = self.fs_handler.delete_file(filename, force=True)
         msg = 'Delete operation successful' if success else f'Failed to delete: {filename}'
-        self.session.add_context('assistant', {
-            'name': 'file_tool_result',
-            'content': msg
-        })
+        self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
 
-    def _handle_rename(self, old_name, new_name):
-        """Handle file or directory rename"""
-        agent_mode = self.session.in_agent_mode()
+    def _handle_rename(self, old_name: str, new_name: str, force: bool = False) -> None:
         policy = self.session.get_agent_write_policy()
         if policy is None:
-            success = self.fs_handler.rename(old_name, new_name)
+            success = self.fs_handler.rename(old_name, new_name, force=force)
             msg = 'Rename operation successful' if success else f'Failed to rename {old_name} to {new_name}'
-            self.session.add_context('assistant', {
-                'name': 'file_tool_result',
-                'content': msg
-            })
+            self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
             return
-
         if policy == 'deny':
-            self.session.add_context('assistant', {
-                'name': 'file_tool_result',
-                'content': 'Renames are disabled by policy; describe intended rename instead.'
-            })
+            self.session.add_context('assistant', {'name': 'file_tool_result', 'content': 'Renames are disabled by policy; describe intended rename instead.'})
             return
         if policy == 'dry-run':
-            self.session.add_context('assistant', {
-                'name': 'file_tool_result',
-                'content': f'Would rename {old_name} to {new_name}'
-            })
+            self.session.add_context('assistant', {'name': 'file_tool_result', 'content': f'Would rename {old_name} to {new_name}'})
             return
+        try:
+            self.session.ui.emit('progress', {'progress': 0.1, 'message': f'Renaming {old_name} -> {new_name}...'})
+        except Exception:
+            pass
         success = self.fs_handler.rename(old_name, new_name, force=True)
         msg = 'Rename operation successful' if success else f'Failed to rename {old_name} to {new_name}'
-        self.session.add_context('assistant', {
-            'name': 'file_tool_result',
-            'content': msg
-        })
+        self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
 
-    def _handle_copy(self, filename, new_name):
-        """Handle file or directory copy"""
-        agent_mode = self.session.in_agent_mode()
+    def _handle_copy(self, filename: str, new_name: str, force: bool = False) -> None:
         policy = self.session.get_agent_write_policy()
         if policy is None:
-            success = self.fs_handler.copy(filename, new_name)
+            success = self.fs_handler.copy(filename, new_name, force=force)
             msg = 'Copy operation successful' if success else f'Failed to copy {filename} to {new_name}'
-            self.session.add_context('assistant', {
-                'name': 'file_tool_result',
-                'content': msg
-            })
+            self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
             return
-
         if policy == 'deny':
-            self.session.add_context('assistant', {
-                'name': 'file_tool_result',
-                'content': 'Copies are disabled by policy; describe intended copy instead.'
-            })
+            self.session.add_context('assistant', {'name': 'file_tool_result', 'content': 'Copies are disabled by policy; describe intended copy instead.'})
             return
         if policy == 'dry-run':
-            self.session.add_context('assistant', {
-                'name': 'file_tool_result',
-                'content': f'Would copy {filename} to {new_name}'
-            })
+            self.session.add_context('assistant', {'name': 'file_tool_result', 'content': f'Would copy {filename} to {new_name}'})
             return
+        try:
+            self.session.ui.emit('progress', {'progress': 0.1, 'message': f'Copying {filename} -> {new_name}...'})
+        except Exception:
+            pass
         success = self.fs_handler.copy(filename, new_name, force=True)
         msg = 'Copy operation successful' if success else f'Failed to copy {filename} to {new_name}'
-        self.session.add_context('assistant', {
-            'name': 'file_tool_result',
-            'content': msg
-        })
+        self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
 
-    def _handle_edit(self, filename, edit_request):
-        """Handle file editing with LLM assistance"""
+    def _handle_edit(self, filename: str, edit_request: str) -> None:
         original_content = self.fs_handler.read_file(filename)
         if original_content is None:
-            self.session.add_context('assistant', {
-                'name': 'file_tool_error',
-                'content': f'Failed to read file or empty: {filename}'
-            })
+            self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Failed to read file or empty: {filename}'})
             return
-
         edit_model = self.session.get_tools().get('edit_model')
         if not edit_model:
-            self.session.add_context('assistant', {
-                'name': 'file_tool_error',
-                'content': 'No edit model configured'
-            })
+            self.session.add_context('assistant', {'name': 'file_tool_error', 'content': 'No edit model configured'})
             return
-
         conversation_history = self._get_formatted_conversation_history()
         prompt_content = self._build_edit_prompt(original_content, conversation_history, edit_request)
-
+        try:
+            self.session.ui.emit('progress', {'progress': 0.1, 'message': f'Running edit LLM for {filename}...'})
+        except Exception:
+            pass
         edited_content = self._run_edit_subprocess(edit_model, prompt_content)
-
         if edited_content is not None:
             self._process_and_confirm_edit(filename, original_content, edited_content)
 
-    def _run_edit_subprocess(self, edit_model, prompt_content):
-        """Runs the edit LLM as a subprocess and returns the output."""
+    def _run_edit_subprocess(self, edit_model: str, prompt_content: str) -> str | None:
         temp_path = None
         try:
             with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as temp_file:
                 temp_file.write(prompt_content)
                 temp_path = temp_file.name
-
             result = self.memex_runner.run('-m', edit_model, '-f', temp_path, check=True)
             return result.stdout.strip()
         except subprocess.CalledProcessError as e:
-            self.session.add_context('assistant', {
-                'name': 'file_tool_error',
-                'content': f'Edit LLM failed: {e.stderr}'
-            })
+            self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Edit LLM failed: {e.stderr}'})
             return None
         except Exception as e:
-            self.session.add_context('assistant', {
-                'name': 'file_tool_error',
-                'content': f'An unexpected error occurred during edit subprocess: {str(e)}'
-            })
+            self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'An unexpected error occurred during edit subprocess: {str(e)}'})
             return None
         finally:
             if temp_path and os.path.exists(temp_path):
@@ -385,106 +320,78 @@ class AssistantFileToolAction(InteractionAction):
                 except OSError:
                     pass
 
-    def _process_and_confirm_edit(self, filename, original_content, edited_content):
-        """Applies the edit by writing the new content to the file."""
+    def _process_and_confirm_edit(self, filename: str, original_content: str, edited_content: str) -> None:
         if not edited_content:
             return
-
-        # Check if there are actually changes
         if original_content == edited_content:
-            self.session.add_context('assistant', {
-                'name': 'file_tool_result',
-                'content': 'No changes detected in edited file'
-            })
+            self.session.add_context('assistant', {'name': 'file_tool_result', 'content': 'No changes detected in edited file'})
             return
-
-        agent_mode = self.session.in_agent_mode()
         policy = self.session.get_agent_write_policy()
         if policy is None:
-            # Default path uses confirmation via fs_handler
             self._handle_write(filename, edited_content)
             return
-
         if policy == 'deny':
-            self.session.add_context('assistant', {
-                'name': 'file_tool_result',
-                'content': 'Writes are disabled by policy; output a unified diff of the edit you would apply.'
-            })
+            self.session.add_context('assistant', {'name': 'file_tool_result', 'content': 'Writes are disabled by policy; output a unified diff of the edit you would apply.'})
             return
         if policy == 'dry-run':
             try:
                 diff_text = self.fs_handler._generate_diff(original_content, edited_content, filename)
             except Exception:
                 diff_text = None
-            self.session.add_context('assistant', {
-                'name': 'file_tool_result',
-                'content': diff_text or 'No changes (dry-run edit)'
-            })
+            self.session.add_context('assistant', {'name': 'file_tool_result', 'content': diff_text or 'No changes (dry-run edit)'})
             return
-
-        # allow
         self._handle_write(filename, edited_content)
 
-    def _get_formatted_conversation_history(self):
-        """Get the last few turns of conversation history, formatted for the prompt."""
+    # ---- Helpers -----------------------------------------------------------
+    def _get_formatted_conversation_history(self) -> str:
         chat_context = self.session.get_context('chat')
         if not chat_context:
             return "## Conversation History\nNo conversation history available."
-
-        # Get the last 4 messages
         history = chat_context.get('all')[-4:]
         if not history:
             return "## Conversation History\nNo conversation history available."
-
-        # Format the conversation history
-        formatted_history = ['## Conversation History']
+        formatted = ['## Conversation History']
         for msg in history:
             role = msg.get('role', 'unknown').capitalize()
             message = msg.get('message', '')
-            formatted_history.append(f"[{role}]: {message}")
-
-        return '\n'.join(formatted_history)
+            formatted.append(f"[{role}]: {message}")
+        return '\n'.join(formatted)
 
     @staticmethod
-    def _build_edit_prompt(original_content, conversation_history, edit_request):
-        """Build the prompt content for the edit LLM"""
-
-        # Define prompt sections
-        intro_section = """You are a code editor. Your task is to apply the requested changes to the provided file and output the complete modified file.
-
-    You will receive:
-    1. The content of the original file.
-    2. A few turns of conversation history between the user and the assistant to provide some context for the requested changes.
-    3. The requested changes to be applied to the oringinal file."""
-
-        original_file_section = """=== ORIGINAL FILE ===
-    {original_content}
-    === END ORIGINAL FILE ==="""
-
-        conversation_section = """=== CONVERSATION CONTEXT ===
-    {conversation_history}
-    === END CONVERSATION CONTEXT ==="""
-
-        changes_section = """=== REQUESTED CHANGES ===
-    {edit_request}
-    === END REQUESTED CHANGES ==="""
-
-        instructions_section = """=== INSTRUCTIONS ===
-    Output ONLY the complete modified file with the requested changes applied. Do not include any explanations, comments about the changes, or additional formatting or adjustments. Be sure to preserve original whitespace, newlines, and indentation. Just return the raw file content with edits applied."""
-
-        # Assemble the final prompt
+    def _build_edit_prompt(original_content: str, conversation_history: str, edit_request: str) -> str:
+        intro_section = (
+            "You are a code editor. Your task is to apply the requested changes to the provided file and output the complete modified file.\n\n"
+            "    You will receive:\n"
+            "    1. The content of the original file.\n"
+            "    2. A few turns of conversation history between the user and the assistant to provide some context for the requested changes.\n"
+            "    3. The requested changes to be applied to the oringinal file."
+        )
+        original_file_section = (
+            "=== ORIGINAL FILE ===\n"
+            "{original_content}\n"
+            "=== END ORIGINAL FILE ==="
+        )
+        conversation_section = (
+            "=== CONVERSATION CONTEXT ===\n"
+            "{conversation_history}\n"
+            "=== END CONVERSATION CONTEXT ==="
+        )
+        changes_section = (
+            "=== REQUESTED CHANGES ===\n"
+            "{edit_request}\n"
+            "=== END REQUESTED CHANGES ==="
+        )
+        instructions_section = (
+            "=== INSTRUCTIONS ===\n"
+            "Output ONLY the complete modified file with the requested changes applied. Do not include any explanations, comments about the changes, or additional formatting or adjustments. "
+            "Be sure to preserve original whitespace, newlines, and indentation. Just return the raw file content with edits applied."
+        )
         prompt_parts = [
             intro_section,
             original_file_section,
-            # conversation_section,
+            # conversation_section,  # optional
             changes_section,
-            instructions_section
+            instructions_section,
         ]
-
         prompt = "\n\n".join(prompt_parts)
-
-        return prompt.format(
-            original_content=original_content,
-            conversation_history=conversation_history,
-            edit_request=edit_request
-        )
+        return prompt.format(original_content=original_content, conversation_history=conversation_history, edit_request=edit_request)

@@ -282,7 +282,13 @@ class DebugStorageAction(InteractionAction):
         print()
 
     def run(self, args=None):
-        """Interactive CLI for storage inspection and manipulation"""
+        """Interactive CLI for storage inspection and manipulation (CLI-only)."""
+        if not getattr(self.session.ui.capabilities, 'blocking', False):
+            try:
+                self.session.ui.emit('warning', {'message': 'DebugStorageAction is only available in the CLI mode.'})
+            except Exception:
+                pass
+            return
         print(f"Storage Debug Interface (q to quit, help for commands)")
         print(f"Current table: {self.current_table}")
         self.tc.run("chat")  # Reset to chat completion mode

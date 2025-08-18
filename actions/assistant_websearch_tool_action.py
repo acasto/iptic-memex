@@ -23,31 +23,41 @@ class AssistantWebsearchToolAction(InteractionAction):
 
     @staticmethod
     def set_search_model(session, model_name=None):
-        """Set the search model in session tools"""
+        """Set the search model in session tools (Stepwise-friendly prompt)."""
+        ui = getattr(session, 'ui', None)
         if not model_name:
-            print("\nAvailable search models:")
-            print("1. basic (sonar) - Basic web search")
-            print("2. pro (sonar-pro) - Advanced web search")
-            print("3. reasoning (sonar-reasoning) - Reasoning-focused search")
-            print("4. reasoning-pro (sonar-reasoning-pro) - Advanced reasoning-focused search")
-            print("5. deep-research (sonar-deep-research) - Comprehensive research & analysis")
+            options = [
+                'basic (sonar) - Basic web search',
+                'pro (sonar-pro) - Advanced web search',
+                'reasoning (sonar-reasoning) - Reasoning-focused search',
+                'reasoning-pro (sonar-reasoning-pro) - Advanced reasoning-focused search',
+                'deep-research (sonar-deep-research) - Comprehensive research & analysis',
+            ]
+            if ui and hasattr(ui, 'ask_choice'):
+                choice = ui.ask_choice('Select search model:', options, default=options[0])
+                model_map = {
+                    options[0]: 'basic',
+                    options[1]: 'pro',
+                    options[2]: 'reason',
+                    options[3]: 'reasoning-pro',
+                    options[4]: 'deep-research',
+                }
+                model_name = model_map.get(choice)
+            else:
+                model_name = 'basic'
 
-            choice = input("\nSelect model (1-5): ").strip()
-            model_map = {'1': 'basic', '2': 'pro', '3': 'reason', '4': 'reasoning-pro', '5': 'deep-research'}
-            model_name = model_map.get(choice)
-            if not model_name:
-                print("Invalid selection")
-                return False
-
-        model_name = model_name.lower()
+        model_name = (model_name or '').lower()
         if model_name not in AssistantWebsearchToolAction.SEARCH_MODELS:
-            print(f"Invalid model: {model_name}")
+            if ui:
+                try: ui.emit('error', {'message': f"Invalid model: {model_name}"})
+                except Exception: pass
             return False
 
         full_name = AssistantWebsearchToolAction.SEARCH_MODELS[model_name]
         session.get_tools()['search_model'] = full_name
-        print(f"\nSearch model set to: {full_name}")
-        print()
+        if ui:
+            try: ui.emit('status', {'message': f"Search model set to: {full_name}"})
+            except Exception: pass
         return True
 
     def validate_search_model(self, model_name):
@@ -168,7 +178,10 @@ class AssistantWebsearchToolAction(InteractionAction):
                             summary = content
 
                     except Exception as e:
-                        print(f"Error parsing raw response: {str(e)}")
+                        try:
+                            self.session.ui.emit('warning', {'message': f"Error parsing raw response: {str(e)}"})
+                        except Exception:
+                            pass
                         summary = result.stdout
 
             self.session.add_context('assistant', {

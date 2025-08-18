@@ -15,6 +15,12 @@ class ManageChatsAction(InteractionAction):
         self.chat = session.get_context('chat')
 
     def run(self, args=None):
+        if not getattr(self.session.ui.capabilities, 'blocking', False):
+            try:
+                self.session.ui.emit('warning', {'message': 'manage_chats is only available in CLI mode for now.'})
+            except Exception:
+                pass
+            return
         if not args:
             print("Please specify a command: save, load, or list")
             return

@@ -1,8 +1,8 @@
 import requests
-from base_classes import InteractionAction
+from base_classes import StepwiseAction, Completed
 
 
-class BraveSummaryAction(InteractionAction):
+class BraveSummaryAction(StepwiseAction):
     """
     Class for performing web searches using the Brave Search API
     """
@@ -24,27 +24,47 @@ class BraveSummaryAction(InteractionAction):
         except Exception:
             self.brave = {}
 
-    def run(self, message=None):
+    def start(self, args=None, content: str = "") -> Completed:
         if 'api_key' not in self.brave:
-            print(f"API key not found for Brave provider in configuration.\n")
-            return
-        while True:
-            search = input("Search query (or q to exit): ")
-            if search.lower() == "q":
-                return
-            else:
-                summary = self.search_and_summarize(search)
-                if summary:
-                    concise_summary = self.process_summary(summary)
-                    # Let the user preview the summary with the option to try again
-                    print(concise_summary)
-                    retry = input("\nUse results? (y/n): ")
-                    if retry.lower() != "y":
-                        continue
-                    else:
-                        self.session.add_context('search_results', concise_summary)
-                        break
-        self.session.get_action('reprint_chat').run()
+            try:
+                self.session.ui.emit('error', {'message': 'API key not found for Brave provider in configuration.'})
+            except Exception:
+                pass
+            return Completed({'ok': False, 'error': 'no_api_key'})
+        query = None
+        if isinstance(args, dict):
+            query = args.get('query')
+        elif isinstance(args, (list, tuple)) and args:
+            query = " ".join(str(a) for a in args)
+        if not query:
+            query = self.session.ui.ask_text('Search query (or q to exit): ')
+        if str(query).strip().lower() == 'q':
+            return Completed({'ok': True, 'cancelled': True})
+        summary = self.search_and_summarize(str(query))
+        if not summary:
+            return Completed({'ok': False, 'error': 'no_summary'})
+        concise = self.process_summary(summary)
+        # In CLI, confirm; in Web auto-save
+        save_now = True
+        if getattr(self.session.ui.capabilities, 'blocking', False):
+            try:
+                self.session.ui.emit('status', {'message': concise})
+            except Exception:
+                pass
+            save_now = bool(self.session.ui.ask_bool('Use results?', default=True))
+        if save_now:
+            self.session.add_context('search_results', concise)
+            try:
+                self.session.ui.emit('status', {'message': 'Results saved to context.'})
+            except Exception:
+                pass
+        # Reprint chat on CLI
+        if getattr(self.session.ui.capabilities, 'blocking', False):
+            try:
+                self.session.get_action('reprint_chat').run()
+            except Exception:
+                pass
+        return Completed({'ok': True, 'saved': save_now})
 
     def simple_search_and_summarize(self, query):
         """
@@ -58,7 +78,10 @@ class BraveSummaryAction(InteractionAction):
     def search_and_summarize(self, query):
         web_results = self.brave_web_search(query)
         if not web_results or 'summarizer' not in web_results:
-            print("No summarizer key found in the web search results.")
+            try:
+                self.session.ui.emit('warning', {'message': 'No summarizer key found in the web search results.'})
+            except Exception:
+                pass
             return None
 
         summarizer_key = web_results['summarizer']['key']
@@ -86,7 +109,10 @@ class BraveSummaryAction(InteractionAction):
         if response.status_code == 200:
             return response.json()
         else:
-            print(f"Error in web search: {response.status_code} - {response.text}")
+            try:
+                self.session.ui.emit('error', {'message': f"Error in web search: {response.status_code} - {response.text}"})
+            except Exception:
+                pass
             return None
 
     def brave_summarizer(self, key):
@@ -107,7 +133,10 @@ class BraveSummaryAction(InteractionAction):
         if response.status_code == 200:
             return response.json()
         else:
-            print(f"Error in summarizer: {response.status_code} - {response.text}")
+            try:
+                self.session.ui.emit('error', {'message': f"Error in summarizer: {response.status_code} - {response.text}"})
+            except Exception:
+                pass
             return None
 
     def process_summary(self, summary_result):

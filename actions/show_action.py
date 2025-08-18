@@ -18,27 +18,48 @@ class ShowAction(InteractionAction):
         if args[0] == 'settings':
             settings = self.session.get_session_state()
             sorted_params = sorted(settings['params'].items())
-            print("Params:")
-            print("---------------------------------")
+            lines = ["Params:", "---------------------------------"]
             for key, value in sorted_params:
                 if key == 'api_key':
                     value = '********'
-                print(f"{key}: {value}")
-            print()
+                lines.append(f"{key}: {value}")
+            lines.append("")
+            if not getattr(self.session.ui.capabilities, 'blocking', False):
+                try:
+                    self.session.ui.emit('status', {'message': "\n".join(lines)})
+                except Exception:
+                    pass
+            else:
+                for ln in lines:
+                    print(ln)
 
         if args[0] == 'tool-settings':
             tools = self.session.get_tools()
             sorted_tools = sorted(tools.items())
-            print("Tools:")
-            print("---------------------------------")
+            lines = ["Tools:", "---------------------------------"]
             for key, value in sorted_tools:
-                print(f"{key}: {value}")
-            print()
+                lines.append(f"{key}: {value}")
+            lines.append("")
+            if not getattr(self.session.ui.capabilities, 'blocking', False):
+                try:
+                    self.session.ui.emit('status', {'message': "\n".join(lines)})
+                except Exception:
+                    pass
+            else:
+                for ln in lines:
+                    print(ln)
 
         if args[0] == 'models':
-            for section, options in self.session.list_models().items():
-                print(section)
-            print()
+            sections = list(self.session.list_models().keys())
+            if not getattr(self.session.ui.capabilities, 'blocking', False):
+                try:
+                    self.session.ui.emit('status', {'message': "\n".join(sections)})
+                except Exception:
+                    pass
+            else:
+                for s in sections:
+                    print(s)
+                print()
 
         if args[0] == 'messages':
             try:
@@ -47,10 +68,16 @@ class ShowAction(InteractionAction):
                 if prompt_context:
                     prompt_data = prompt_context.get()
                     if prompt_data and prompt_data.get('content'):
-                        print("=== SYSTEM PROMPT ===")
-                        print(prompt_data['content'])
-                        print("=" * 50)
-                        print()
+                        if not getattr(self.session.ui.capabilities, 'blocking', False):
+                            try:
+                                self.session.ui.emit('status', {'message': '=== SYSTEM PROMPT ===\n' + prompt_data['content'] + '\n' + ('='*50) + '\n'})
+                            except Exception:
+                                pass
+                        else:
+                            print("=== SYSTEM PROMPT ===")
+                            print(prompt_data['content'])
+                            print("=" * 50)
+                            print()
 
                 # Then show the conversation messages
                 if len(args) > 1 and args[1] == 'all':
@@ -59,7 +86,11 @@ class ShowAction(InteractionAction):
                     if chat_context:
                         messages = chat_context.get("all")
                     else:
-                        print("No chat context available")
+                        if not getattr(self.session.ui.capabilities, 'blocking', False):
+                            try: self.session.ui.emit('status', {'message': 'No chat context available'})
+                            except Exception: pass
+                        else:
+                            print("No chat context available")
                         return
                 else:
                     # Get messages from provider (which delegates to chat context)
@@ -67,7 +98,11 @@ class ShowAction(InteractionAction):
                     if provider:
                         messages = provider.get_messages()
                     else:
-                        print("No provider available")
+                        if not getattr(self.session.ui.capabilities, 'blocking', False):
+                            try: self.session.ui.emit('status', {'message': 'No provider available'})
+                            except Exception: pass
+                        else:
+                            print("No provider available")
                         return
                 
                 if not messages:
@@ -75,7 +110,7 @@ class ShowAction(InteractionAction):
                     return
                 
                 # Display messages with proper formatting
-                print("=== CONVERSATION ===")
+                lines = ["=== CONVERSATION ==="]
                 for i, message in enumerate(messages):
                     timestamp = message.get('timestamp', 'Unknown time')
                     role = message.get('role', 'unknown')
@@ -102,58 +137,98 @@ class ShowAction(InteractionAction):
                         elif isinstance(content_data, str):
                             content = content_data
                     
-                    print(f"[{i}] {timestamp} - {role.upper()}")
+                    entry = [f"[{i}] {timestamp} - {role.upper()}"]
                     if content:
-                        print(f"    Message: {content}")
+                        entry.append(f"    Message: {content}")
                     else:
-                        print("    Message: (empty)")
+                        entry.append("    Message: (empty)")
                     
                     if context:
-                        print(f"    Context: {len(context)} item(s)")
+                        entry.append(f"    Context: {len(context)} item(s)")
                         for j, ctx in enumerate(context):
                             ctx_type = ctx.get('type', 'unknown')
-                            print(f"      [{j}] Type: {ctx_type}")
-                    
-                    print()
-                    
+                            entry.append(f"      [{j}] Type: {ctx_type}")
+                    lines.append("\n".join(entry) + "\n")
+
             except Exception as e:
-                print(f"Error displaying messages: {e}")
-                print()
+                if not getattr(self.session.ui.capabilities, 'blocking', False):
+                    try: self.session.ui.emit('error', {'message': f'Error displaying messages: {e}'})
+                    except Exception: pass
+                else:
+                    print(f"Error displaying messages: {e}")
+                    print()
+                return
+
+            # Emit or print assembled lines
+            if not getattr(self.session.ui.capabilities, 'blocking', False):
+                try:
+                    self.session.ui.emit('status', {'message': "\n".join(lines)})
+                except Exception:
+                    pass
+            else:
+                for ln in lines:
+                    print(ln)
 
         if args[0] == 'contexts':
             contexts = self.session.get_action('process_contexts').get_contexts(self.session)
             if len(contexts) == 0:
-                print(f"No contexts to clear.\n")
+                if not getattr(self.session.ui.capabilities, 'blocking', False):
+                    try: self.session.ui.emit('status', {'message': 'No contexts to clear.'})
+                    except Exception: pass
+                else:
+                    print(f"No contexts to clear.\n")
                 return True
-
+            lines = []
             for idx, context in enumerate(contexts):
-                print(f"[{idx}] {context['context'].get()['name']}")
-                print(f"Content: {context['context'].get()['content']}")
-            print()
+                lines.append(f"[{idx}] {context['context'].get()['name']}")
+                lines.append(f"Content: {context['context'].get()['content']}")
+            lines.append("")
+            if not getattr(self.session.ui.capabilities, 'blocking', False):
+                try: self.session.ui.emit('status', {'message': "\n".join(lines)})
+                except Exception: pass
+            else:
+                for ln in lines: print(ln)
 
         if args[0] == 'usage':
             usage = self.session.get_provider().get_usage()
-            for key, value in usage.items():
-                print(f"{key}: {value}")
-            print()
+            lines = [f"{key}: {value}" for key, value in usage.items()]
+            lines.append("")
+            if not getattr(self.session.ui.capabilities, 'blocking', False):
+                try: self.session.ui.emit('status', {'message': "\n".join(lines)})
+                except Exception: pass
+            else:
+                for ln in lines: print(ln)
 
         if args[0] == 'cost':
             cost = self.session.get_provider().get_cost()
             if not cost:
-                print("Cost calculation not available for this model")
+                if not getattr(self.session.ui.capabilities, 'blocking', False):
+                    try: self.session.ui.emit('status', {'message': 'Cost calculation not available for this model'})
+                    except Exception: pass
+                else:
+                    print("Cost calculation not available for this model")
                 return
 
             input_cost = cost.get('input_cost', 0)
             output_cost = cost.get('output_cost', 0)
 
-            print(f"input_cost: ${input_cost:.4f}")
-            print(f"output_cost: ${output_cost:.4f}")
+            lines = [f"input_cost: ${input_cost:.4f}", f"output_cost: ${output_cost:.4f}"]
 
             if input_cost == 0 and output_cost == 0:
-                print()
+                if not getattr(self.session.ui.capabilities, 'blocking', False):
+                    try: self.session.ui.emit('status', {'message': "\n".join(lines)})
+                    except Exception: pass
+                else:
+                    for ln in lines: print(ln)
+                    print()
                 return
 
             for key, value in cost.items():
                 if key not in ['input_cost', 'output_cost']:
-                    print(f"{key}: ${value:.4f}")
-            print()
+                    lines.append(f"{key}: ${value:.4f}")
+            lines.append("")
+            if not getattr(self.session.ui.capabilities, 'blocking', False):
+                try: self.session.ui.emit('status', {'message': "\n".join(lines)})
+                except Exception: pass
+            else:
+                for ln in lines: print(ln)

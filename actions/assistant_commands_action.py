@@ -127,7 +127,21 @@ class AssistantCommandsAction(InteractionAction):
                             method(cmd['args'], cmd['content'])
                         else:
                             action = self.session.get_action(handler["name"])
-                            action.run(cmd['args'], cmd['content'])
+                            try:
+                                action.run(cmd['args'], cmd['content'])
+                            except Exception as need_exc:
+                                # Annotate InteractionNeeded with action + args so Web can resume correctly
+                                from base_classes import InteractionNeeded
+                                if isinstance(need_exc, InteractionNeeded):
+                                    try:
+                                        spec = dict(getattr(need_exc, 'spec', {}) or {})
+                                        spec['__action__'] = handler["name"]
+                                        spec['__args__'] = cmd['args']
+                                        spec['__content__'] = cmd['content']
+                                        need_exc.spec = spec
+                                    except Exception:
+                                        pass
+                                raise
                 except KeyboardInterrupt:
                     self.session.utils.output.stop_spinner()
                     self.session.utils.output.write()
@@ -153,10 +167,17 @@ class AssistantCommandsAction(InteractionAction):
                     continue
 
         # Final processing: if highlighting is True and code blocks are present, reprint chat
+        # Gate reprint to blocking UIs (CLI). In Web/TUI, avoid stdout clearing/prints.
         if '```' in response:
             # Get fresh params to check highlighting setting
             params = self.session.get_params()
-            if 'highlighting' in params and params['highlighting'] is True:
+            ui = getattr(self.session, 'ui', None)
+            blocking = True
+            try:
+                blocking = bool(ui and ui.capabilities and ui.capabilities.blocking)
+            except Exception:
+                blocking = True
+            if blocking and params.get('highlighting') is True:
                 self.session.get_action('reprint_chat').run()
 
     @staticmethod

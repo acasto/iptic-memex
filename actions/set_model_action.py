@@ -1,30 +1,51 @@
-from base_classes import InteractionAction
+from base_classes import StepwiseAction, Completed
 
 
-class SetModelAction(InteractionAction):
+class SetModelAction(StepwiseAction):
 
     def __init__(self, session):
         self.session = session
         self.tc = session.utils.tab_completion
         self.tc.set_session(session)
 
-    def run(self, args: list = None):
-        if not args:
-            self.tc.run('model')
-            while True:
-                model = input(f"Enter model name (or q to exit): ")
-                if model == 'q':
-                    self.tc.run('chat')  # set the completion back to chat mode
-                    break
-                if model in self.session.list_models():
-                    self.session.switch_model(model)
-                    self.tc.run('chat')
-                    break
-            return
+    def start(self, args=None, content: str = "") -> Completed:
+        models = self.session.list_models()
 
-        model_name = ' '.join(args)
-        if model_name in self.session.list_models():
-            self.session.switch_model(model_name)
-            self.tc.run('chat')  # set the completion back to chat mode
+        # Accept pre-specified model via args
+        chosen = None
+        if isinstance(args, (list, tuple)) and args:
+            chosen = " ".join(str(a) for a in args)
+        elif isinstance(args, dict):
+            chosen = args.get('model') or args.get('name')
+
+        if not chosen:
+            self.tc.run('model')
+            # Use a choice prompt to avoid typos
+            chosen = self.session.ui.ask_choice("Select a model:", models, default=models[0] if models else None)
+
+        chosen = str(chosen)
+        if chosen.lower() == 'q':
+            self.tc.run('chat')
+            return Completed({'ok': True, 'cancelled': True})
+
+        if chosen in models:
+            self.session.switch_model(chosen)
+            self.tc.run('chat')
+            try:
+                self.session.ui.emit('status', {'message': f"Switched model to {chosen}"})
+            except Exception:
+                pass
+            return Completed({'ok': True, 'model': chosen})
         else:
-            print(f"Model {model_name} not found.")
+            try:
+                self.session.ui.emit('error', {'message': f"Model '{chosen}' not found."})
+            except Exception:
+                pass
+            self.tc.run('chat')
+            return Completed({'ok': False, 'error': 'not_found', 'model': chosen})
+
+    def resume(self, state_token: str, response) -> Completed:
+        # Expect a choice string or {response: value}
+        if isinstance(response, dict) and 'response' in response:
+            response = response['response']
+        return self.start({'model': response})

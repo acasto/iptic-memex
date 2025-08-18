@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from base_classes import InteractionMode
-from actions.assistant_output_action import AssistantOutputAction
+from turns import TurnRunner, TurnOptions
 
 
 class AgentMode(InteractionMode):
@@ -44,6 +44,7 @@ class AgentMode(InteractionMode):
 
         # Utilities
         self.utils = self.session.utils
+        self.turn_runner = TurnRunner(self.session)
 
         # Prepare agent instruction snippet (finish signal and write policy)
         policy = (self.session.get_agent_write_policy() or '').lower()
@@ -67,202 +68,7 @@ class AgentMode(InteractionMode):
         self._agent_instructions = "\n\n" + "\n".join(lines)
         self._agent_prompt_injected = False
 
-    def _dump_messages(self, header: str, include_prompt: bool = False, omit_last_assistant: bool = False):
-        """Debug helper: dump system prompt and conversation messages."""
-        try:
-            out = self.utils.output
-            out.write(f"=== {header} ===")
-
-            # System prompt (optional; print once at start)
-            if include_prompt:
-                prompt_context = self.session.get_context('prompt')
-                if prompt_context:
-                    prompt_data = prompt_context.get()
-                    content = prompt_data.get('content') if isinstance(prompt_data, dict) else None
-                    if content:
-                        out.write("--- SYSTEM PROMPT ---")
-                        out.write(str(content))
-
-            # Conversation messages (prefer provider view)
-            provider = self.session.get_provider()
-            messages = []
-            if provider and hasattr(provider, 'get_messages'):
-                try:
-                    messages = provider.get_messages() or []
-                except Exception:
-                    messages = []
-            if not messages:
-                chat = self.session.get_context('chat')
-                messages = chat.get("all") if chat else []
-            out.write("--- MESSAGES ---")
-
-            # Optionally omit the most recent assistant message (e.g., when already streamed)
-            omit_idx = -1
-            if omit_last_assistant:
-                for idx in range(len(messages) - 1, -1, -1):
-                    if messages[idx].get('role') == 'assistant':
-                        omit_idx = idx
-                        break
-
-            for i, message in enumerate(messages):
-                role = message.get('role', 'unknown')
-                # Skip system messages here to avoid re-printing the prompt on every turn
-                if role == 'system':
-                    continue
-                if i == omit_idx:
-                    # Keep the role header but omit the content to avoid duplication
-                    out.write(f"[{i}] {role.upper()}:")
-                    continue
-                # Extract text for modern content or legacy 'message'
-                text = ''
-                if 'message' in message and message['message']:
-                    text = message['message']
-                elif 'content' in message:
-                    data = message['content']
-                    if isinstance(data, list):
-                        text_parts = []
-                        for item in data:
-                            if isinstance(item, dict) and item.get('type') == 'text':
-                                text_parts.append(item.get('text', ''))
-                        text = ' '.join(text_parts)
-                    elif isinstance(data, str):
-                        text = data
-                out.write(f"[{i}] {role.upper()}: {text}")
-        except Exception:
-            # Debug dump should never break the agent loop
-            pass
-
-    def _prepare_user_turn_with_contexts(self, turn_index: int):
-        """Gather current contexts (including agent status) and add a new user turn."""
-        # Build agent status as a lightweight context
-        status_parts = [f"Turn {turn_index + 1} of {self.steps}"]
-
-        # Do not include write policy in status; it is injected into the system prompt
-
-        status_text = ''.join(f"<status>{t}</status>" for t in status_parts if t)
-        if status_text:
-            self.session.add_context('agent', {
-                'name': 'agent_status',
-                'content': status_text
-            })
-
-        # Collect contexts for this turn and attach to a user message
-        process_contexts = self.session.get_action('process_contexts')
-        contexts = process_contexts.process_contexts_for_user(auto_submit=True) if process_contexts else []
-
-        # If stdin was provided via -f -, extract its content as the actual user message
-        stdin_content = None
-        stdin_idx = None
-        for idx, c in enumerate(contexts):
-            try:
-                meta = c['context'].get()
-                if meta and meta.get('name') == 'stdin':
-                    stdin_content = meta.get('content')
-                    stdin_idx = idx
-                    break
-            except Exception:
-                continue
-
-        if stdin_idx is not None:
-            # Remove stdin from contexts so it isn't rendered as a file context
-            contexts.pop(stdin_idx)
-            # If prompt wasn't explicitly set, replace default prompt with agent instructions
-            try:
-                overrides = getattr(self.session.config, 'overrides', {})
-                have_explicit_prompt = ('prompt' in overrides)
-                prompt_ctx = self.session.get_context('prompt')
-                if not have_explicit_prompt:
-                    if prompt_ctx:
-                        prompt_ctx.get()['content'] = self._agent_instructions.strip()
-                    else:
-                        self.session.add_context('prompt', self._agent_instructions.strip())
-                    self._agent_prompt_injected = True
-            except Exception:
-                pass
-
-        # On first turn, if we haven't injected the instructions yet, append to the prompt if present
-        if turn_index == 0 and not self._agent_prompt_injected:
-            try:
-                prompt_ctx = self.session.get_context('prompt')
-                if prompt_ctx:
-                    content = prompt_ctx.get().get('content', '')
-                    prompt_ctx.get()['content'] = (content + self._agent_instructions)
-                    self._agent_prompt_injected = True
-                else:
-                    # No prompt exists (user disabled); add minimal instructions-only prompt
-                    self.session.add_context('prompt', self._agent_instructions.strip())
-                    self._agent_prompt_injected = True
-            except Exception:
-                pass
-
-        chat = self.session.get_context('chat')
-        chat.add(stdin_content or '', 'user', contexts)
-
-        # Clear temporary contexts after attaching
-        for context_type in list(self.session.context.keys()):
-            if context_type not in ('prompt', 'chat'):
-                self.session.remove_context_type(context_type)
-
-    def _assistant_turn(self):
-        """Produce one assistant response, handle output per agent_output_mode, and return raw and sanitized text."""
-        params = self.session.get_params()
-        provider = self.session.get_provider()
-        output_processor = None
-
-        response_text = None
-        sanitized_for_tools = None
-
-        output_mode = params.get('agent_output_mode', 'final')
-        show_stream = (output_mode == 'full')
-        if show_stream:
-            # Label for readability (reuse chat colors)
-            response_label = self.utils.output.style_text(
-                params.get('response_label', 'Assistant:'),
-                fg=params.get('response_label_color', 'green')
-            )
-            self.utils.output.write(f"{response_label} ", end='', flush=True)
-
-        if params.get('stream', False):
-            stream = provider.stream_chat()
-            if not stream:
-                if show_stream:
-                    self.utils.output.write("")
-                return None, None
-            if show_stream:
-                # Use output action to preserve filter behavior for display
-                output_processor = self.session.get_action('assistant_output')
-                if output_processor:
-                    response_text = output_processor.run(stream, spinner_message="")
-                    sanitized_for_tools = output_processor.get_sanitized_output() or response_text
-                else:
-                    response_text = ""
-                    for chunk in stream:
-                        self.utils.output.write(chunk, end='', flush=True)
-                        response_text += chunk
-                    self.utils.output.write('')
-                    sanitized_for_tools = response_text
-            else:
-                # Silent accumulation of full response
-                parts = []
-                for chunk in stream:
-                    if isinstance(chunk, str):
-                        parts.append(chunk)
-                response_text = ''.join(parts)
-                sanitized_for_tools = AssistantOutputAction.filter_full_text_for_return(response_text, self.session)
-        else:
-            response_text = provider.chat()
-            if response_text is None:
-                if show_stream:
-                    self.utils.output.write("")
-                return None, None
-            # Apply display-side filters for parity with streaming UX
-            if show_stream:
-                filtered_for_display = AssistantOutputAction.filter_full_text(response_text, self.session)
-                self.utils.output.write(filtered_for_display)
-                self.utils.output.write('')
-            sanitized_for_tools = AssistantOutputAction.filter_full_text_for_return(response_text, self.session)
-
-        return response_text, sanitized_for_tools
+    # Removed legacy helpers: dumping messages, manual per-turn prep, and assistant turn.
 
     def start(self):
         try:
@@ -276,79 +82,27 @@ class AgentMode(InteractionMode):
                 self.utils.output.error("AgentStepsMode: no provider available")
                 return
 
-            commands_action = self.session.get_action('assistant_commands')
-
             out_mode = (self.session.get_params().get('agent_output_mode', 'final') or 'final').lower()
 
-            # In final/none, suppress leading blank spacing and newline bursts from chat-mode flows.
-            suppress_ctx = self.utils.output.suppress_stdout_blanks(suppress_blank_lines=True, collapse_bursts=True) \
-                if out_mode in ('final', 'none') else None
+            # Suppress leading blanks/newline bursts for final/none
+            suppress_ctx = self.utils.output.suppress_stdout_blanks(
+                suppress_blank_lines=True, collapse_bursts=True
+            ) if out_mode in ('final', 'none') else self.utils.output.suppress_stdout_blanks(False, False)
 
-            with (suppress_ctx if suppress_ctx is not None else self.utils.output.suppress_stdout_blanks(False, False)):
-                # N-turn loop
-                last_assistant_display = None
-                debug_dump = bool(self.session.get_params().get('agent_debug', False))
-                for i in range(self.steps):
-                    final = (i == self.steps - 1)
-
-                    # Prepare per-turn user message from current contexts (tools results, status, etc.)
-                    self._prepare_user_turn_with_contexts(i)
-
-                    if debug_dump:
-                        # Include system prompt only at the first turn
-                        # Omit the last assistant message in dumps to avoid duplication
-                        self._dump_messages(f"BEFORE TURN {i+1}", include_prompt=(i == 0), omit_last_assistant=True)
-
-                    # Get assistant output (with streaming if configured)
-                    response, sanitized = self._assistant_turn()
-                    if not response:
-                        self.utils.output.debug(f"[Agent] Empty response on turn {i+1}; stopping.")
-                        break
-
-                    # Record assistant message
-                    chat.add(response, 'assistant')
-                    # Keep latest display-friendly version for final/none handling
-                    last_assistant_display = AssistantOutputAction.filter_full_text(response, self.session)
-
-                    # Suppress AFTER dump for the final turn to avoid duplicating the final answer
-                    # If needed later, we can re-enable for non-final turns only
-                    if debug_dump and not final:
-                        # Always omit the most recent assistant to avoid duplication in logs
-                        self._dump_messages(f"AFTER TURN {i+1}", omit_last_assistant=True)
-
-                    # Sentinel-based early exit
-                    if ('%%DONE%%' in response) or ('%%COMPLETED%%' in response) or ('%%COMPLETE%%' in response):
-                        self.utils.output.debug(f"[Agent] Sentinel detected on turn {i+1}; stopping.")
-                        break
-
-                    # Tool execution based on assistant output
-                    ran_tools = False
-                    if commands_action and sanitized is not None:
-                        try:
-                            # Heuristic: if there are no parsed commands, optionally early exit
-                            parsed = commands_action.parse_commands(sanitized)
-                            if parsed:
-                                ran_tools = True
-                                commands_action.run(sanitized)
-                        except Exception as e:
-                            # Bubble errors into assistant context for next turn
-                            self.session.add_context('assistant', {
-                                'name': 'command_error',
-                                'content': f'Error running assistant commands: {e}'
-                            })
-
-                    # Optional early exit heuristic: if no tools and not final
-                    if not final and not ran_tools:
-                        self.utils.output.debug(f"[Agent] No tools invoked on turn {i+1}; stopping early.")
-                        break
-
-                # No trailing spacer here; avoid introducing a blank before final output
+            with suppress_ctx:
+                result = self.turn_runner.run_agent_loop(
+                    self.steps,
+                    prepare_prompt=lambda s, idx, total, has_stdin: self._prepare_prompt(idx, total, has_stdin),
+                    options=TurnOptions(
+                        agent_output_mode=out_mode,
+                        early_stop_no_tools=True,
+                        verbose_dump=bool(self.session.get_params().get('agent_debug', False)),
+                    ),
+                )
 
             # Output policy after the loop
             if out_mode == 'final':
-                # If raw mode requested, emit only the raw response (programmatic use)
                 if self.session.get_params().get('raw_completion', False):
-                    provider = self.session.get_provider()
                     if provider and hasattr(provider, 'get_full_response'):
                         raw = provider.get_full_response()
                         try:
@@ -356,27 +110,47 @@ class AgentMode(InteractionMode):
                             raw_str = json.dumps(raw, indent=2, ensure_ascii=False) if not isinstance(raw, str) else raw
                         except Exception:
                             raw_str = str(raw)
-                        # Strip finish sentinel tokens from raw if it's a string
                         if isinstance(raw_str, str):
                             for tag in ('%%DONE%%', '%%COMPLETED%%', '%%COMPLETE%%'):
                                 raw_str = raw_str.replace(tag, '')
                         self.utils.output.write(raw_str, end='')
-                elif last_assistant_display:
-                    final_text = last_assistant_display
-                    # Trim a single leading newline (CRLF or LF) that some providers produce
-                    if isinstance(final_text, str):
-                        if final_text.startswith('\r\n'):
-                            final_text = final_text[2:]
-                        elif final_text.startswith('\n'):
-                            final_text = final_text[1:]
-                        # Remove finish sentinel tokens in final output
-                        for tag in ('%%DONE%%', '%%COMPLETED%%', '%%COMPLETE%%'):
-                            final_text = final_text.replace(tag, '')
+                elif result.last_text:
+                    final_text = result.last_text
+                    if final_text.startswith('\r\n'):
+                        final_text = final_text[2:]
+                    elif final_text.startswith('\n'):
+                        final_text = final_text[1:]
                     self.utils.output.write(final_text)
-            # 'none': no assistant output here; 'full': already streamed
+            # 'full': already streamed; 'none': no output
         finally:
-            # Ensure Agent Mode flags are always cleaned up
             try:
                 self.session.exit_agent_mode()
             except Exception:
                 pass
+
+    def _prepare_prompt(self, turn_index: int, total_turns: int, stdin_present: bool) -> None:
+        """Inject finish/write-policy note into the prompt on first turn.
+
+        If stdin is present and no explicit prompt override exists, replace the
+        prompt with instructions-only to avoid mixing unknown prompts.
+        """
+        try:
+            overrides = getattr(self.session.config, 'overrides', {})
+            have_explicit_prompt = ('prompt' in overrides)
+            prompt_ctx = self.session.get_context('prompt')
+            if stdin_present and not have_explicit_prompt:
+                if prompt_ctx:
+                    prompt_ctx.get()['content'] = self._agent_instructions.strip()
+                else:
+                    self.session.add_context('prompt', self._agent_instructions.strip())
+                self._agent_prompt_injected = True
+                return
+            if turn_index == 1 and not self._agent_prompt_injected:
+                if prompt_ctx:
+                    content = prompt_ctx.get().get('content', '')
+                    prompt_ctx.get()['content'] = (content + self._agent_instructions)
+                else:
+                    self.session.add_context('prompt', self._agent_instructions.strip())
+                self._agent_prompt_injected = True
+        except Exception:
+            pass

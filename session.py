@@ -21,6 +21,7 @@ class Session:
         self.user_data = {}  # For arbitrary session data
         self._registry = registry
         self.current_model = None  # Track the current model
+        self.ui = None  # UI adapter (CLI/Web/TUI)
 
     # Convenience methods that delegate to registry
     def get_action(self, name: str):
@@ -97,6 +98,36 @@ class Session:
         """Clear multiple context types"""
         for context_type in context_types:
             self.clear_context(context_type)
+
+    # --- Context transactions -----------------------------------------
+    class ContextTransaction:
+        def __init__(self, session: 'Session') -> None:
+            self._session = session
+            self._staged_adds: List[Dict[str, Any]] = []
+            self._committed = False
+
+        def add_context(self, kind: str, value: Any):
+            # Stage by recording the intent; actual creation deferred to commit
+            self._staged_adds.append({'type': kind, 'data': value})
+            return self
+
+        def commit(self):
+            if self._committed:
+                return
+            for item in self._staged_adds:
+                try:
+                    self._session.add_context(item['type'], item.get('data'))
+                except Exception:
+                    # Best-effort; continue adding others
+                    pass
+            self._committed = True
+
+        def rollback(self):
+            # Nothing to do: we never applied staged changes
+            self._staged_adds.clear()
+
+    def context_transaction(self) -> 'Session.ContextTransaction':
+        return Session.ContextTransaction(self)
 
     @property
     def utils(self):
@@ -419,6 +450,26 @@ class SessionBuilder:
             provider_class = registry.load_provider_class(provider_name)
             if provider_class:
                 session.provider = provider_class(session)
+
+        # Attach UI adapter according to mode (default to CLI)
+        ui_mode = (mode or 'chat').lower()
+        try:
+            if ui_mode in ('web',):
+                from ui.web import WebUI
+                session.ui = WebUI(session)
+            elif ui_mode in ('tui',):
+                from ui.tui import TUIUI
+                session.ui = TUIUI(session)
+            else:
+                from ui.cli import CLIUI
+                session.ui = CLIUI(session)
+        except Exception:
+            # Fallback to a minimal CLI UI if adapter import fails
+            try:
+                from ui.cli import CLIUI  # type: ignore
+                session.ui = CLIUI(session)
+            except Exception:
+                session.ui = None
 
         # Initialize default contexts based on mode
         try:

@@ -20,9 +20,15 @@ class CountTokensAction(InteractionAction):
             if params['tokenizer'] == 'tiktoken':
                 messages = self.session.get_provider().get_messages()
                 num_tokens = self.count_tiktoken(messages)
-                print(f"Number of tokens: {num_tokens}")
+                try:
+                    self.session.ui.emit('status', {'message': f'Number of tokens: {num_tokens}'})
+                except Exception:
+                    pass
         else:
-            print("No tokenizer specified.")
+            try:
+                self.session.ui.emit('warning', {'message': 'No tokenizer specified.'})
+            except Exception:
+                pass
 
     @staticmethod
     def count_tiktoken(messages, model="gpt-4"):
@@ -31,7 +37,10 @@ class CountTokensAction(InteractionAction):
             try:
                 encoding = tiktoken.encoding_for_model(model)
             except KeyError:
-                print("Warning: model not found. Using cl100k_base encoding.")
+                try:
+                    self.session.ui.emit('warning', {'message': 'Warning: model not found. Using cl100k_base encoding.'})
+                except Exception:
+                    pass
                 encoding = tiktoken.get_encoding("cl100k_base")
 
             tokens_per_message = 3

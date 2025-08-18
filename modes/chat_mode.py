@@ -1,5 +1,5 @@
 from base_classes import InteractionMode
-from actions.assistant_output_action import AssistantOutputAction
+from turns import TurnRunner, TurnOptions
 
 
 class ChatMode(InteractionMode):
@@ -9,6 +9,7 @@ class ChatMode(InteractionMode):
         
         # Don't cache params - get them fresh each time
         self.utils = self.session.utils
+        self.turn_runner = TurnRunner(self.session)
 
         self.session.add_context('chat')
         self.chat = self.session.get_context('chat')
@@ -45,58 +46,6 @@ class ChatMode(InteractionMode):
         # either one line or multiple lines joined together.
         return user_input
 
-    def handle_assistant_response(self):
-        """Handle getting and processing the assistant's response"""
-        response_label = self.utils.output.style_text(
-            self.params['response_label'],
-            fg=self.params['response_label_color']
-        )
-        self.utils.output.write(f"{response_label} ", end='', flush=True)
-
-        output_processor = None
-        try:
-            if self.params['stream']:
-                stream = self.session.get_provider().stream_chat()
-                if not stream:
-                    return None
-                output_processor = self.session.get_action('assistant_output')
-                if output_processor:
-                    response = output_processor.run(stream, spinner_message="")
-                else:
-                    # Fallback if assistant_output action not available
-                    response = ""
-                    for chunk in stream:
-                        self.utils.output.write(chunk, end='', flush=True)
-                        response += chunk
-                    self.utils.output.write('')
-            else:
-                response = self.session.get_provider().chat()
-                if response is None:
-                    return None
-                # Apply non-streaming output filters for display parity
-                filtered = AssistantOutputAction.filter_full_text(response, self.session)
-                self.utils.output.write(filtered)
-                self.utils.output.write('')
-        except (KeyboardInterrupt, EOFError):
-            self.utils.output.write('')
-            return None
-
-        self.chat.add(response, 'assistant')
-        assistant_commands = self.session.get_action('assistant_commands')
-        if assistant_commands:
-            # Prefer sanitized output (think removed) if available to avoid accidental tool triggers
-            try:
-                sanitized = None
-                if output_processor and hasattr(output_processor, 'get_sanitized_output'):
-                    sanitized = output_processor.get_sanitized_output()
-                # If not streaming (no output_processor), synthesize sanitized text for tools
-                if sanitized is None and response is not None:
-                    sanitized = AssistantOutputAction.filter_full_text_for_return(response, self.session)
-                assistant_commands.run(sanitized if sanitized is not None else response)
-            except Exception:
-                assistant_commands.run(response)
-        return response
-
     def check_budget(self):
         """Check if session budget exists and has been exceeded"""
         if self._budget_warning_shown:
@@ -129,21 +78,18 @@ class ChatMode(InteractionMode):
             # Check budget before processing contexts
             self.check_budget()
 
-            if self.session.get_flag('auto_submit'):
-                if self.process_contexts and hasattr(self.process_contexts, 'process_contexts_for_user'):
-                    contexts = self.process_contexts.process_contexts_for_user(auto_submit=True)
-                else:
-                    contexts = []
-            else:
-                if self.process_contexts and hasattr(self.process_contexts, 'process_contexts_for_user'):
-                    contexts = self.process_contexts.process_contexts_for_user()
-                else:
-                    contexts = []
+            # Pre-prompt updates: show context summaries/details and recent statuses
+            # Skip when auto-submit is set; the runner will handle that path.
+            if not self.session.get_flag('auto_submit'):
+                try:
+                    self.turn_runner.show_pre_prompt_updates()
+                except Exception:
+                    pass
 
             try:
                 # Skip user input if auto_submit is set
                 if self.session.get_flag('auto_submit'):
-                    self.session.set_flag('auto_submit', False)
+                    # Do not clear the flag here; TurnRunner handles and resets it.
                     user_input = ""
                 else:
                     user_input = self.get_user_input()
@@ -165,12 +111,30 @@ class ChatMode(InteractionMode):
                 except (KeyboardInterrupt, EOFError):
                     raise
 
-            self.chat.add(user_input, 'user', contexts)
+            # Produce assistant response using the unified TurnRunner
+            params = self.params
+            stream = bool(params.get('stream'))
 
-            # Clear temporary contexts
-            for context_type in list(self.session.context.keys()):
-                if context_type not in ('prompt', 'chat'):
-                    self.session.remove_context_type(context_type)
+            # For streaming, print the assistant label before tokens
+            response_label = self.utils.output.style_text(
+                params['response_label'],
+                fg=params['response_label_color']
+            )
 
-            self.handle_assistant_response()
+            if stream:
+                self.utils.output.write(f"{response_label} ", end='', flush=True)
+
+            result = self.turn_runner.run_user_turn(
+                user_input,
+                options=TurnOptions(stream=stream, suppress_context_print=True)
+            )
+
+            if not stream:
+                # Non-stream: print label and the filtered display text
+                self.utils.output.write(f"{response_label} ", end='', flush=True)
+                if result.last_text:
+                    self.utils.output.write(result.last_text)
+                self.utils.output.write('')
+
+            # Spacer between turns
             self.utils.output.write()

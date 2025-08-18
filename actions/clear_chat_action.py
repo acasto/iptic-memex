@@ -10,7 +10,7 @@ class ClearChatAction(InteractionAction):
         """
         Clears stuff from the chat state
         """
-        if len(args) == 0:  # if no args, do nothing
+        if not args or len(args) == 0:  # if no args, do nothing
             return True
         elif args[0] == 'chat':
             self.clear_chat()
@@ -35,7 +35,10 @@ class ClearChatAction(InteractionAction):
         self.session.get_context('chat').clear()
         self.session.get_provider().reset_usage()
         self.ui.clear_screen()
-        print(f"Chat history has been cleared.\n")
+        try:
+            self.session.ui.emit('status', {'message': 'Chat history has been cleared.'})
+        except Exception:
+            pass
 
     def remove_last_message(self):
         """
@@ -43,10 +46,16 @@ class ClearChatAction(InteractionAction):
         """
         chat_context = self.session.get_context('chat')
         if chat_context.remove_last_message():
-            print(f"Last message removed.\n")
+            try:
+                self.session.ui.emit('status', {'message': 'Last message removed.'})
+            except Exception:
+                pass
             self.session.get_action('reprint_chat').run()
         else:
-            print(f"No messages to remove.\n")
+            try:
+                self.session.ui.emit('status', {'message': 'No messages to remove.'})
+            except Exception:
+                pass
 
     def remove_last_messages(self, n):
         """
@@ -55,10 +64,16 @@ class ClearChatAction(InteractionAction):
         chat_context = self.session.get_context('chat')
         removed = chat_context.remove_messages(n)
         if removed > 0:
-            print(f"Last {removed} message(s) removed.\n")
+            try:
+                self.session.ui.emit('status', {'message': f'Last {removed} message(s) removed.'})
+            except Exception:
+                pass
             self.session.get_action('reprint_chat').run()
         else:
-            print(f"No messages to remove.\n")
+            try:
+                self.session.ui.emit('status', {'message': 'No messages to remove.'})
+            except Exception:
+                pass
 
     def remove_first_message(self):
         """
@@ -66,10 +81,16 @@ class ClearChatAction(InteractionAction):
         """
         chat_context = self.session.get_context('chat')
         if chat_context.remove_first_message():
-            print(f"First message removed.\n")
+            try:
+                self.session.ui.emit('status', {'message': 'First message removed.'})
+            except Exception:
+                pass
             self.session.get_action('reprint_chat').run()
         else:
-            print(f"No messages to remove.\n")
+            try:
+                self.session.ui.emit('status', {'message': 'No messages to remove.'})
+            except Exception:
+                pass
 
     def remove_first_messages(self, n):
         """
@@ -78,7 +99,13 @@ class ClearChatAction(InteractionAction):
         chat_context = self.session.get_context('chat')
         removed = chat_context.remove_first_messages(n)
         if removed > 0:
-            print(f"First {removed} message(s) removed.\n")
+            try:
+                self.session.ui.emit('status', {'message': f'First {removed} message(s) removed.'})
+            except Exception:
+                pass
             self.session.get_action('reprint_chat').run()
         else:
-            print(f"No messages to remove.\n")
+            try:
+                self.session.ui.emit('status', {'message': 'No messages to remove.'})
+            except Exception:
+                pass

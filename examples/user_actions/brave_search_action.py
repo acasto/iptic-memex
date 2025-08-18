@@ -1,8 +1,8 @@
 import requests
-from base_classes import InteractionAction
+from base_classes import StepwiseAction, Completed
 
 
-class BraveSearchAction(InteractionAction):
+class BraveSearchAction(StepwiseAction):
     """
     Class for performing web searches using the Brave Search API
     """
@@ -11,17 +11,35 @@ class BraveSearchAction(InteractionAction):
         self.session = session
         self.brave = session.conf.get_all_options_from_provider("Brave")
 
-    def run(self, message=None):
-        search = input("Search query (or q to exit): ")
-        if search.lower() == "q":
-            return False
-        else:
-            results = self.search(search)
-            print(f"Results: {results}")
-            quit()
-            if results:
-                self.session.add_context('search_results', results)
-            return
+    def start(self, args=None, content: str = "") -> Completed:
+        query = None
+        if isinstance(args, dict):
+            query = args.get('query')
+        elif isinstance(args, (list, tuple)) and args:
+            query = " ".join(str(a) for a in args)
+        if not query:
+            query = self.session.ui.ask_text("Search query (or q to exit): ")
+        if str(query).strip().lower() == 'q':
+            return Completed({'ok': True, 'cancelled': True})
+        results = self.search(str(query))
+        if results is None:
+            try:
+                self.session.ui.emit('error', {'message': 'Search failed.'})
+            except Exception:
+                pass
+            return Completed({'ok': False})
+        # Emit a brief summary
+        try:
+            self._emit_summary(results)
+        except Exception:
+            pass
+        # Save to context automatically in Web, confirm in CLI
+        save_now = True
+        if getattr(self.session.ui.capabilities, 'blocking', False):
+            save_now = bool(self.session.ui.ask_bool('Save results to context?', default=True))
+        if save_now:
+            self.session.add_context('search_results', results)
+        return Completed({'ok': True, 'saved': save_now})
 
     def search(self, query):
         headers = {
@@ -40,21 +58,31 @@ class BraveSearchAction(InteractionAction):
         if response.status_code == 200:
             return response.json()
         else:
-            print(f"Error: {response.status_code} - {response.text}")
+            try:
+                self.session.ui.emit('error', {'message': f"Error: {response.status_code} - {response.text}"})
+            except Exception:
+                pass
             return None
 
-    def display_results(self, results):
+    def _emit_summary(self, results):
         if not results:
-            print("No results found.")
+            try:
+                self.session.ui.emit('status', {'message': 'No results found.'})
+            except Exception:
+                pass
             return
 
         if 'web' in results and 'results' in results['web']:
-            print("\nWeb Results:")
+            lines = ['Web Results:']
             for result in results['web']['results']:
-                print(f"\nTitle: {result['title']}")
-                print(f"URL: {result['url']}")
-                print(f"Description: {result['description']}")
-                print("-" * 50)
+                lines.append(f"\nTitle: {result.get('title','')}")
+                lines.append(f"URL: {result.get('url','')}")
+                lines.append(f"Description: {result.get('description','')}")
+                lines.append('-' * 50)
+            try:
+                self.session.ui.emit('status', {'message': "\n".join(lines)})
+            except Exception:
+                pass
 
         # if 'mixed' in results:
         #     print("\nMixed Results Structure:")
@@ -72,8 +100,12 @@ class BraveSearchAction(InteractionAction):
         #                 print(f"- Type: {item_type}, Index: {item_index}, All: {item_all}")
 
         if 'faq' in results and 'results' in results['faq']:
-            print("\nFAQs:")
+            lines = ['\nFAQs:']
             for faq in results['faq']['results']:
-                print(f"Q: {faq['question']}")
-                print(f"A: {faq['answer']}")
-                print("-" * 30)
+                lines.append(f"Q: {faq.get('question','')}")
+                lines.append(f"A: {faq.get('answer','')}")
+                lines.append('-' * 30)
+            try:
+                self.session.ui.emit('status', {'message': "\n".join(lines)})
+            except Exception:
+                pass

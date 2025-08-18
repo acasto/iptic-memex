@@ -13,8 +13,13 @@ Notes:
 - If Starlette/Uvicorn are not installed, WebMode will surface the ImportError.
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Tuple, List
 import os
+import hmac
+import hashlib
+import time
+import secrets
+from dataclasses import dataclass
 
 try:
     from starlette.applications import Starlette
@@ -71,11 +76,17 @@ class WebApp:
         if not self.session.get_context('chat'):
             self.session.add_context('chat')
 
+        # Simple per-process secret for HMAC tokens
+        self._secret = secrets.token_bytes(32)
+        self._states: Dict[str, 'ActionState'] = {}
+
         routes = [
             Route('/', self.index, methods=['GET']),
             Route('/api/status', self.api_status, methods=['GET']),
             Route('/api/chat', self.api_chat, methods=['POST']),
             Route('/api/stream', self.api_stream, methods=['GET']),
+            Route('/api/action/start', self.api_action_start, methods=['POST']),
+            Route('/api/action/resume', self.api_action_resume, methods=['POST']),
         ]
         self._app = Starlette(routes=routes)
         # Static files (app.js)
@@ -109,15 +120,136 @@ class WebApp:
         if not message:
             return PlainTextResponse('Missing "message"', status_code=400)
 
-        # Process contexts (non-interactive path) similar to CompletionMode
-        process_contexts = self.session.get_action('process_contexts')
-        contexts = process_contexts.get_contexts(self.session) if process_contexts else []
+        # Check for user command first (CLI parity: handle before adding to chat/LLM)
+        try:
+            user_cmds = self.session.get_action('user_commands')
+        except Exception:
+            user_cmds = None
 
-        # Add chat context and message
-        chat = self.session.get_context('chat')
-        chat.add(message, 'user', contexts)
+        matched_action: Optional[str] = None
+        matched_kind: Optional[str] = None  # 'action' or 'method'
+        matched_info: Optional[Dict[str, Any]] = None
+        matched_args: List[str] = []
+        if user_cmds and hasattr(user_cmds, 'commands') and len(message.split()) <= 4:
+            try:
+                # Sort by length (longest first) as in CLI
+                sorted_commands = sorted(user_cmds.commands.keys(), key=len, reverse=True)  # type: ignore[attr-defined]
+                for cmd in sorted_commands:
+                    if message.lower() == cmd or message.lower().startswith(cmd + ' '):
+                        info = user_cmds.commands[cmd]  # type: ignore[attr-defined]
+                        fn = info.get('function', {})
+                        matched_kind = fn.get('type')
+                        matched_info = info
+                        if matched_kind == 'action':
+                            matched_action = fn['name']
+                        # prepare args the same way (predefined + user tail)
+                        user_tail = message[len(cmd):].strip().split()
+                        predefined = fn.get('args', [])
+                        if isinstance(predefined, str):
+                            predefined = [predefined]
+                        matched_args = list(predefined) + user_tail
+                        break
+            except Exception:
+                matched_action = None
+                matched_kind = None
 
-        # Non-stream MVP: call provider.chat()
+        if matched_kind in ('action', 'method'):
+            # Execute command (action or method) with event capture and no LLM call
+            from web.output_sink import WebOutput
+            from contextlib import redirect_stdout
+            from io import StringIO
+            utils = self.session.utils
+            original_output = utils.output
+            web_output = WebOutput()
+            utils.replace_output(web_output)
+            # Capture UI emits
+            emitted: List[Dict[str, Any]] = []
+            original_ui = self.session.ui
+            original_emit = getattr(original_ui, 'emit', None)
+            def _capture_emit(event_type: str, data: Dict[str, Any]) -> None:
+                try:
+                    item = dict(data)
+                    item['type'] = event_type
+                    emitted.append(item)
+                except Exception:
+                    pass
+            try:
+                if original_emit:
+                    original_ui.emit = _capture_emit  # type: ignore[attr-defined]
+                # Capture print() output as additional status updates
+                stdout_buf = StringIO()
+                with redirect_stdout(stdout_buf):
+                    if matched_kind == 'action' and matched_action:
+                        action = self.session.get_action(matched_action)
+                        if not action:
+                            return JSONResponse({'ok': False, 'error': {'recoverable': False, 'message': f"Unknown action '{matched_action}'"}}, status_code=404)
+                        try:
+                            # Allow special method-on-action if declared
+                            fn = matched_info.get('function', {}) if matched_info else {}
+                            if 'method' in fn:
+                                meth = getattr(action.__class__, fn['method'])
+                                meth(self.session, *matched_args if matched_args else [])
+                            else:
+                                action.run(matched_args)
+                        except Exception as need_exc:
+                            # If a stepwise action requested interaction, return needs_interaction
+                            from base_classes import InteractionNeeded
+                            if isinstance(need_exc, InteractionNeeded):
+                                token = self._issue_token(matched_action, 1, need_exc.kind, {"args": {"argv": matched_args}, "content": None})
+                                spec = dict(need_exc.spec)
+                                spec['state_token'] = token
+                                # Include any printed output as updates too
+                                printed = stdout_buf.getvalue()
+                                if printed:
+                                    emitted.append({'type': 'status', 'message': printed})
+                                # Compose a minimal text to display in UI
+                                prompt_text = ''
+                                try:
+                                    prompt_text = str(spec.get('prompt') or spec.get('message') or '')
+                                except Exception:
+                                    prompt_text = ''
+                                return JSONResponse({
+                                    "ok": True,
+                                    "done": False,
+                                    "needs_interaction": {"kind": need_exc.kind, "spec": spec},
+                                    "state_token": token,
+                                    "updates": emitted,
+                                    "text": prompt_text
+                                })
+                            # otherwise, real error
+                            return JSONResponse({'ok': False, 'error': {'recoverable': True, 'message': str(need_exc)}}, status_code=500)
+                    elif matched_kind == 'method':
+                        # Call method on the user commands action instance
+                        try:
+                            fn = matched_info.get('function', {}) if matched_info else {}
+                            method_name = fn.get('name')
+                            if not method_name:
+                                return JSONResponse({'ok': False, 'error': {'recoverable': False, 'message': 'Invalid command mapping'}}, status_code=500)
+                            method = getattr(user_cmds, method_name)
+                            method(*matched_args)
+                        except Exception as e:
+                            return JSONResponse({'ok': False, 'error': {'recoverable': True, 'message': str(e)}}, status_code=500)
+                # Flush captured prints into updates
+                printed = stdout_buf.getvalue()
+                if printed:
+                    emitted.append({'type': 'status', 'message': printed})
+            finally:
+                try:
+                    if original_emit:
+                        original_ui.emit = original_emit  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                utils.replace_output(original_output)
+
+            # Compose a simple text from status updates and prints for current UI
+            text_lines = []
+            for ev in emitted:
+                if ev.get('type') in ('status', 'warning', 'error') and ev.get('message'):
+                    text_lines.append(str(ev.get('message')))
+            render_text = '\n'.join(text_lines) if text_lines else ''
+            return JSONResponse({'ok': True, 'done': True, 'handled': True, 'updates': emitted, 'command': matched_action or (matched_info.get('function', {}).get('name') if matched_info else None), 'text': render_text})
+
+        # Non-stream path via TurnRunner
         provider = self.session.get_provider()
         if not provider:
             return PlainTextResponse('No provider available', status_code=500)
@@ -125,45 +257,36 @@ class WebApp:
         # Ensure streaming disabled for this call
         self.session.set_option('stream', False)
 
-        # Swap output sink to suppress spinners/stdout noise during web requests
+        # Use TurnRunner and suppress stdout via WebOutput
         from web.output_sink import WebOutput
+        from turns import TurnRunner, TurnOptions
         utils = self.session.utils
         original_output = utils.output
         utils.replace_output(WebOutput())
         try:
-            raw_text = provider.chat()
-        except Exception as e:
-            return PlainTextResponse(f'Provider error: {e}', status_code=500)
+            from base_classes import InteractionNeeded
+            runner = TurnRunner(self.session)
+            try:
+                result = runner.run_user_turn(message, options=TurnOptions(stream=False, suppress_context_print=True))
+            except InteractionNeeded as need:
+                spec = dict(getattr(need, 'spec', {}) or {})
+                action_name = spec.pop('__action__', None) or 'assistant_file_tool'
+                args_for_action = spec.pop('__args__', None)
+                content_for_action = spec.pop('__content__', None)
+                token = self._issue_token(action_name, 1, need.kind, {"args": args_for_action, "content": content_for_action})
+                spec['state_token'] = token
+                return JSONResponse({
+                    "ok": True,
+                    "done": False,
+                    "needs_interaction": {"kind": need.kind, "spec": spec},
+                    "state_token": token,
+                    "updates": [],
+                    "text": str(spec.get('prompt') or spec.get('message') or ''),
+                })
         finally:
-            # Restore original output handler
             utils.replace_output(original_output)
 
-        if raw_text is None:
-            raw_text = ''
-
-        # Apply display-side filters for parity with CLI
-        from actions.assistant_output_action import AssistantOutputAction
-        visible = AssistantOutputAction.filter_full_text(raw_text, self.session)
-        sanitized = AssistantOutputAction.filter_full_text_for_return(raw_text, self.session)
-
-        # Record assistant message
-        chat.add(raw_text, 'assistant')
-
-        # Run assistant commands server-side (non-interactive)
-        try:
-            assistant_cmds = self.session.get_action('assistant_commands')
-            if assistant_cmds:
-                # Suppress spinners/stdout during tool execution as well
-                utils = self.session.utils
-                original_output = utils.output
-                utils.replace_output(WebOutput())
-                try:
-                    assistant_cmds.run(sanitized)
-                finally:
-                    utils.replace_output(original_output)
-        except Exception:
-            # Swallow tool errors; they will be added as contexts by the action when applicable
-            pass
+        visible = result.last_text or ''
 
         # Optional: usage and cost
         usage = None
@@ -194,12 +317,122 @@ class WebApp:
         if not message:
             return PlainTextResponse('Missing "message"', status_code=400)
 
-        # Prepare contexts similar to /api/chat
-        process_contexts = self.session.get_action('process_contexts')
-        contexts = process_contexts.get_contexts(self.session) if process_contexts else []
-        chat = self.session.get_context('chat')
-        chat.add(message, 'user', contexts)
+        # Early: command handling parity with /api/chat (do not open stream when handled)
+        try:
+            user_cmds = self.session.get_action('user_commands')
+        except Exception:
+            user_cmds = None
+        matched_kind = None
+        matched_action = None
+        matched_info = None
+        matched_args: List[str] = []
+        if user_cmds and hasattr(user_cmds, 'commands') and len(message.split()) <= 4:
+            try:
+                sorted_commands = sorted(user_cmds.commands.keys(), key=len, reverse=True)  # type: ignore[attr-defined]
+                for cmd in sorted_commands:
+                    if message.lower() == cmd or message.lower().startswith(cmd + ' '):
+                        info = user_cmds.commands[cmd]  # type: ignore[attr-defined]
+                        fn = info.get('function', {})
+                        matched_kind = fn.get('type')
+                        matched_info = info
+                        if matched_kind == 'action':
+                            matched_action = fn.get('name')
+                        user_tail = message[len(cmd):].strip().split()
+                        predefined = fn.get('args', [])
+                        if isinstance(predefined, str):
+                            predefined = [predefined]
+                        matched_args = list(predefined) + user_tail
+                        break
+            except Exception:
+                matched_kind = None
 
+        if matched_kind in ('action', 'method'):
+            # Execute synchronously and return a single 'done' event with rendered updates
+            utils = self.session.utils
+            original_output = utils.output
+            web_output = WebOutput()
+            utils.replace_output(web_output)
+            emitted: List[Dict[str, Any]] = []
+            original_ui = self.session.ui
+            original_emit = getattr(original_ui, 'emit', None)
+            def _capture_emit(event_type: str, data: Dict[str, Any]) -> None:
+                try:
+                    item = dict(data)
+                    item['type'] = event_type
+                    emitted.append(item)
+                except Exception:
+                    pass
+            from contextlib import redirect_stdout
+            from io import StringIO
+            stdout_buf = StringIO()
+            try:
+                if original_emit:
+                    original_ui.emit = _capture_emit  # type: ignore[attr-defined]
+                with redirect_stdout(stdout_buf):
+                    if matched_kind == 'action' and matched_action:
+                        action = self.session.get_action(matched_action)
+                        if action:
+                            fn = matched_info.get('function', {}) if matched_info else {}
+                            if 'method' in fn:
+                                meth = getattr(action.__class__, fn['method'])
+                                meth(self.session, *matched_args if matched_args else [])
+                            else:
+                                try:
+                                    action.run(matched_args)
+                                except Exception as need_exc:
+                                    from base_classes import InteractionNeeded
+                                    if isinstance(need_exc, InteractionNeeded):
+                                        need_kind = need_exc.kind
+                                        token = self._issue_token(matched_action, 1, need_kind, {"args": {"argv": matched_args}, "content": None})
+                                        spec = dict(need_exc.spec)
+                                        spec['state_token'] = token
+                                        # Render an instructional text
+                                        emitted.append({'type': 'status', 'message': 'Action needs interaction; respond via /api/action/resume.'})
+                                        text_lines = ['Action needs interaction; use /api/action/resume with provided token.']
+                                        for ev in emitted:
+                                            if ev.get('type') in ('status','warning','error') and ev.get('message'):
+                                                text_lines.append(str(ev.get('message')))
+                                        printed = stdout_buf.getvalue()
+                                        if printed:
+                                            text_lines.append(printed)
+                                        render_text = '\n'.join([ln for ln in text_lines if ln])
+                                        async def one_shot_need():
+                                            yield f"event: done\ndata: {json.dumps({'text': render_text, 'handled': True, 'needs_interaction': {'kind': need_kind, 'spec': spec}, 'state_token': token, 'updates': emitted, 'command': matched_action})}\n\n"
+                                        headers = {"Cache-Control": "no-cache", "Connection": "keep-alive"}
+                                        return StreamingResponse(one_shot_need(), media_type="text/event-stream", headers=headers)
+                                    else:
+                                        # Re-raise to be handled by outer finally
+                                        raise
+                    elif matched_kind == 'method':
+                        fn = matched_info.get('function', {}) if matched_info else {}
+                        method_name = fn.get('name')
+                        if method_name:
+                            method = getattr(user_cmds, method_name)
+                            method(*matched_args)
+            finally:
+                try:
+                    if original_emit:
+                        original_ui.emit = original_emit  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                utils.replace_output(original_output)
+
+            # Render text from updates and prints
+            text_lines = []
+            for ev in emitted:
+                if ev.get('type') in ('status', 'warning', 'error') and ev.get('message'):
+                    text_lines.append(str(ev.get('message')))
+            printed = stdout_buf.getvalue()
+            if printed:
+                text_lines.append(printed)
+            render_text = '\n'.join([ln for ln in text_lines if ln])
+
+            async def one_shot():
+                yield f"event: done\ndata: {json.dumps({'text': render_text, 'handled': True, 'updates': emitted, 'command': (matched_action or (matched_info.get('function', {}).get('name') if matched_info else None))})}\n\n"
+            headers = {"Cache-Control": "no-cache", "Connection": "keep-alive"}
+            return StreamingResponse(one_shot(), media_type="text/event-stream", headers=headers)
+
+        # Use TurnRunner for streaming with SSE
         provider = self.session.get_provider()
         if not provider:
             return PlainTextResponse('No provider available', status_code=500)
@@ -211,42 +444,30 @@ class WebApp:
         web_output = WebOutput(loop=loop, queue=queue)
 
         def run_streaming_turn():
-            # Runs in a background thread; must not use async APIs directly
             original_output = self.session.utils.output
             self.session.utils.replace_output(web_output)
             try:
-                # Produce stream
+                from turns import TurnRunner, TurnOptions
+                from base_classes import InteractionNeeded
+                runner = TurnRunner(self.session)
                 try:
-                    stream = provider.stream_chat()
-                except Exception as e:
-                    loop.call_soon_threadsafe(queue.put_nowait, {"type": "error", "message": str(e)})
+                    result = runner.run_user_turn(message, options=TurnOptions(stream=True, suppress_context_print=True))
+                except InteractionNeeded as need:
+                    spec = dict(getattr(need, 'spec', {}) or {})
+                    action_name = spec.pop('__action__', None) or 'assistant_file_tool'
+                    args_for_action = spec.pop('__args__', None)
+                    content_for_action = spec.pop('__content__', None)
+                    token = self._issue_token(action_name, 1, need.kind, {"args": args_for_action, "content": content_for_action})
+                    spec['state_token'] = token
+                    loop.call_soon_threadsafe(queue.put_nowait, {
+                        "type": "done",
+                        "text": str(spec.get('prompt') or spec.get('message') or ''),
+                        "needs_interaction": {"kind": need.kind, "spec": spec},
+                        "state_token": token,
+                        "handled": True,
+                    })
                     return
 
-                from actions.assistant_output_action import AssistantOutputAction
-                out_action = AssistantOutputAction(self.session)
-                try:
-                    raw_text = out_action.run(stream, spinner_message="")
-                except Exception as e:
-                    loop.call_soon_threadsafe(queue.put_nowait, {"type": "error", "message": str(e)})
-                    raw_text = ""
-
-                # Record assistant message
-                try:
-                    chat.add(raw_text, 'assistant')
-                except Exception:
-                    pass
-
-                # Tool execution
-                sanitized = out_action.get_sanitized_output() or raw_text
-                try:
-                    assistant_cmds = self.session.get_action('assistant_commands')
-                    if assistant_cmds:
-                        assistant_cmds.run(sanitized)
-                except Exception as e:
-                    # Surface tool error as a system message event; non-fatal
-                    loop.call_soon_threadsafe(queue.put_nowait, {"type": "error", "message": str(e)})
-
-                # Gather usage/cost
                 usage = None
                 cost = None
                 try:
@@ -257,18 +478,15 @@ class WebApp:
                 except Exception:
                     pass
 
-                # Finalize visible text from display buffer for parity
-                visible_full = out_action.get_display_output() or raw_text
-                # Send done event
                 loop.call_soon_threadsafe(queue.put_nowait, {
                     "type": "done",
-                    "text": visible_full,
-                    "sanitized": sanitized,
+                    "text": result.last_text or '',
                     "usage": usage,
                     "cost": cost,
                 })
+            except Exception as e:
+                loop.call_soon_threadsafe(queue.put_nowait, {"type": "error", "message": str(e)})
             finally:
-                # Ensure we restore output sink
                 self.session.utils.replace_output(original_output)
 
         # Start worker thread
@@ -290,9 +508,11 @@ class WebApp:
                     elif event.get('type') == 'done':
                         data = json.dumps({
                             "text": event.get('text', ''),
-                            "sanitized": event.get('sanitized', ''),
                             "usage": event.get('usage'),
                             "cost": event.get('cost'),
+                            "needs_interaction": event.get('needs_interaction'),
+                            "state_token": event.get('state_token'),
+                            "handled": event.get('handled'),
                         })
                         yield f"event: done\ndata: {data}\n\n"
                         break
@@ -315,3 +535,260 @@ class WebApp:
         bind_port = int(port or cfg_port)
 
         uvicorn.run(self._app, host=str(bind_host), port=int(bind_port), log_level='info')
+
+    # ----- Stepwise actions (MVP) --------------------------------------
+    @dataclass
+    class ActionState:
+        session_id: str
+        action_name: str
+        step: int
+        phase: str
+        data: Dict[str, Any]
+        issued_at: float
+        used: bool = False
+        version: int = 1
+
+    def _session_id(self) -> str:
+        # MVP: single user/session
+        return 'default'
+
+    def _sign(self, payload: bytes) -> str:
+        return hmac.new(self._secret, payload, hashlib.sha256).hexdigest()
+
+    def _issue_token(self, action_name: str, step: int, phase: str, data: Dict[str, Any]) -> str:
+        issued_at = time.time()
+        nonce = secrets.token_hex(8)
+        parts = f"{self._session_id()}|{action_name}|{step}|{issued_at}|{nonce}".encode('utf-8')
+        sig = self._sign(parts)
+        token = f"{sig}.{nonce}"
+        self._states[token] = WebApp.ActionState(
+            session_id=self._session_id(),
+            action_name=action_name,
+            step=step,
+            phase=phase,
+            data=data,
+            issued_at=issued_at,
+            used=False,
+            version=1,
+        )
+        return token
+
+    def _verify_token(self, token: str, *, ttl_seconds: int = 900) -> Tuple[Optional['ActionState'], Optional[str]]:
+        st = self._states.get(token)
+        if not st:
+            return None, "Invalid token"
+        if st.used:
+            return None, "Token already used"
+        if st.session_id != self._session_id():
+            return None, "Session mismatch"
+        if time.time() - st.issued_at > ttl_seconds:
+            return None, "Token expired"
+        # Cannot recompute signature without the exact parts stored; minimal MVP validation above
+        return st, None
+
+    async def api_action_start(self, request: Request):
+        from base_classes import Completed, Updates, InteractionNeeded
+        from web.output_sink import WebOutput
+        try:
+            payload: Dict[str, Any] = await request.json()
+        except Exception:
+            return PlainTextResponse('Invalid JSON', status_code=400)
+
+        action_name = (payload.get('action') or '').strip()
+        if not action_name:
+            return PlainTextResponse('Missing "action"', status_code=400)
+        args = payload.get('args') or {}
+        content = payload.get('content')
+
+        action = self.session.get_action(action_name)
+        if not action:
+            return PlainTextResponse(f"Unknown action '{action_name}'", status_code=404)
+
+        # Drive the action until a boundary (Completed or InteractionNeeded)
+        def drive_until_boundary(res: Any, emitted: List[Dict[str, Any]]) -> Tuple[str, Dict[str, Any]]:
+            aggregated: List[Dict[str, Any]] = list(emitted)
+            while isinstance(res, Updates):
+                aggregated.extend(res.events or [])
+                try:
+                    res = action.resume("__implicit__", {"continue": True})
+                except InteractionNeeded as need2:
+                    token2 = self._issue_token(action_name, 1, need2.kind, {"args": args, "content": content})
+                    spec2 = dict(need2.spec)
+                    spec2['state_token'] = token2
+                    return 'needs', {"needs_interaction": {"kind": need2.kind, "spec": spec2}, "updates": aggregated, "state_token": token2}
+
+            if isinstance(res, Completed):
+                return 'done', {"payload": res.payload, "updates": aggregated}
+            return 'error', {"message": "Unknown result"}
+
+        # Suppress stdout/spinners and capture ui.emit events during web action calls
+        utils = self.session.utils
+        original_output = utils.output
+        web_output = WebOutput()
+        utils.replace_output(web_output)
+        # Capture UI emits
+        emitted: List[Dict[str, Any]] = []
+        original_ui = self.session.ui
+        original_emit = getattr(original_ui, 'emit', None)
+        def _capture_emit(event_type: str, data: Dict[str, Any]) -> None:
+            try:
+                item = dict(data)
+                item['type'] = event_type
+                emitted.append(item)
+            except Exception:
+                pass
+        try:
+            if original_emit:
+                original_ui.emit = _capture_emit  # type: ignore[attr-defined]
+            try:
+                res = action.start(args, content)
+            except InteractionNeeded as need:
+                token = self._issue_token(action_name, 1, need.kind, {"args": args, "content": content})
+                spec = dict(need.spec)
+                spec['state_token'] = token
+                return JSONResponse({"ok": True, "done": False, "needs_interaction": {"kind": need.kind, "spec": spec}, "state_token": token, "updates": emitted})
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": {"recoverable": False, "message": str(e)}}, status_code=500)
+        finally:
+            # restore ui.emit
+            try:
+                if original_emit:
+                    original_ui.emit = original_emit  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            utils.replace_output(original_output)
+
+        status, data = drive_until_boundary(res, emitted)
+        if status == 'done':
+            # Optionally chain an auto-submitted assistant turn after resume
+            try:
+                if self.session.get_flag('auto_submit'):
+                    self.session.set_flag('auto_submit', False)
+                    # Re-process contexts and add synthetic user message
+                    pc = self.session.get_action('process_contexts')
+                    contexts2 = []
+                    if pc and hasattr(pc, 'process_contexts_for_user'):
+                        try:
+                            contexts2 = pc.process_contexts_for_user(auto_submit=True) or []
+                        except Exception:
+                            contexts2 = []
+                    try:
+                        chat = self.session.get_context('chat')
+                        chat.add("", 'user', contexts2)
+                    except Exception:
+                        pass
+                    # Run assistant turn
+                    provider = self.session.get_provider()
+                    from actions.assistant_output_action import AssistantOutputAction
+                    utils = self.session.utils
+                    original_output = utils.output
+                    utils.replace_output(WebOutput())
+                    try:
+                        raw_text = provider.chat() if provider else ''
+                    except Exception as e:
+                        raw_text = f"[auto-submit error] {e}"
+                    finally:
+                        utils.replace_output(original_output)
+                    if raw_text is None:
+                        raw_text = ''
+                    visible = AssistantOutputAction.filter_full_text(raw_text, self.session)
+                    try:
+                        chat.add(raw_text, 'assistant')
+                    except Exception:
+                        pass
+                    # Attach a 'text' field for UI rendering
+                    data = {**data, 'text': visible}
+            except Exception:
+                pass
+            return JSONResponse({"ok": True, "done": True, **data})
+        elif status == 'needs':
+            return JSONResponse({"ok": True, "done": False, **data})
+        else:
+            return JSONResponse({"ok": False, "error": {"recoverable": True, "message": data.get('message', 'Unexpected result')}}, status_code=500)
+
+    async def api_action_resume(self, request: Request):
+        from base_classes import Completed, Updates, InteractionNeeded
+        from web.output_sink import WebOutput
+        try:
+            payload: Dict[str, Any] = await request.json()
+        except Exception:
+            return PlainTextResponse('Invalid JSON', status_code=400)
+
+        token = payload.get('state_token') or ''
+        response = payload.get('response')
+        if not token:
+            return PlainTextResponse('Missing "state_token"', status_code=400)
+
+        st, err = self._verify_token(token)
+        if not st:
+            return JSONResponse({"ok": False, "error": {"recoverable": True, "message": err or 'Invalid token'}}, status_code=400)
+
+        action = self.session.get_action(st.action_name)
+        if not action:
+            return JSONResponse({"ok": False, "error": {"recoverable": False, "message": f"Unknown action '{st.action_name}'"}}, status_code=404)
+
+        # Mark token used
+        st.used = True
+        # Helper to drive updates internally
+        def drive_until_boundary(res: Any, current_step: int) -> Tuple[str, Dict[str, Any]]:
+            aggregated: List[Dict[str, Any]] = []
+            while isinstance(res, Updates):
+                aggregated.extend(res.events or [])
+                try:
+                    res = action.resume("__implicit__", {"continue": True})
+                except InteractionNeeded as need2:
+                    next_step = current_step + 1
+                    token2 = self._issue_token(st.action_name, next_step, need2.kind, st.data)
+                    spec2 = dict(need2.spec)
+                    spec2['state_token'] = token2
+                    return 'needs', {"needs_interaction": {"kind": need2.kind, "spec": spec2}, "updates": aggregated, "state_token": token2}
+
+            if isinstance(res, Completed):
+                return 'done', {"payload": res.payload, "updates": aggregated}
+            return 'error', {"message": "Unknown result"}
+
+        utils = self.session.utils
+        original_output = utils.output
+        web_output = WebOutput()
+        utils.replace_output(web_output)
+        # Capture UI emits
+        emitted: List[Dict[str, Any]] = []
+        original_ui = self.session.ui
+        original_emit = getattr(original_ui, 'emit', None)
+        def _capture_emit(event_type: str, data: Dict[str, Any]) -> None:
+            try:
+                item = dict(data)
+                item['type'] = event_type
+                emitted.append(item)
+            except Exception:
+                pass
+        try:
+            if original_emit:
+                original_ui.emit = _capture_emit  # type: ignore[attr-defined]
+            try:
+                # Pass stored args/content alongside user response for stateless actions
+                res = action.resume(token, {"response": response, "state": st.data})
+            except InteractionNeeded as need:
+                next_step = st.step + 1
+                token2 = self._issue_token(st.action_name, next_step, need.kind, st.data)
+                spec = dict(need.spec)
+                spec['state_token'] = token2
+                return JSONResponse({"ok": True, "done": False, "needs_interaction": {"kind": need.kind, "spec": spec}, "state_token": token2, "updates": emitted})
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": {"recoverable": True, "message": str(e)}}, status_code=500)
+        finally:
+            # restore ui.emit
+            try:
+                if original_emit:
+                    original_ui.emit = original_emit  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            utils.replace_output(original_output)
+
+        status, data = drive_until_boundary(res, emitted)
+        if status == 'done':
+            return JSONResponse({"ok": True, "done": True, **data})
+        elif status == 'needs':
+            return JSONResponse({"ok": True, "done": False, **data})
+        else:
+            return JSONResponse({"ok": False, "error": {"recoverable": True, "message": data.get('message', 'Unexpected result')}}, status_code=500)

@@ -1,81 +1,102 @@
-from base_classes import InteractionAction
+from base_classes import StepwiseAction, Completed
 
 
-class ClearContextAction(InteractionAction):
-    """
-    Class for processing contexts
-    """
+class ClearContextAction(StepwiseAction):
+    """Remove a specific context or clear all (Stepwise)."""
 
     def __init__(self, session):
         self.session = session
-        self.contexts = session.get_action('process_contexts')
         self.token_counter = self.session.get_action('count_tokens')
-        self.contexts = self.contexts.get_contexts(self.session)  # fetch a list of contexts excluding chat and prompt
 
-    def run(self, args=None):
-        """
-        Remove the context from the session
-        """
-        # Get the contexts in the form of a list of dictionaries with the following keys
-        # 'type' - the type of context
-        # 'idx' - the original index of the context in the list of contexts (to be able to reference it later)
-        # 'context' - the context object
-        if args is None:
-            args = []
+    def start(self, args=None, content: str = "") -> Completed:
+        args = args or []
+        # Handle 'all' argument directly
+        if (isinstance(args, str) and args.lower() == 'all') or (isinstance(args, (list, tuple)) and args and str(args[0]).lower() == 'all') or (isinstance(args, dict) and str(args.get('target', '')).lower() == 'all'):
+            self._clear_all()
+            return Completed({'ok': True, 'cleared': 'all'})
 
-        if len(self.contexts) == 0:
-            print(f"No contexts to clear.\n")
-            return True
+        contexts = self._get_contexts()
+        if not contexts:
+            try:
+                self.session.ui.emit('status', {'message': 'No contexts to clear.'})
+            except Exception:
+                pass
+            return Completed({'ok': True, 'cleared': 0})
 
-        # if args is a string "all" or a list with "all" in the first position, clear all contexts
-        if isinstance(args, str) and args == 'all' or len(args) > 0 and args[0] == 'all':
-            self.clear_all_contexts()
-            return True
+        # If index provided in args
+        index = None
+        if isinstance(args, (list, tuple)) and args:
+            try:
+                index = int(args[0])
+            except Exception:
+                index = None
+        elif isinstance(args, dict) and 'index' in args:
+            try:
+                index = int(args.get('index'))
+            except Exception:
+                index = None
 
-        # in the args list are strings that can be a digit or a word, if a digit we need to convert to int
-        args = [int(arg) if arg.isdigit() else arg for arg in args]
-
-        # If no context index is given, list the contexts and ask the user for input
-        if len(args) == 0:
-            if len(self.contexts) > 0:
-                for idx, context in enumerate(self.contexts):
-                    tokens = self.token_counter.count_tiktoken(context['context'].get()['content'])
-                    print(f"In context: [{idx}] {context['context'].get()['name']} ({tokens} tokens)")
-                print()
-
-            user_input = input("Enter the index of the context to remove: ").strip()
-            if user_input:  # Check if input is not empty
-                if user_input.lower() == 'all':
-                    self.clear_all_contexts()
-                    return True
+        if index is None:
+            # Build options for selection
+            options = []
+            for i, c in enumerate(contexts):
+                name = (c['context'].get().get('name') if hasattr(c['context'], 'get') else str(c['context']))
                 try:
-                    item = int(user_input)
-                except ValueError:
-                    print("Invalid input. Please enter a number or 'all'.")
-                    return True
-            else:
-                print("No context index provided. Returning.")
-                return True
-        else:
-            item = args[0]
+                    content_text = c['context'].get().get('content', '') if hasattr(c['context'], 'get') else ''
+                    tokens = self.token_counter.count_tiktoken(content_text) if content_text else 0
+                except Exception:
+                    tokens = 0
+                options.append(f"{i}: {name} ({tokens} tokens)")
+            choice = self.session.ui.ask_choice("Select a context to remove:", options, default=options[0] if options else None)
+            # Extract index from choice string
+            try:
+                index = int(str(choice).split(':', 1)[0])
+            except Exception:
+                index = None
 
-        # Remove the given context
+        if index is None or index < 0 or index >= len(contexts):
+            try:
+                self.session.ui.emit('error', {'message': 'Invalid context index.'})
+            except Exception:
+                pass
+            return Completed({'ok': False, 'error': 'invalid_index'})
+
+        # Remove the selected context
+        self.session.remove_context_item(contexts[index]['type'], contexts[index]['idx'])
         try:
-            self.session.remove_context_item(self.contexts[item]['type'], self.contexts[item]['idx'])
-        except TypeError:
-            print("Invalid context index.")
+            self.session.ui.emit('status', {'message': 'Context removed.'})
+        except Exception:
+            pass
+        return Completed({'ok': True, 'cleared': 1, 'index': index})
 
-        print()
-        return True
+    def resume(self, state_token: str, response) -> Completed:
+        # Resume accepts selected option label and removes it
+        if isinstance(response, dict) and 'response' in response:
+            response = response['response']
+        try:
+            index = int(str(response).split(':', 1)[0])
+        except Exception:
+            return Completed({'ok': False, 'error': 'invalid_index'})
+        contexts = self._get_contexts()
+        if index < 0 or index >= len(contexts):
+            return Completed({'ok': False, 'error': 'invalid_index'})
+        self.session.remove_context_item(contexts[index]['type'], contexts[index]['idx'])
+        try:
+            self.session.ui.emit('status', {'message': 'Context removed.'})
+        except Exception:
+            pass
+        return Completed({'ok': True, 'cleared': 1, 'index': index, 'resumed': True})
 
-    def clear_all_contexts(self):
-        """
-        Clear all contexts from the session
-        """
-        # We reverse the indices to remove the last context first, so the indices don't change
-        context_indices = sorted([(context['type'], context['idx']) for context in self.contexts], key=lambda x: x[1], reverse=True)
+    def _get_contexts(self):
+        pc = self.session.get_action('process_contexts')
+        return pc.get_contexts(self.session) if pc else []
 
-        for context_type, context_idx in context_indices:
-            self.session.remove_context_item(context_type, context_idx)
-
-        print("All contexts cleared.\n")
+    def _clear_all(self):
+        contexts = self._get_contexts()
+        # Remove from the end to keep indices stable
+        for c in sorted(contexts, key=lambda x: x['idx'], reverse=True):
+            self.session.remove_context_item(c['type'], c['idx'])
+        try:
+            self.session.ui.emit('status', {'message': 'All contexts cleared.'})
+        except Exception:
+            pass

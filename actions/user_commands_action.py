@@ -240,6 +240,15 @@ class UserCommandsAction(InteractionAction):
         return list(self.commands.keys())
 
     def handle_help(self):
+        if not getattr(self.session.ui.capabilities, 'blocking', False):
+            lines = ["Commands:"]
+            for command, details in sorted(commands.items()):
+                lines.append(f"{command} - {details['description']}")
+            try:
+                self.session.ui.emit('status', {'message': "\n".join(lines)})
+            except Exception:
+                pass
+            return
         print("Commands:")
         # Find the longest command to determine column width
         max_command_length = max(len(command) for command in self.commands)

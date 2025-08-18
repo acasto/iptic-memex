@@ -53,6 +53,14 @@ class ReprintChatAction(InteractionAction):
 
             formatted += f"{label} {message}\n\n"
 
+        # In non-blocking UIs (Web/TUI), emit the full formatted text as a single status message
+        if not getattr(self.session.ui.capabilities, 'blocking', False):
+            try:
+                self.session.ui.emit('status', {'message': formatted})
+            except Exception:
+                pass
+            return
+
         if self.session.get_params()['highlighting']:
             print(ui.format_code_block(formatted))
         else:

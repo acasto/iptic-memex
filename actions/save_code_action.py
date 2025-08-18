@@ -13,6 +13,12 @@ class SaveCodeAction(InteractionAction):
         self.preview_lines = 1  # Default number of lines in preview
 
     def run(self, args=None):
+        if not getattr(self.session.ui.capabilities, 'blocking', False):
+            try:
+                self.session.ui.emit('warning', {'message': 'save_code is only available in CLI mode for now.'})
+            except Exception:
+                pass
+            return
         n = 1  # Default to last message
         if args and len(args) > 0:
             try:
