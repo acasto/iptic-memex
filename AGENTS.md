@@ -80,6 +80,22 @@ Gating and CLI‑only flows
 - Gating: expose `@classmethod can_run(cls, session)` on an action to hide commands when prerequisites (APIs, tools) are missing.
 - Auto-submit: if a command sets `auto_submit: true` and `TOOLS.allow_auto_submit` is enabled, the next prompt is skipped after execution.
 
+### Official Tool Calling (OpenAI-compatible)
+- Flags (config.ini `[TOOLS]`):
+  - `use_official_tools = true|false` to enable Chat Completions tool calling.
+  - `use_pseudo_tools = true|false` to keep legacy block-based tools.
+- Source of truth: `actions/assistant_commands_action.py` registry defines available tools and arg names. A schema builder maps these to OpenAI tool specs (lowercase names, auto descriptions, string args, plus `content`).
+- Provider (OpenAI):
+  - Sends `tools`/`tool_choice` when official tools are enabled.
+  - Parses `tool_calls` in non-streaming and streaming. Streaming aggregates argument deltas without printing JSON.
+- Turn orchestration:
+  - On a tool call, the runner replaces the last assistant message (provider view) with an assistant message containing `tool_calls`, executes the mapped actions, and appends `tool` role messages with `tool_call_id` and real outputs. Then it auto-submits the follow-up assistant turn.
+  - Pseudo-tools still work (when enabled) and run after official tools if no official calls are present.
+- UX:
+  - Chat Mode: shows a single spinner line `Tool calling: <name>` per tool; tools may print their own status lines (e.g., file tool). A separator newline is written after all tools finish to disambiguate from model output.
+  - Agent Mode: suppresses interim status/noise and newlines; focuses on completing steps and returning results.
+- Introspection: `show messages` surfaces assistant entries with Tool Calls metadata (name/id) alongside normal message text.
+
 ## Stepwise Actions & UI Adapters (Core)
 - UI adapters: `session.ui` provides `ask_text/ask_bool/ask_choice/ask_files` and `emit(event_type, data)`.
   - CLI blocks (`CLIUI`, `capabilities.blocking=True`); Web/TUI raise `InteractionNeeded` (`blocking=False`).
@@ -105,6 +121,7 @@ Gating and CLI‑only flows
 - Command handling: `/api/chat` first matches `user_commands_action` to run actions/methods (e.g., `set model ...`) without contacting the LLM.
 - Interactions: `InteractionNeeded` yields `{needs_interaction, state_token}`; the client renders a widget and resumes via `/api/action/resume`. A cancel endpoint marks the token used.
 - Streaming: `TurnRunner` powers SSE. If a tool requests interaction mid‑stream, the server sends a terminal `done` event with `{needs_interaction, state_token}`; the client resumes via JSON.
+  - Official tools: the provider detects function-call deltas during streaming and the runner executes tools after the stream completes; status updates appear in the updates panel.
 - Secure streaming start: the browser POSTs `/api/stream/start` with `{message}` and receives a short‑lived HMAC token; it then opens `EventSource('/api/stream?token=...')` to avoid logging sensitive content in URLs.
 - UI/UX: Web renders an updates/interaction panel (status/warning/error/progress) separate from the chat log, with Cancel and close controls. Attachments: 📎 button and drag‑and‑drop upload to `/api/upload`, then call `load_file` with server paths to skip prompts. Uploaded files are read into context and deleted immediately; file contexts record `{name, origin:'upload', server_path}`.
 
