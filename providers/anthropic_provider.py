@@ -36,6 +36,7 @@ class AnthropicProvider(APIProvider):
         self.current_usage = Usage()
         self.total_usage = Usage()
         self._last_response = None
+        self._last_stream_tool_calls = None
 
         self.parameters = {
             'model', 'max_tokens', 'system', 'messages', 'stop_sequences',
@@ -87,9 +88,52 @@ class AnthropicProvider(APIProvider):
 
         chat_turns = chat.get()
         for i, turn in enumerate(chat_turns):
+            role = turn.get('role')
             content_blocks = []
             context = turn.get('context')
 
+            # Special handling for tool plumbing
+            # 1) Assistant tool calls: encode as tool_use blocks
+            if role == 'assistant' and 'tool_calls' in turn:
+                try:
+                    # Include any processed context first (as text)
+                    if context:
+                        processed_context = self._process_context(context)
+                        if processed_context:
+                            content_blocks.append({'type': 'text', 'text': processed_context})
+                except Exception:
+                    pass
+                try:
+                    for tc in (turn.get('tool_calls') or []):
+                        content_blocks.append({
+                            'type': 'tool_use',
+                            'id': tc.get('id'),
+                            'name': tc.get('name'),
+                            'input': tc.get('arguments') or {}
+                        })
+                except Exception:
+                    pass
+                if content_blocks:
+                    messages.append({'role': 'assistant', 'content': content_blocks})
+                continue
+
+            # 2) Tool results: role must be 'user' with tool_result block
+            if role == 'tool':
+                try:
+                    tool_id = turn.get('tool_call_id') or turn.get('id')
+                    messages.append({
+                        'role': 'user',
+                        'content': [{
+                            'type': 'tool_result',
+                            'tool_use_id': tool_id,
+                            'content': turn.get('message') or ''
+                        }]
+                    })
+                except Exception:
+                    pass
+                continue
+
+            # Normal role: user/assistant text + contexts/images
             if context:
                 # Process contexts and handle images
                 for ctx in context:
@@ -131,7 +175,7 @@ class AnthropicProvider(APIProvider):
             # Add the turn to messages if we have any content blocks
             if content_blocks:
                 messages.append({
-                    'role': turn['role'],
+                    'role': role,
                     'content': content_blocks
                 })
 
@@ -195,6 +239,18 @@ class AnthropicProvider(APIProvider):
         if api_model:
             params['model'] = api_model
             
+        # Attach tools if enabled
+        try:
+            if bool(self.session.get_option('TOOLS', 'use_official_tools', fallback=False)):
+                from utils.tool_schema import build_anthropic_tool_specs
+                tools_spec = build_anthropic_tool_specs(self.session) or []
+                if tools_spec:
+                    params['tools'] = tools_spec
+                    if current_params.get('tool_choice') is not None:
+                        params['tool_choice'] = current_params.get('tool_choice')
+        except Exception:
+            pass
+
         params['system'] = self._build_system_content()
         params['messages'] = self._build_messages()
         return params
@@ -231,6 +287,7 @@ class AnthropicProvider(APIProvider):
             accumulated_text = ""
             message_start_usage = None
             message_delta_usage = None
+            tool_calls_map = {}
             
             for event in response:
                 # Handle message_start - contains input_tokens and initial output count
@@ -238,10 +295,34 @@ class AnthropicProvider(APIProvider):
                     message_start_usage = event.message.usage
                 
                 # Handle content deltas - yield the text
-                elif event.type == "content_block_delta" and hasattr(event, 'delta') and event.delta.text:
-                    text = event.delta.text
-                    accumulated_text += text
-                    yield text
+                elif event.type == "content_block_delta" and hasattr(event, 'delta'):
+                    # Text stream
+                    if hasattr(event.delta, 'text') and event.delta.text:
+                        text = event.delta.text
+                        accumulated_text += text
+                        yield text
+                    # Accumulate tool input JSON deltas when present (best-effort)
+                    if hasattr(event, 'index') and hasattr(event.delta, 'partial_json'):
+                        try:
+                            idx = event.index
+                            rec = tool_calls_map.get(idx) or {'id': None, 'name': None, 'arguments': ''}
+                            rec['arguments'] = (rec['arguments'] or '') + str(event.delta.partial_json)
+                            tool_calls_map[idx] = rec
+                        except Exception:
+                            pass
+
+                # Detect tool_use block start
+                elif event.type == "content_block_start" and hasattr(event, 'content_block'):
+                    block = event.content_block
+                    try:
+                        if getattr(block, 'type', None) == 'tool_use':
+                            idx = getattr(event, 'index', None)
+                            rec = tool_calls_map.get(idx) or {'id': None, 'name': None, 'arguments': ''}
+                            rec['id'] = getattr(block, 'id', None)
+                            rec['name'] = getattr(block, 'name', None)
+                            tool_calls_map[idx] = rec
+                    except Exception:
+                        pass
                 
                 # Handle message_delta - contains final output token count
                 elif event.type == "message_delta" and hasattr(event, 'usage') and event.usage:
@@ -270,6 +351,22 @@ class AnthropicProvider(APIProvider):
             
             # Update totals
             self.total_usage.update(self.current_usage)
+            # Finalize tool calls collected during streaming
+            try:
+                out = []
+                import json
+                for _, rec in sorted(tool_calls_map.items(), key=lambda kv: (kv[0] if kv[0] is not None else 0)):
+                    args_obj = {}
+                    args_str = rec.get('arguments') or ''
+                    if args_str:
+                        try:
+                            args_obj = json.loads(args_str)
+                        except Exception:
+                            args_obj = {}
+                    out.append({'id': rec.get('id'), 'name': rec.get('name'), 'arguments': args_obj})
+                self._last_stream_tool_calls = out
+            except Exception:
+                self._last_stream_tool_calls = None
 
     def get_full_response(self):
         """Returns the full response object from the last API call"""
@@ -285,13 +382,70 @@ class AnthropicProvider(APIProvider):
             context = ''
             if turn.get('context'):
                 context = self._process_context(turn['context'])
+            role = turn.get('role')
+            # Assistant with tool_calls → Anthropic tool_use blocks
+            if role == 'assistant' and 'tool_calls' in turn:
+                blocks = []
+                try:
+                    for tc in (turn.get('tool_calls') or []):
+                        blocks.append({
+                            'type': 'tool_use',
+                            'id': tc.get('id'),
+                            'name': tc.get('name'),
+                            'input': tc.get('arguments') or {}
+                        })
+                except Exception:
+                    blocks = []
+                if context:
+                    blocks.insert(0, {'type': 'text', 'text': context})
+                messages.append({'role': 'assistant', 'content': blocks})
+                continue
+
+            # Tool result turns → Anthropic expects user tool_result blocks
+            if role == 'tool':
+                tool_id = turn.get('tool_call_id') or turn.get('id')
+                messages.append({
+                    'role': 'user',
+                    'content': [{
+                        'type': 'tool_result',
+                        'tool_use_id': tool_id,
+                        'content': turn.get('message') or ''
+                    }]
+                })
+                continue
 
             messages.append({
-                'role': turn['role'],
+                'role': role,
                 'context': context,
                 'message': turn.get('message') or ""
             })
         return messages
+
+    def get_tool_calls(self):
+        """Return normalized tool calls from last response or stream.
+
+        Shape: [{"id": str, "name": str, "arguments": dict}]
+        """
+        if self._last_stream_tool_calls:
+            return list(self._last_stream_tool_calls)
+        resp = self._last_response
+        out = []
+        try:
+            if not resp:
+                return out
+            for block in getattr(resp, 'content', []) or []:
+                try:
+                    if getattr(block, 'type', None) == 'tool_use':
+                        out.append({
+                            'id': getattr(block, 'id', None),
+                            'name': getattr(block, 'name', None),
+                            'arguments': getattr(block, 'input', {}) or {}
+                        })
+                except Exception:
+                    continue
+        except Exception:
+            return []
+        return out
 
     def _update_usage_from_response(self, response: Any) -> None:
         """Update usage tracking from API response"""

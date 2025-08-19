@@ -75,3 +75,38 @@ def build_official_tool_specs(session) -> List[Dict[str, Any]]:
 
     return specs
 
+
+def build_anthropic_tool_specs(session) -> List[Dict[str, Any]]:
+    """Build Anthropic Messages API tool specs from assistant command registry.
+
+    Returns a list of dicts with shape:
+      [{"name": str, "description": str, "input_schema": {...}}]
+    """
+    commands_action = session.get_action('assistant_commands')
+    if not commands_action or not getattr(commands_action, 'commands', None):
+        return []
+
+    specs: List[Dict[str, Any]] = []
+    for cmd_key, info in commands_action.commands.items():
+        try:
+            handler = info.get('function', {})
+            handler_name = handler.get('name', '')
+            arg_names = list(info.get('args', []) or [])
+            properties = {name: {"type": "string"} for name in arg_names}
+            properties['content'] = {"type": "string"}
+
+            required = _required_for_command(cmd_key)
+
+            specs.append({
+                'name': str(cmd_key).lower(),
+                'description': _auto_description(cmd_key, handler_name),
+                'input_schema': {
+                    'type': 'object',
+                    'properties': properties,
+                    'required': required,
+                }
+            })
+        except Exception:
+            continue
+
+    return specs
