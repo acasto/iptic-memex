@@ -312,14 +312,6 @@ class OpenAIProvider(APIProvider):
                                     # Initialize record
                                     rec = tool_calls_map.get(idx) or {'id': getattr(tc, 'id', None), 'name': None, 'arguments': ''}
                                     if name:
-                                        # Emit a status the first time we see the name
-                                        if not rec.get('name'):
-                                            try:
-                                                ui = getattr(self.session, 'ui', None)
-                                                if ui and hasattr(ui, 'emit'):
-                                                    ui.emit('status', {'message': f"Tool calling: {name}"})
-                                            except Exception:
-                                                pass
                                         rec['name'] = name
                                     if args_chunk:
                                         try:

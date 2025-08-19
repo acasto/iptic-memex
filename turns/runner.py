@@ -331,10 +331,26 @@ class TurnRunner:
             return raw, raw, raw
 
         # Non-stream path: direct call and then display/sanitize filters
+        # Ensure provider is called in non-stream mode even if params.stream=True
+        orig_stream = None
         try:
+            try:
+                orig_stream = self.session.get_params().get('stream')
+                if orig_stream:
+                    # Temporarily force non-stream for this call
+                    self.session.set_option('stream', False)
+            except Exception:
+                pass
             raw_text = provider.chat()
         except Exception as e:
             raw_text = f"[error] {e}"
+        finally:
+            # Restore previous stream setting
+            try:
+                if orig_stream is not None:
+                    self.session.set_option('stream', bool(orig_stream))
+            except Exception:
+                pass
         if raw_text is None:
             raw_text = ""
 
@@ -417,19 +433,13 @@ class TurnRunner:
                             continue
 
                         handler = spec.get('function') or {}
-                        # Spinner + status for user visibility
-                        try:
-                            ui = getattr(self.session, 'ui', None)
-                            if ui and hasattr(ui, 'emit'):
-                                ui.emit('status', {'message': f"Running tool: {name}"})
-                        except Exception:
-                            pass
+                        # Spinner for user visibility (single line): "Tool calling: <name>"
                         try:
                             from contextlib import nullcontext
                             self.session.utils.output.stop_spinner()
                             spinner_cm = nullcontext()
                             if not self.session.in_agent_mode():
-                                spinner_cm = self.session.utils.output.spinner(f"Running {name}...")
+                                spinner_cm = self.session.utils.output.spinner(f"Tool calling: {name}")
                         except Exception:
                             from contextlib import nullcontext
                             spinner_cm = nullcontext()
@@ -492,6 +502,21 @@ class TurnRunner:
                             chat.add(tool_output or 'OK', role='tool', extra={'tool_call_id': call.get('id')})
                         except Exception:
                             pass
+
+                    # After all tools for this turn, add a newline to separate status from next model output
+                    # Gate to non-agent, blocking UIs only.
+                    try:
+                        if not self.session.in_agent_mode():
+                            ui = getattr(self.session, 'ui', None)
+                            blocking = True
+                            try:
+                                blocking = bool(ui and ui.capabilities and ui.capabilities.blocking)
+                            except Exception:
+                                blocking = True
+                            if blocking:
+                                self.session.utils.output.write("")
+                    except Exception:
+                        pass
 
                     # Trigger a follow-up assistant turn
                     if ran_any and bool(self.session.get_option('TOOLS', 'allow_auto_submit', fallback=False)):
