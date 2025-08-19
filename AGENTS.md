@@ -89,10 +89,16 @@ Gating and CLI‑only flows
 - Confirmations & updates:
   - Use `session.ui.ask_bool(...)` for confirmations; use `session.ui.emit('status'|'progress'|'warning'|'error', {...})` for updates.
   - Reprint gating: only reprint chat in blocking UIs (CLI) to avoid stdout in Web/TUI.
+
+### Spinners vs Progress
+- Spinners: Use when waiting an unknown amount of time (e.g., running tools, waiting for first streaming tokens). Call `session.utils.output.spinner(message)` and stop with `stop_spinner()` or let the context manager close. Spinner style is configurable via `DEFAULT.spinner_style`.
+- Progress events: Optional UI signal via `session.ui.emit('progress', {"progress": 0.0–1.0, "message": str})`. Best for long‑running, multi‑phase work where incremental progress makes sense.
+- Current usage: Core actions keep spinners for waits; file tools do not emit progress (operations are fast and progress lines clutter with the spinner). The capability remains available for future long‑running actions where a bar is useful.
 - Auto-submit mechanics (centralized):
   - Tools set `session.auto_submit` (with `TOOLS.allow_auto_submit=True`).
   - The `TurnRunner` orchestrates the follow-up across all modes: reprocess contexts (silent when requested) → add a synthetic empty user turn → run the next assistant turn.
   - Chat, Agent, and Web (stream and non‑stream) all use the same logic; no mode‑specific drift.
+  - Large-input gate: During context processing for auto-submit, if combined context tokens exceed `TOOLS.large_input_limit` and `TOOLS.confirm_large_input=True`, auto-submit is cancelled so the user can review contexts before proceeding. Agent Mode ignores this gate and continues autonomously.
 
 ## Web/TUI Runner Notes
 - Endpoints: `/api/action/start|resume` for stepwise actions; `/api/chat` (non-stream) and `/api/stream` (SSE).

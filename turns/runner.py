@@ -103,13 +103,17 @@ class TurnRunner:
 
             # Check if we should auto-submit another assistant turn
             if allow_auto_submit and self.session.get_flag("auto_submit"):
-                # Reset and prepare next synthetic user message with contexts
-                self.session.set_flag("auto_submit", False)
+                # Prepare next synthetic user message with contexts. During processing,
+                # actions may clear the auto_submit flag (e.g., large input gating).
                 contexts2 = self._process_contexts(auto_submit=True, suppress_print=opts.suppress_context_print)
-                self._add_user_message("", contexts2)
-                self._clear_temp_contexts()
-                # Continue loop to produce the follow-up assistant turn
-                continue
+                if self.session.get_flag("auto_submit"):
+                    # Still allowed: reset and continue with a synthetic user turn
+                    self.session.set_flag("auto_submit", False)
+                    self._add_user_message("", contexts2)
+                    self._clear_temp_contexts()
+                    # Continue loop to produce the follow-up assistant turn
+                    continue
+                # Auto-submit was cleared during context processing; drop out to return control to user
             break
 
         return TurnResult(

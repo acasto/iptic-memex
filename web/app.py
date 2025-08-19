@@ -80,6 +80,49 @@ INDEX_HTML = """
 """
 
 
+async def api_upload(request: Request):
+    try:
+        form = await request.form()
+    except Exception as e:
+        msg = str(e) or 'Invalid form'
+        if 'python-multipart' in msg.lower():
+            return JSONResponse({"ok": False, "error": {"recoverable": True, "message": "Missing dependency 'python-multipart' for file uploads."}}, status_code=400)
+        return JSONResponse({"ok": False, "error": {"recoverable": True, "message": msg}}, status_code=400)
+    files = form.getlist('files') if hasattr(form, 'getlist') else []
+    if not files:
+        return JSONResponse({"ok": False, "error": {"recoverable": True, "message": 'No files in form'}}, status_code=400)
+    # Save uploads to a temp dir under web/uploads
+    upload_dir = os.path.join(os.path.dirname(__file__), 'uploads')
+    os.makedirs(upload_dir, exist_ok=True)
+    saved = []
+    for up in files:
+        try:
+            filename = getattr(up, 'filename', 'upload.bin')
+            # Basic sanitization
+            safe = ''.join(ch for ch in filename if ch.isalnum() or ch in ('-', '_', '.', ' ')) or 'upload.bin'
+            # Ensure unique name
+            base = os.path.splitext(safe)[0]
+            ext = os.path.splitext(safe)[1]
+            path = os.path.join(upload_dir, safe)
+            i = 1
+            while os.path.exists(path):
+                path = os.path.join(upload_dir, f"{base}_{i}{ext}")
+                i += 1
+            # Write content
+            content = await up.read()  # type: ignore[attr-defined]
+            with open(path, 'wb') as f:
+                f.write(content)
+            saved.append({"name": filename, "path": path, "size": len(content)})
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": {"recoverable": True, "message": str(e)}}, status_code=500)
+    return JSONResponse({"ok": True, "files": saved})
+
+
+def _session_id() -> str:
+    # MVP: single user/session
+    return 'default'
+
+
 class WebApp:
     def __init__(self, session, builder=None) -> None:
         self.session = session
@@ -90,7 +133,7 @@ class WebApp:
 
         # Simple per-process secret for HMAC tokens
         self._secret = secrets.token_bytes(32)
-        self._states: Dict[str, 'ActionState'] = {}
+        self._states: Dict[str, 'WebApp.ActionState'] = {}
 
         routes = [
             Route('/', self.index, methods=['GET']),
@@ -103,7 +146,7 @@ class WebApp:
             Route('/api/action/start', self.api_action_start, methods=['POST']),
             Route('/api/action/resume', self.api_action_resume, methods=['POST']),
             Route('/api/action/cancel', self.api_action_cancel, methods=['POST']),
-            Route('/api/upload', self.api_upload, methods=['POST']),
+            Route('/api/upload', api_upload, methods=['POST']),
         ]
         self._app = Starlette(routes=routes)
         # Static files (app.js)
@@ -113,7 +156,8 @@ class WebApp:
         self._app.mount('/static', StaticFiles(directory=static_dir), name='static')
 
     # ----- Handlers -----
-    async def index(self, request: Request):
+    @staticmethod
+    async def index(request: Request):
         headers = {
             'Cache-Control': 'no-cache, no-store, must-revalidate',
             'Pragma': 'no-cache',
@@ -179,7 +223,7 @@ class WebApp:
                         matched_info = info
                         if matched_kind == 'action':
                             matched_action = fn['name']
-                        # prepare args the same way (predefined + user tail)
+                        # prepare args the same way (predefined and user tail)
                         user_tail = message[len(cmd):].strip().split()
                         predefined = fn.get('args', [])
                         if isinstance(predefined, str):
@@ -203,6 +247,7 @@ class WebApp:
             emitted: List[Dict[str, Any]] = []
             original_ui = self.session.ui
             original_emit = getattr(original_ui, 'emit', None)
+
             def _capture_emit(event_type: str, data: Dict[str, Any]) -> None:
                 try:
                     item = dict(data)
@@ -305,6 +350,7 @@ class WebApp:
         emitted: List[Dict[str, Any]] = []
         original_ui = self.session.ui
         original_emit = getattr(original_ui, 'emit', None)
+
         def _capture_emit(event_type: str, data: Dict[str, Any]) -> None:
             try:
                 item = dict(data)
@@ -440,6 +486,7 @@ class WebApp:
             emitted: List[Dict[str, Any]] = []
             original_ui = self.session.ui
             original_emit = getattr(original_ui, 'emit', None)
+
             def _capture_emit(event_type: str, data: Dict[str, Any]) -> None:
                 try:
                     item = dict(data)
@@ -475,12 +522,13 @@ class WebApp:
                                         emitted.append({'type': 'status', 'message': 'Action needs interaction; respond via /api/action/resume.'})
                                         text_lines = ['Action needs interaction; use /api/action/resume with provided token.']
                                         for ev in emitted:
-                                            if ev.get('type') in ('status','warning','error') and ev.get('message'):
+                                            if ev.get('type') in ('status', 'warning', 'error') and ev.get('message'):
                                                 text_lines.append(str(ev.get('message')))
                                         printed = stdout_buf.getvalue()
                                         if printed:
                                             text_lines.append(printed)
                                         render_text = '\n'.join([ln for ln in text_lines if ln])
+
                                         async def one_shot_need():
                                             yield f"event: done\ndata: {json.dumps({'text': render_text, 'handled': True, 'needs_interaction': {'kind': need_kind, 'spec': spec}, 'state_token': token, 'updates': emitted, 'command': matched_action})}\n\n"
                                         headers = {"Cache-Control": "no-cache", "Connection": "keep-alive"}
@@ -535,6 +583,7 @@ class WebApp:
             emitted: List[Dict[str, Any]] = []
             original_ui = self.session.ui
             original_emit = getattr(original_ui, 'emit', None)
+
             def _capture_emit(event_type: str, data: Dict[str, Any]) -> None:
                 try:
                     item = dict(data)
@@ -660,10 +709,6 @@ class WebApp:
         used: bool = False
         version: int = 1
 
-    def _session_id(self) -> str:
-        # MVP: single user/session
-        return 'default'
-
     def _sign(self, payload: bytes) -> str:
         return hmac.new(self._secret, payload, hashlib.sha256).hexdigest()
 
@@ -671,12 +716,12 @@ class WebApp:
         issued_at = time.time()
         issued_at_str = f"{issued_at}"
         nonce = secrets.token_hex(8)
-        parts = f"{self._session_id()}|{action_name}|{step}|{issued_at_str}|{nonce}".encode('utf-8')
+        parts = f"{_session_id()}|{action_name}|{step}|{issued_at_str}|{nonce}".encode('utf-8')
         sig = self._sign(parts)
         token = f"{sig}.{nonce}"
         # Persist state for this token; verification will recompute signature from stored fields
         self._states[token] = WebApp.ActionState(
-            session_id=self._session_id(),
+            session_id=_session_id(),
             action_name=action_name,
             step=step,
             phase=phase,
@@ -695,7 +740,7 @@ class WebApp:
             return None, "Invalid token"
         if st.used:
             return None, "Token already used"
-        if st.session_id != self._session_id():
+        if st.session_id != _session_id():
             return None, "Session mismatch"
         if time.time() - st.issued_at > ttl_seconds:
             return None, "Token expired"
@@ -756,6 +801,7 @@ class WebApp:
         emitted: List[Dict[str, Any]] = []
         original_ui = self.session.ui
         original_emit = getattr(original_ui, 'emit', None)
+
         def _capture_emit(event_type: str, data: Dict[str, Any]) -> None:
             try:
                 item = dict(data)
@@ -856,6 +902,7 @@ class WebApp:
         # Mark token used
         st.used = True
         # Helper to drive updates internally
+
         def drive_until_boundary(res: Any, current_step: int) -> Tuple[str, Dict[str, Any]]:
             aggregated: List[Dict[str, Any]] = []
             while isinstance(res, Updates):
@@ -881,6 +928,7 @@ class WebApp:
         emitted: List[Dict[str, Any]] = []
         original_ui = self.session.ui
         original_emit = getattr(original_ui, 'emit', None)
+
         def _capture_emit(event_type: str, data: Dict[str, Any]) -> None:
             try:
                 item = dict(data)
@@ -932,40 +980,3 @@ class WebApp:
             return JSONResponse({"ok": False, "error": {"recoverable": True, "message": err or 'Invalid token'}}, status_code=400)
         st.used = True
         return JSONResponse({"ok": True, "done": True, "cancelled": True})
-
-    async def api_upload(self, request: Request):
-        try:
-            form = await request.form()
-        except Exception as e:
-            msg = str(e) or 'Invalid form'
-            if 'python-multipart' in msg.lower():
-                return JSONResponse({"ok": False, "error": {"recoverable": True, "message": "Missing dependency 'python-multipart' for file uploads."}}, status_code=400)
-            return JSONResponse({"ok": False, "error": {"recoverable": True, "message": msg}}, status_code=400)
-        files = form.getlist('files') if hasattr(form, 'getlist') else []
-        if not files:
-            return JSONResponse({"ok": False, "error": {"recoverable": True, "message": 'No files in form'}}, status_code=400)
-        # Save uploads to a temp dir under web/uploads
-        upload_dir = os.path.join(os.path.dirname(__file__), 'uploads')
-        os.makedirs(upload_dir, exist_ok=True)
-        saved = []
-        for up in files:
-            try:
-                filename = getattr(up, 'filename', 'upload.bin')
-                # Basic sanitization
-                safe = ''.join(ch for ch in filename if ch.isalnum() or ch in ('-', '_', '.', ' ')) or 'upload.bin'
-                # Ensure unique name
-                base = os.path.splitext(safe)[0]
-                ext = os.path.splitext(safe)[1]
-                path = os.path.join(upload_dir, safe)
-                i = 1
-                while os.path.exists(path):
-                    path = os.path.join(upload_dir, f"{base}_{i}{ext}")
-                    i += 1
-                # Write content
-                content = await up.read()  # type: ignore[attr-defined]
-                with open(path, 'wb') as f:
-                    f.write(content)
-                saved.append({"name": filename, "path": path, "size": len(content)})
-            except Exception as e:
-                return JSONResponse({"ok": False, "error": {"recoverable": True, "message": str(e)}}, status_code=500)
-        return JSONResponse({"ok": True, "files": saved})

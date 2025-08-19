@@ -19,6 +19,7 @@ class AssistantFileToolAction(StepwiseAction):
         self.token_counter = session.get_action('count_tokens')
         self.memex_runner = session.get_action('memex_runner')
 
+
     # ---- Stepwise protocol -------------------------------------------------
     def start(self, args: Dict, content: str = "") -> Completed:
         mode = str(args.get('mode', '')).lower()
@@ -93,10 +94,6 @@ class AssistantFileToolAction(StepwiseAction):
 
     # ---- Handlers ----------------------------------------------------------
     def _handle_read(self, filename: str) -> None:
-        try:
-            self.session.ui.emit('progress', {'progress': 0.1, 'message': f'Reading {filename}...'})
-        except Exception:
-            pass
         content = self.fs_handler.read_file(filename)
         if content is None:
             self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Failed to read file: {filename}'})
@@ -106,11 +103,15 @@ class AssistantFileToolAction(StepwiseAction):
         limit = int(self.session.get_tools().get('large_input_limit', 4000))
         if token_count > limit:
             if self.session.get_tools().get('confirm_large_input', True):
-                confirmed = self.session.ui.ask_bool(f"File exceeds token limit ({limit}). Load anyway?", default=False)
-                if not confirmed:
-                    self.session.add_context('assistant', {'name': 'file_tool_result', 'content': 'User canceled large file load'})
-                    return
+                # Gate auto-submit and inform the user in the updates panel; do not prompt here.
+                try:
+                    self.session.ui.emit('warning', {'message': f"File exceeds token limit ({limit}). Auto-submit disabled for review."})
+                except Exception:
+                    pass
+                self.session.set_flag('auto_submit', False)
+                # Continue to add the file to context so the user can inspect/decide
             else:
+                # Policy: do not allow oversized content without confirmation
                 self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'File exceeds token limit ({limit}). Consider using head/tail commands instead.'})
                 return
 
@@ -144,10 +145,6 @@ class AssistantFileToolAction(StepwiseAction):
                 diff_text = None
             self.session.add_context('assistant', {'name': 'file_tool_result', 'content': diff_text or 'No changes (dry-run)'})
             return
-        try:
-            self.session.ui.emit('progress', {'progress': 0.1, 'message': f'Writing {filename}...'})
-        except Exception:
-            pass
         success = self.fs_handler.write_file(filename, content, create_dirs=True, force=True)
         msg = 'File written successfully' if success else f'Failed to write file: {filename}'
         self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
@@ -177,10 +174,6 @@ class AssistantFileToolAction(StepwiseAction):
                 diff_text = None
             self.session.add_context('assistant', {'name': 'file_tool_result', 'content': diff_text or 'No changes (dry-run append)'})
             return
-        try:
-            self.session.ui.emit('progress', {'progress': 0.1, 'message': f'Appending to {filename}...'})
-        except Exception:
-            pass
         success = self.fs_handler.write_file(filename, content, append=True, create_dirs=True, force=True)
         msg = 'Content appended successfully' if success else f'Failed to append to file: {filename}'
         self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
@@ -195,10 +188,6 @@ class AssistantFileToolAction(StepwiseAction):
             if not summary_model:
                 self.session.add_context('assistant', {'name': 'file_tool_error', 'content': 'No summary model configured'})
                 return
-            try:
-                self.session.ui.emit('progress', {'progress': 0.1, 'message': f'Summarizing {filename}...'})
-            except Exception:
-                pass
             result = self.memex_runner.run('-m', summary_model, '-p', summary_prompt, '-f', resolved_path)
             summary = result.stdout if result.returncode == 0 else f"Error: {result.stderr}"
             token_count = self.token_counter.count_tiktoken(summary)
@@ -251,10 +240,6 @@ class AssistantFileToolAction(StepwiseAction):
         if policy == 'dry-run':
             self.session.add_context('assistant', {'name': 'file_tool_result', 'content': f'Would rename {old_name} to {new_name}'})
             return
-        try:
-            self.session.ui.emit('progress', {'progress': 0.1, 'message': f'Renaming {old_name} -> {new_name}...'})
-        except Exception:
-            pass
         success = self.fs_handler.rename(old_name, new_name, force=True)
         msg = 'Rename operation successful' if success else f'Failed to rename {old_name} to {new_name}'
         self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
@@ -272,10 +257,6 @@ class AssistantFileToolAction(StepwiseAction):
         if policy == 'dry-run':
             self.session.add_context('assistant', {'name': 'file_tool_result', 'content': f'Would copy {filename} to {new_name}'})
             return
-        try:
-            self.session.ui.emit('progress', {'progress': 0.1, 'message': f'Copying {filename} -> {new_name}...'})
-        except Exception:
-            pass
         success = self.fs_handler.copy(filename, new_name, force=True)
         msg = 'Copy operation successful' if success else f'Failed to copy {filename} to {new_name}'
         self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
@@ -291,10 +272,6 @@ class AssistantFileToolAction(StepwiseAction):
             return
         conversation_history = self._get_formatted_conversation_history()
         prompt_content = self._build_edit_prompt(original_content, conversation_history, edit_request)
-        try:
-            self.session.ui.emit('progress', {'progress': 0.1, 'message': f'Running edit LLM for {filename}...'})
-        except Exception:
-            pass
         edited_content = self._run_edit_subprocess(edit_model, prompt_content)
         if edited_content is not None:
             self._process_and_confirm_edit(filename, original_content, edited_content)

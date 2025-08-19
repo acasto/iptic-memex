@@ -52,24 +52,33 @@ class WebOutput:
             self._emit_token(text)
 
     # level helpers
-    def debug(self, message: Any, **kwargs) -> None: self.write(message, **kwargs)
-    def info(self, message: Any, **kwargs) -> None: self.write(message, **kwargs)
-    def warning(self, message: Any, **kwargs) -> None: self.write(message, **kwargs)
-    def error(self, message: Any, **kwargs) -> None: self.write(message, **kwargs)
-    def critical(self, message: Any, **kwargs) -> None: self.write(message, **kwargs)
+    def debug(self, message: Any, **kwargs) -> None:
+        self.write(message, **kwargs)
+
+    def info(self, message: Any, **kwargs) -> None:
+        self.write(message, **kwargs)
+
+    def warning(self, message: Any, **kwargs) -> None:
+        self.write(message, **kwargs)
+
+    def error(self, message: Any, **kwargs) -> None:
+        self.write(message, **kwargs)
+
+    def critical(self, message: Any, **kwargs) -> None:
+        self.write(message, **kwargs)
 
     # style helper used by ChatMode prompt label
+    @staticmethod
     def style_text(
-        self,
-        text: str,
-        fg: Optional[str] = None,
-        bg: Optional[str] = None,
-        bold: bool = False,
-        dim: bool = False,
-        italic: bool = False,
-        underline: bool = False,
-        blink: bool = False,
-        reverse: bool = False,
+            text: str,
+            fg: Optional[str] = None,
+            bg: Optional[str] = None,
+            bold: bool = False,
+            dim: bool = False,
+            italic: bool = False,
+            underline: bool = False,
+            blink: bool = False,
+            reverse: bool = False,
     ) -> str:
         # For web, return plain text; actual styling happens in the browser
         return text

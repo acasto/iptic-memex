@@ -83,14 +83,20 @@ class ProcessContextsAction(InteractionAction):
             if auto_submit and total_tokens > 0:
                 limit = int(self.session.get_tools().get('large_input_limit', 4000))
                 if total_tokens > limit:
-                    if self.session.get_tools().get('confirm_large_input', True):
-                        output.write(f"\nWarning: Total tokens ({total_tokens}) exceed limit ({limit}). Auto-submit disabled.")
-                        self.session.set_flag('auto_submit', False)
-                    else:
-                        self.session.add_context('assistant', {
-                            'name': 'assistant_feedback',
-                            'content': f"Warning: Input size ({total_tokens} tokens) exceeds recommended limit ({limit})."
-                        })
+                    # In Agent Mode, do not interrupt the loop; allow autonomous progression
+                    try:
+                        in_agent = bool(getattr(self.session, 'in_agent_mode', lambda: False)())
+                    except Exception:
+                        in_agent = False
+                    if not in_agent:
+                        if self.session.get_tools().get('confirm_large_input', True):
+                            output.write(f"\nWarning: Total tokens ({total_tokens}) exceed limit ({limit}). Auto-submit disabled.")
+                            self.session.set_flag('auto_submit', False)
+                        else:
+                            self.session.add_context('assistant', {
+                                'name': 'assistant_feedback',
+                                'content': f"Warning: Input size ({total_tokens} tokens) exceeds recommended limit ({limit})."
+                            })
 
             # Only emit a trailing spacer in interactive mode
             if printed_any and (not auto_submit):
