@@ -187,8 +187,7 @@ class OpenAIProvider(APIProvider):
             # Attach official tool specs when enabled
             try:
                 if bool(self.session.get_option('TOOLS', 'use_official_tools', fallback=False)):
-                    from utils.tool_schema import build_official_tool_specs
-                    tools_spec = build_official_tool_specs(self.session) or []
+                    tools_spec = self.get_tools_for_request() or []
                     if tools_spec:
                         api_parms['tools'] = tools_spec
                         if current_params.get('tool_choice') is not None:
@@ -550,6 +549,14 @@ class OpenAIProvider(APIProvider):
         except Exception:
             return []
         return out
+
+    # Provider-native tool spec construction
+    def get_tools_for_request(self) -> list:
+        try:
+            from utils.tool_schema import build_official_tool_specs
+            return build_official_tool_specs(self.session) or []
+        except Exception:
+            return []
 
     def _update_usage_stats(self, response):
         """Update usage tracking with both standard and reasoning-specific metrics"""

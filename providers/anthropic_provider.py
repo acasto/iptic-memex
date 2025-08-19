@@ -447,6 +447,14 @@ class AnthropicProvider(APIProvider):
             return []
         return out
 
+    # Provider-native tool spec construction
+    def get_tools_for_request(self) -> list:
+        try:
+            from utils.tool_schema import build_anthropic_tool_specs
+            return build_anthropic_tool_specs(self.session) or []
+        except Exception:
+            return []
+
     def _update_usage_from_response(self, response: Any) -> None:
         """Update usage tracking from API response"""
         if hasattr(response, 'usage') and response.usage:

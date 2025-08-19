@@ -128,6 +128,37 @@ class LlamaCppProvider(APIProvider):
             #            'include_usage': True,
             #        }
 
+            # Attach official tools if enabled
+            try:
+                if bool(self.session.get_option('TOOLS', 'use_official_tools', fallback=False)):
+                    tools_spec = self.get_tools_for_request() or []
+                    if tools_spec:
+                        # Primary OpenAI-style tools
+                        api_parms['tools'] = tools_spec
+                        if current_params.get('tool_choice') is not None:
+                            api_parms['tool_choice'] = current_params.get('tool_choice')
+
+                        # Compatibility fallback for llama.cpp builds that expect legacy functions/function_call
+                        try:
+                            functions = []
+                            for t in tools_spec:
+                                fn = t.get('function') or {}
+                                if fn:
+                                    functions.append({
+                                        'name': fn.get('name'),
+                                        'description': fn.get('description'),
+                                        'parameters': fn.get('parameters'),
+                                    })
+                            if functions:
+                                api_parms['functions'] = functions
+                                # If tool_choice was not specified, hint legacy API to call functions automatically
+                                if 'tool_choice' not in api_parms and 'function_call' not in api_parms:
+                                    api_parms['function_call'] = 'auto'
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
             # llama-cpp-python expects messages and supports similar arguments
             api_parms['messages'] = messages
 
@@ -137,13 +168,13 @@ class LlamaCppProvider(APIProvider):
             # Call llama-cpp create_chat_completion
             # Note: create_chat_completion returns a dict like OpenAI API
             response = self.llm.create_chat_completion(**api_parms)
-            self._last_response = None
+            self._last_response = response
 
             # if in stream mode chain the generator, else return the text response
             if 'stream' in api_parms and api_parms['stream'] is True:
                 return response
             else:
-                if response['usage'] is not None:
+                if response.get('usage') is not None:
                     self.turn_usage = response['usage']
                 if self.turn_usage:
                     self.running_usage['total_in'] += self.turn_usage['prompt_tokens']
@@ -172,6 +203,16 @@ class LlamaCppProvider(APIProvider):
         - Populate self.turn_usage with the computed stats
         """
 
+        # If official tools are enabled, some llama.cpp builds may not stream tool_calls; fallback to non-stream
+        try:
+            if bool(self.session.get_option('TOOLS', 'use_official_tools', fallback=False)):
+                text = self.chat()
+                if isinstance(text, str):
+                    yield text
+                    return
+        except Exception:
+            pass
+
         response = self.chat()
         if response is None:
             return
@@ -193,6 +234,7 @@ class LlamaCppProvider(APIProvider):
         for chunk in response:
             if 'choices' in chunk and len(chunk['choices']) > 0:
                 choice = chunk['choices'][0]
+                # Most llama.cpp streams use OpenAI-like delta
                 content = choice.get('delta', {}).get('content')
                 if content:
                     completion_str += content
@@ -247,10 +289,39 @@ class LlamaCppProvider(APIProvider):
         chat = self.session.get_context('chat')
         if chat is not None:
             for turn in chat.get():
+                role = turn.get('role')
+                # Assistant tool calls (from runner) → include tool_calls in assistant message
+                if role == 'assistant' and 'tool_calls' in turn:
+                    message.append({
+                        'role': 'assistant',
+                        'content': None,
+                        'tool_calls': [
+                            {
+                                'id': tc.get('id'),
+                                'type': 'function',
+                                'function': {
+                                    'name': tc.get('name'),
+                                    'arguments': __import__('json').dumps(tc.get('arguments') or {})
+                                }
+                            } for tc in (turn.get('tool_calls') or [])
+                        ]
+                    })
+                    continue
+
+                # Tool results → role 'tool' with tool_call_id
+                if role == 'tool':
+                    tool_call_id = turn.get('tool_call_id') or turn.get('id')
+                    message.append({
+                        'role': 'tool',
+                        'content': turn.get('message') or '',
+                        'tool_call_id': tool_call_id
+                    })
+                    continue
+
                 turn_context = ''
                 if 'context' in turn and turn['context']:
                     turn_context = self.session.get_action('process_contexts').process_contexts_for_assistant(turn['context'])
-                message.append({'role': turn['role'], 'content': turn_context + "\n" + turn['message']})
+                message.append({'role': role, 'content': (turn_context + "\n" + (turn.get('message') or '')).strip()})
 
         return message
 
@@ -260,6 +331,63 @@ class LlamaCppProvider(APIProvider):
     def get_full_response(self):
         """Returns the full response object from the last API call"""
         return self._last_response
+
+    def get_tool_calls(self):
+        """Extract tool calls from the last response (OpenAI-compatible shape).
+
+        Supports both tool_calls array and legacy function_call single call.
+        """
+        resp = self._last_response
+        out = []
+        try:
+            if not resp:
+                return out
+            choices = resp.get('choices') or []
+            if not choices:
+                return out
+            msg = choices[0].get('message') or {}
+            # Preferred: tool_calls
+            tcs = msg.get('tool_calls')
+            if tcs:
+                import json
+                for tc in tcs:
+                    fn = (tc.get('function') or {})
+                    args = fn.get('arguments')
+                    if isinstance(args, str):
+                        try:
+                            args_obj = json.loads(args)
+                        except Exception:
+                            args_obj = {}
+                    elif isinstance(args, dict):
+                        args_obj = args
+                    else:
+                        args_obj = {}
+                    out.append({'id': tc.get('id'), 'name': fn.get('name'), 'arguments': args_obj})
+                return out
+            # Legacy: function_call
+            fc = msg.get('function_call')
+            if fc:
+                import json
+                args = fc.get('arguments')
+                if isinstance(args, str):
+                    try:
+                        args_obj = json.loads(args)
+                    except Exception:
+                        args_obj = {}
+                else:
+                    args_obj = args or {}
+                out.append({'id': None, 'name': fc.get('name'), 'arguments': args_obj})
+        except Exception:
+            return []
+        return out
+
+    # Provider-native tool spec construction
+    def get_tools_for_request(self) -> list:
+        try:
+            from utils.tool_schema import build_official_tool_specs
+            return build_official_tool_specs(self.session) or []
+        except Exception:
+            return []
 
     def get_usage(self):
         stats = {

@@ -45,6 +45,16 @@ class APIProvider(ABC):
         """Calculate cost based on token usage and model pricing"""
         pass
 
+    # --- Optional tool support hooks ---------------------------------
+    def get_tools_for_request(self) -> list:
+        """Return provider-native tool definitions for this request (optional).
+
+        Providers that support official tool calling should override this to
+        return the tool specification shape expected by their API. Default is
+        an empty list, indicating no tools are being sent.
+        """
+        return []
+
 
 class InteractionMode(ABC):
     """

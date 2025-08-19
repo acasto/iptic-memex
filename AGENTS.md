@@ -96,6 +96,26 @@ Gating and CLI‑only flows
   - Agent Mode: suppresses interim status/noise and newlines; focuses on completing steps and returning results.
 - Introspection: `show messages` surfaces assistant entries with Tool Calls metadata (name/id) alongside normal message text.
 
+#### Anthropic Messages API (Claude)
+- Tools: Defined via `tools=[{name, description, input_schema}]` with native JSON Schema.
+- Tool calls: Assistant emits `tool_use` content blocks (id, name, input). Client must reply with `user` `tool_result` blocks referencing `tool_use_id` and including result text.
+- Provider integration: The Anthropic provider maps assistant `tool_calls` to `tool_use` blocks and tool messages to `tool_result` blocks. Streaming detects `tool_use` starts and input deltas without printing raw JSON.
+- Limitations: With extended thinking, only `tool_choice: auto|none` is supported.
+
+#### Local Backends (llama.cpp)
+- Support varies by build:
+  - Some builds expose OpenAI-style `tools/tool_calls` and accept `tools`.
+  - Others only support legacy `functions/function_call`.
+  - Some local models emit tool calls inline as text (e.g., `<tool_call>{...}</tool_call>`) or bare JSON blocks.
+- Current behavior:
+  - The llama.cpp provider sends both `tools` and `functions` (with `function_call: auto`) to maximize compatibility.
+  - Assistant tool calls are encoded with `tool_calls` in messages; tool results use `role: 'tool'` and `tool_call_id`.
+  - Streaming with official tools may fall back to non-stream to keep the tool loop robust.
+  - We plan to add a textual tool-call detector (tags/raw JSON) to normalize inline calls into the same execution path and hide them from the transcript via an output filter.
+- Per-model/provider toggles:
+  - Settings like `use_old_system_role` can be set per model. Likewise, `use_pseudo_tools` will be toggleable per model/provider so you can prefer pseudo-tools for specific local models.
+  - A future `llamacpp_tool_mode` option will allow choosing `tools|functions|both` per model/provider for the request payload.
+
 ## Stepwise Actions & UI Adapters (Core)
 - UI adapters: `session.ui` provides `ask_text/ask_bool/ask_choice/ask_files` and `emit(event_type, data)`.
   - CLI blocks (`CLIUI`, `capabilities.blocking=True`); Web/TUI raise `InteractionNeeded` (`blocking=False`).

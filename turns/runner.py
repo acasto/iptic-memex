@@ -455,6 +455,24 @@ class TurnRunner:
                         try:
                             action = self.session.get_action(handler.get('name'))
                             with spinner_cm:
+                                # Ensure a visual break between the initial status line and tool's own output
+                                try:
+                                    if not self.session.in_agent_mode():
+                                        ui = getattr(self.session, 'ui', None)
+                                        blocking = True
+                                        try:
+                                            blocking = bool(ui and ui.capabilities and ui.capabilities.blocking)
+                                        except Exception:
+                                            blocking = True
+                                        if blocking:
+                                            self.session.utils.output.write("")
+                                            # Stop our initial spinner so it doesn't redraw and merge with tool output
+                                            try:
+                                                self.session.utils.output.stop_spinner()
+                                            except Exception:
+                                                pass
+                                except Exception:
+                                    pass
                                 action.run(args, content)
                             ran_any = True
                             # Collect assistant contexts added during this run
