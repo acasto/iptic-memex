@@ -142,6 +142,17 @@ class ShowAction(InteractionAction):
                         entry.append(f"    Message: {content}")
                     else:
                         entry.append("    Message: (empty)")
+
+                    # Surface tool-calls metadata for assistant messages (official tools)
+                    try:
+                        if role == 'assistant' and 'tool_calls' in message and message['tool_calls']:
+                            entry.append("    Tool Calls:")
+                            for k, tc in enumerate(message['tool_calls']):
+                                fn = (tc.get('function') or {}).get('name') if isinstance(tc, dict) else None
+                                tc_id = tc.get('id') if isinstance(tc, dict) else None
+                                entry.append(f"      ({k}) name={fn or '?'} id={tc_id or '?'}")
+                    except Exception:
+                        pass
                     
                     if context:
                         entry.append(f"    Context: {len(context)} item(s)")
