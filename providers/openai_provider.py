@@ -183,6 +183,18 @@ class OpenAIProvider(APIProvider):
                         'include_usage': True,
                     }
 
+            # Attach official tool specs when enabled
+            try:
+                if bool(self.session.get_option('TOOLS', 'use_official_tools', fallback=False)):
+                    from utils.tool_schema import build_official_tool_specs
+                    tools_spec = build_official_tool_specs(self.session) or []
+                    if tools_spec:
+                        api_parms['tools'] = tools_spec
+                        if current_params.get('tool_choice') is not None:
+                            api_parms['tool_choice'] = current_params.get('tool_choice')
+            except Exception:
+                pass
+
             api_parms['messages'] = messages
             self.last_api_param = api_parms
 
@@ -207,7 +219,25 @@ class OpenAIProvider(APIProvider):
                 error_msg += "Rate limit exceeded - please wait before retrying\n"
             elif isinstance(e, openai.APIStatusError):
                 error_msg += f"Status code: {getattr(e, 'status_code', 'unknown')}\n"
-                error_msg += f"Response: {getattr(e, 'response', 'unknown')}\n"
+                resp_obj = getattr(e, 'response', None)
+                # Include response text/json for easier debugging
+                try:
+                    if resp_obj is not None:
+                        body = None
+                        if hasattr(resp_obj, 'text'):
+                            body = resp_obj.text
+                        elif hasattr(resp_obj, 'json'):
+                            try:
+                                body = resp_obj.json()
+                            except Exception:
+                                body = str(resp_obj)
+                        else:
+                            body = str(resp_obj)
+                        error_msg += f"Response: {body}\n"
+                    else:
+                        error_msg += f"Response: {getattr(e, 'response', 'unknown')}\n"
+                except Exception:
+                    error_msg += f"Response: {getattr(e, 'response', 'unknown')}\n"
             else:
                 error_msg += f"Unexpected error: {str(e)}\n"
 
@@ -336,6 +366,38 @@ class OpenAIProvider(APIProvider):
             use_simple_format = self.session.get_params().get('use_simple_message_format', False)
 
             for idx, turn in enumerate(chat.get()):
+                # Assistant tool calls: include 'tool_calls' array on assistant message
+                if turn.get('role') == 'assistant' and 'tool_calls' in turn:
+                    import json
+                    tool_calls_out = []
+                    for tc in (turn.get('tool_calls') or []):
+                        fn_name = tc.get('name')
+                        args = tc.get('arguments')
+                        # Chat Completions expects arguments as a JSON-encoded string
+                        if not isinstance(args, str):
+                            try:
+                                args = json.dumps(args or {})
+                            except Exception:
+                                args = "{}"
+                        tool_calls_out.append({
+                            'id': tc.get('id'),
+                            'type': 'function',
+                            'function': {
+                                'name': fn_name,
+                                'arguments': args,
+                            }
+                        })
+                    message.append({'role': 'assistant', 'content': None, 'tool_calls': tool_calls_out})
+                    continue
+
+                # Official tool outputs: include as tool role messages with tool_call_id
+                if turn.get('role') == 'tool':
+                    tool_call_id = turn.get('tool_call_id') or turn.get('id')
+                    tool_msg = {'role': 'tool', 'content': turn.get('message') or ''}
+                    if tool_call_id:
+                        tool_msg['tool_call_id'] = tool_call_id
+                    message.append(tool_msg)
+                    continue
                 # For simple format, we'll use a single string for content
                 if use_simple_format:
                     turn_content = ""
@@ -402,6 +464,44 @@ class OpenAIProvider(APIProvider):
     def get_full_response(self):
         """Returns the full response object from the last API call"""
         return self._last_response
+
+    def get_tool_calls(self):
+        """Return normalized tool calls from the last response, if present.
+
+        Shape: [{"id": str, "name": str, "arguments": dict}]
+        """
+        resp = self._last_response
+        out = []
+        try:
+            if not resp or not getattr(resp, 'choices', None):
+                return out
+            choice0 = resp.choices[0]
+            msg = getattr(choice0, 'message', None)
+            tool_calls = getattr(msg, 'tool_calls', None) if msg else None
+            if not tool_calls:
+                return out
+            import json
+            for tc in tool_calls:
+                fn = getattr(tc, 'function', None)
+                name = getattr(fn, 'name', None) if fn else None
+                args = getattr(fn, 'arguments', None) if fn else None
+                if isinstance(args, str):
+                    try:
+                        args_obj = json.loads(args)
+                    except Exception:
+                        args_obj = {}
+                elif isinstance(args, dict):
+                    args_obj = args
+                else:
+                    args_obj = {}
+                out.append({
+                    'id': getattr(tc, 'id', None),
+                    'name': name,
+                    'arguments': args_obj,
+                })
+        except Exception:
+            return []
+        return out
 
     def _update_usage_stats(self, response):
         """Update usage tracking with both standard and reasoning-specific metrics"""

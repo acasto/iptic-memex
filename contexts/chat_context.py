@@ -8,7 +8,7 @@ class ChatContext(InteractionContext):
         self.session = session
         self.conversation = []  # list to hold the file name and content
 
-    def add(self, message, role='user', context=None):
+    def add(self, message, role='user', context=None, extra=None):
         # If the conversation is empty and the role isn't 'user', insert a blank 'user' message first
         if not self.conversation and role != 'user':
             self.add('', role='user')  # Add a blank 'user' message
@@ -25,6 +25,15 @@ class ChatContext(InteractionContext):
                 turn['context'] = context
             else:
                 turn['context'] = [context]
+        # Allow callers to include extra fields (e.g., tool_call_id for official tool outputs)
+        if isinstance(extra, dict):
+            try:
+                for k, v in extra.items():
+                    # Avoid clobbering reserved keys
+                    if k not in ('timestamp', 'role', 'message', 'context'):
+                        turn[k] = v
+            except Exception:
+                pass
         self.conversation.append(turn)
 
     def get(self, args=None):

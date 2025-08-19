@@ -358,16 +358,160 @@ class TurnRunner:
             pass
 
     def _execute_tools(self, text: str) -> bool:
+        ran_any = False
+        provider = None
+        try:
+            provider = self.session.get_provider()
+        except Exception:
+            provider = None
+
+        # 1) Official tool calls (OpenAI-compatible), if enabled
+        try:
+            use_official = bool(self.session.get_option('TOOLS', 'use_official_tools', fallback=False))
+            if use_official and provider and hasattr(provider, 'get_tool_calls'):
+                tool_calls = []
+                try:
+                    tool_calls = provider.get_tool_calls() or []
+                except Exception:
+                    tool_calls = []
+                if tool_calls:
+                    # Build a case-insensitive command map from assistant_commands registry
+                    cmd_action = None
+                    try:
+                        cmd_action = self.session.get_action('assistant_commands')
+                    except Exception:
+                        cmd_action = None
+                    commands_map = {}
+                    if cmd_action and getattr(cmd_action, 'commands', None):
+                        for key, spec in cmd_action.commands.items():
+                            commands_map[str(key).lower()] = spec
+
+                    # Replace the last assistant message with one that includes tool_calls
+                    try:
+                        chat_ctx = self.session.get_context('chat') or self.session.add_context('chat')
+                        # Remove the previous assistant text-only record for this turn
+                        try:
+                            chat_ctx.remove_last_message()
+                        except Exception:
+                            pass
+                        # Store tool_calls for provider to serialize in assemble_message
+                        chat_ctx.add('', role='assistant', extra={'tool_calls': tool_calls})
+                    except Exception:
+                        pass
+
+                    for call in tool_calls:
+                        name = (call.get('name') or '').lower()
+                        args = dict(call.get('arguments') or {})
+                        content = ''
+                        if 'content' in args:
+                            content = args.pop('content') or ''
+                        spec = commands_map.get(name)
+                        if not spec:
+                            try:
+                                self.session.add_context('assistant', {
+                                    'name': 'command_error',
+                                    'content': f"Unsupported tool call: {name}"
+                                })
+                            except Exception:
+                                pass
+                            continue
+
+                        handler = spec.get('function') or {}
+                        # Spinner + status for user visibility
+                        try:
+                            ui = getattr(self.session, 'ui', None)
+                            if ui and hasattr(ui, 'emit'):
+                                ui.emit('status', {'message': f"Running tool: {name}"})
+                        except Exception:
+                            pass
+                        try:
+                            from contextlib import nullcontext
+                            self.session.utils.output.stop_spinner()
+                            spinner_cm = nullcontext()
+                            if not self.session.in_agent_mode():
+                                spinner_cm = self.session.utils.output.spinner(f"Running {name}...")
+                        except Exception:
+                            from contextlib import nullcontext
+                            spinner_cm = nullcontext()
+
+                        # Snapshot assistant contexts to capture outputs
+                        try:
+                            before_ctx = list(self.session.get_contexts('assistant') or [])
+                            before_len = len(before_ctx)
+                        except Exception:
+                            before_len = 0
+
+                        tool_output = ''
+                        try:
+                            action = self.session.get_action(handler.get('name'))
+                            with spinner_cm:
+                                action.run(args, content)
+                            ran_any = True
+                            # Collect assistant contexts added during this run
+                            try:
+                                after_ctx = list(self.session.get_contexts('assistant') or [])
+                                new_items = after_ctx[before_len:]
+                                parts = []
+                                for c in new_items:
+                                    try:
+                                        data = c.get() if hasattr(c, 'get') else None
+                                        if isinstance(data, dict):
+                                            name_label = data.get('name')
+                                            content_text = data.get('content')
+                                            if content_text:
+                                                if name_label:
+                                                    parts.append(f"{name_label}:\n{content_text}")
+                                                else:
+                                                    parts.append(str(content_text))
+                                    except Exception:
+                                        continue
+                                tool_output = '\n\n'.join(parts).strip()
+                            except Exception:
+                                tool_output = ''
+                        except Exception as need_exc:
+                            # Allow InteractionNeeded to propagate
+                            try:
+                                from base_classes import InteractionNeeded
+                            except Exception:
+                                InteractionNeeded = None  # type: ignore
+                            if InteractionNeeded and isinstance(need_exc, InteractionNeeded):
+                                raise
+                            # Bubble as an assistant context error
+                            try:
+                                self.session.add_context('assistant', {
+                                    'name': 'command_error',
+                                    'content': f"Error running tool '{name}': {need_exc}"
+                                })
+                            except Exception:
+                                pass
+                            continue
+
+                        # Append tool output as tool message for the next turn (fallback to 'OK')
+                        try:
+                            chat = self.session.get_context('chat') or self.session.add_context('chat')
+                            chat.add(tool_output or 'OK', role='tool', extra={'tool_call_id': call.get('id')})
+                        except Exception:
+                            pass
+
+                    # Trigger a follow-up assistant turn
+                    if ran_any and bool(self.session.get_option('TOOLS', 'allow_auto_submit', fallback=False)):
+                        self.session.set_flag('auto_submit', True)
+        except Exception:
+            # Never fail the turn due to tool plumbing errors
+            pass
+
+        # 2) Pseudo-tool parser (existing behavior)
         if not text:
-            return False
+            return ran_any
+
         try:
             commands_action = self.session.get_action("assistant_commands")
         except Exception:
             commands_action = None
         if not commands_action:
-            return False
+            return ran_any
 
-        # Peek for commands to decide if any tool runs; then execute
+        # Peek for command blocks to decide if any tool runs; then execute
         try:
             parsed = commands_action.parse_commands(text) or []
         except Exception:
@@ -375,8 +519,8 @@ class TurnRunner:
         try:
             if parsed:
                 commands_action.run(text)
-                return True
-            return False
+                ran_any = True or ran_any
+            return ran_any
         except Exception as e:
             # Allow InteractionNeeded to propagate (Web/TUI will handle token issuance)
             try:
@@ -393,7 +537,7 @@ class TurnRunner:
                 )
             except Exception:
                 pass
-            return False
+            return ran_any
 
     @staticmethod
     def _contains_sentinel(text: str, sentinels: List[str]) -> bool:
