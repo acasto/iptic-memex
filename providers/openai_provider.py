@@ -15,6 +15,7 @@ class OpenAIProvider(APIProvider):
         self.session = session
         self.last_api_param = None
         self._last_response = None
+        self._last_stream_tool_calls = None  # capture tool calls seen during streaming
 
         # Initialize client with fresh params
         self.client = self._initialize_client()
@@ -286,13 +287,48 @@ class OpenAIProvider(APIProvider):
         if response is None:
             return
 
+        # Track tool_call deltas (Chat Completions streaming)
+        tool_calls_map = {}  # index -> {id, name, arguments(str)}
+
         try:
             for chunk in response:
-                # Handle content chunks
+                # Handle content/tool_call chunks
                 if chunk.choices and len(chunk.choices) > 0:
                     choice = chunk.choices[0]
-                    if choice.delta and choice.delta.content:
-                        yield choice.delta.content
+                    delta = getattr(choice, 'delta', None)
+                    if delta is not None:
+                        # Text content delta
+                        if getattr(delta, 'content', None):
+                            yield delta.content
+                        # Tool call deltas
+                        tool_calls = getattr(delta, 'tool_calls', None)
+                        if tool_calls:
+                            try:
+                                for tc in tool_calls:
+                                    idx = getattr(tc, 'index', None)
+                                    fn = getattr(tc, 'function', None)
+                                    name = getattr(fn, 'name', None) if fn else None
+                                    args_chunk = getattr(fn, 'arguments', None) if fn else None
+                                    # Initialize record
+                                    rec = tool_calls_map.get(idx) or {'id': getattr(tc, 'id', None), 'name': None, 'arguments': ''}
+                                    if name:
+                                        # Emit a status the first time we see the name
+                                        if not rec.get('name'):
+                                            try:
+                                                ui = getattr(self.session, 'ui', None)
+                                                if ui and hasattr(ui, 'emit'):
+                                                    ui.emit('status', {'message': f"Tool calling: {name}"})
+                                            except Exception:
+                                                pass
+                                        rec['name'] = name
+                                    if args_chunk:
+                                        try:
+                                            rec['arguments'] = (rec.get('arguments') or '') + str(args_chunk)
+                                        except Exception:
+                                            pass
+                                    tool_calls_map[idx] = rec
+                            except Exception:
+                                pass
 
                 # Handle final usage stats in last chunk
                 if chunk.usage:
@@ -345,6 +381,23 @@ class OpenAIProvider(APIProvider):
 
         finally:
             self.running_usage['total_time'] += time() - start_time
+            # Finalize tool calls collected during streaming
+            try:
+                out = []
+                import json
+                for _, rec in sorted(tool_calls_map.items(), key=lambda kv: (kv[0] if kv[0] is not None else 0)):
+                    args_obj = {}
+                    args_str = rec.get('arguments') or ''
+                    if args_str:
+                        try:
+                            args_obj = json.loads(args_str)
+                        except Exception:
+                            # Leave as empty dict if not valid JSON; runner handles 'content' passthrough separately
+                            args_obj = {}
+                    out.append({'id': rec.get('id'), 'name': rec.get('name'), 'arguments': args_obj})
+                self._last_stream_tool_calls = out
+            except Exception:
+                self._last_stream_tool_calls = None
 
     def assemble_message(self) -> list:
         """
@@ -470,6 +523,9 @@ class OpenAIProvider(APIProvider):
 
         Shape: [{"id": str, "name": str, "arguments": dict}]
         """
+        # Prefer tool calls collected from streaming
+        if self._last_stream_tool_calls:
+            return list(self._last_stream_tool_calls)
         resp = self._last_response
         out = []
         try:
