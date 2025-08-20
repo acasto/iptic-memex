@@ -10,7 +10,6 @@ beautifulsoup4
 tiktoken
 reportlab
 trafilatura
-cohere
 PyPDF2
 python-docx
 openpyxl
