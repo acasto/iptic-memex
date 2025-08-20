@@ -471,14 +471,23 @@ class TurnRunner:
                                             blocking = True
                                         if blocking:
                                             self.session.utils.output.write("")
-                                            # Stop our initial spinner so it doesn't redraw and merge with tool output
                                             try:
                                                 self.session.utils.output.stop_spinner()
                                             except Exception:
                                                 pass
                                 except Exception:
                                     pass
-                                action.run(args, content)
+                                # In Agent final/none, suppress INFO/DEBUG during tool execution
+                                try:
+                                    from utils.output_utils import OutputLevel
+                                    out_mode = (self.session.get_params().get('agent_output_mode') or '').lower()
+                                    if self.session.in_agent_mode() and out_mode in ('final', 'none'):
+                                        with self.session.utils.output.suppress_below(OutputLevel.WARNING):
+                                            action.run(args, content)
+                                    else:
+                                        action.run(args, content)
+                                except Exception:
+                                    action.run(args, content)
                             ran_any = True
                             # Collect assistant contexts added during this run
                             try:

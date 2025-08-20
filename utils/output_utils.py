@@ -232,6 +232,7 @@ class OutputHandler:
         self.config = config
         self._stream: TextIO = sys.stdout
         self._current_spinner = None  # Track current spinner
+        self._level_stack: List[OutputLevel] = []  # temp overrides
 
     # Determine if color is enabled
         self._color_enabled = (
@@ -316,7 +317,16 @@ class OutputHandler:
         """
         Determine if a message at 'level' should be shown given the current threshold.
         """
-        return level.value >= self.level.value
+        effective_level = self.level
+        if self._level_stack:
+            # Use the highest (most restrictive) of current vs override
+            try:
+                override = self._level_stack[-1]
+                if override.value > effective_level.value:
+                    effective_level = override
+            except Exception:
+                pass
+        return level.value >= effective_level.value
 
     def style_text(
             self,
@@ -435,7 +445,9 @@ class OutputHandler:
 
     def spinner(self, message="", style=None):
         """Get a spinner context manager for showing progress."""
-        if not self._supports_color() or not self._color_enabled:
+        # If INFO is currently suppressed, do not show spinners
+        if (self._level_stack and self._level_stack[-1].value >= OutputLevel.WARNING.value) or \
+           (not self._supports_color() or not self._color_enabled):
             return DummySpinnerContext()
         self._current_spinner = Spinner(message, style=style, config=self.config)
         return self._current_spinner
@@ -539,3 +551,25 @@ class OutputHandler:
         (from chat/TUI flows) should not appear.
         """
         return OutputHandler._StdoutFilterContext(self, suppress_blank_lines, collapse_bursts)
+
+    # --- Level suppression context (e.g., Agent final to hide INFO/status) ---
+    class _LevelSuppressContext:
+        def __init__(self, outer: 'OutputHandler', min_level: OutputLevel):
+            self._outer = outer
+            self._min_level = min_level
+
+        def __enter__(self):
+            self._outer._level_stack.append(self._min_level)
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            if self._outer._level_stack:
+                self._outer._level_stack.pop()
+
+    def suppress_below(self, min_level: OutputLevel):
+        """Temporarily suppress messages below the given OutputLevel.
+
+        Example: with output.suppress_below(OutputLevel.WARNING): ...
+        Will drop INFO/DEBUG (including status/info writes) while allowing warnings/errors.
+        """
+        return OutputHandler._LevelSuppressContext(self, min_level)

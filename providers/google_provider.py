@@ -194,10 +194,18 @@ class GoogleProvider(APIProvider):
                         canonical = cmd.get_tool_specs() or []
                         decls = []
                         for spec in canonical:
+                            # Rebuild parameters for Gemini: drop unknown keys like additionalProperties
+                            p = spec.get('parameters') or {}
+                            params_obj = {
+                                'type': (p.get('type') or 'object'),
+                                'properties': (p.get('properties') or {}),
+                            }
+                            if 'required' in p and isinstance(p.get('required'), list):
+                                params_obj['required'] = p.get('required')
                             decls.append({
                                 'name': spec.get('name'),
                                 'description': spec.get('description'),
-                                'parameters': spec.get('parameters') or {'type': 'object', 'properties': {}},
+                                'parameters': params_obj,
                             })
                         if decls:
                             from google.generativeai import types as gx_types
