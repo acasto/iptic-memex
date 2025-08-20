@@ -383,8 +383,13 @@ class TurnRunner:
 
         # 1) Official tool calls (OpenAI-compatible), if enabled
         try:
-            use_official = bool(self.session.get_option('TOOLS', 'use_official_tools', fallback=False))
-            if use_official and provider and hasattr(provider, 'get_tool_calls'):
+            effective_mode = 'none'
+            try:
+                # Prefer helper when available
+                effective_mode = getattr(self.session, 'get_effective_tool_mode', lambda: 'none')()
+            except Exception:
+                effective_mode = 'none'
+            if effective_mode == 'official' and provider and hasattr(provider, 'get_tool_calls'):
                 tool_calls = []
                 try:
                     tool_calls = provider.get_tool_calls() or []

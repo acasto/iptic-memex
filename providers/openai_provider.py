@@ -186,7 +186,8 @@ class OpenAIProvider(APIProvider):
 
             # Attach official tool specs when enabled
             try:
-                if bool(self.session.get_option('TOOLS', 'use_official_tools', fallback=False)):
+                mode = getattr(self.session, 'get_effective_tool_mode', lambda: 'none')()
+                if mode == 'official':
                     tools_spec = self.get_tools_for_request() or []
                     if tools_spec:
                         api_parms['tools'] = tools_spec

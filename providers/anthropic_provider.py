@@ -239,9 +239,10 @@ class AnthropicProvider(APIProvider):
         if api_model:
             params['model'] = api_model
             
-        # Attach tools if enabled
+        # Attach tools if official mode is active
         try:
-            if bool(self.session.get_option('TOOLS', 'use_official_tools', fallback=False)):
+            mode = getattr(self.session, 'get_effective_tool_mode', lambda: 'none')()
+            if mode == 'official':
                 from utils.tool_schema import build_anthropic_tool_specs
                 tools_spec = build_anthropic_tool_specs(self.session) or []
                 if tools_spec:

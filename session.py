@@ -353,6 +353,57 @@ class Session:
             pass
         return tools
 
+    # ---- Tools mode helpers -----------------------------------------
+    def get_effective_tool_mode(self) -> str:
+        """Return effective tool mode: 'official' | 'pseudo' | 'none'.
+
+        Precedence when DEFAULT.enable_tools is true:
+        1) model.tool_mode
+        2) provider.tool_mode
+        3) [TOOLS].tool_mode (default 'official')
+        When DEFAULT.enable_tools is false → 'none'.
+        """
+        # Global gate
+        enabled_raw = self.get_option('DEFAULT', 'enable_tools', fallback=True)
+        enabled = enabled_raw if isinstance(enabled_raw, bool) else str(enabled_raw).lower() not in ('false', '0', 'no')
+        if not enabled:
+            return 'none'
+
+        # Model override
+        try:
+            model = self.params.get('model')
+            if model:
+                model_mode = self.get_option_from_model('tool_mode', model)
+                if model_mode:
+                    m = str(model_mode).strip().lower()
+                    if m in ('official', 'pseudo', 'none'):
+                        return m
+        except Exception:
+            pass
+
+        # Provider override
+        try:
+            provider_name = self.params.get('provider')
+            if provider_name:
+                prov_mode = self.get_option_from_provider('tool_mode', provider_name)
+                if prov_mode:
+                    p = str(prov_mode).strip().lower()
+                    if p in ('official', 'pseudo', 'none'):
+                        return p
+        except Exception:
+            pass
+
+        # Global tools mode default
+        try:
+            base_mode = self.get_option('TOOLS', 'tool_mode', fallback='official')
+            b = base_mode if isinstance(base_mode, str) else str(base_mode)
+            b = b.strip().lower()
+            if b in ('official', 'pseudo'):
+                return b
+        except Exception:
+            pass
+        return 'official'
+
     def remove_context_type(self, context_type: str):
         """Remove all contexts of a specific type - backward compatibility"""
         self.clear_context(context_type)

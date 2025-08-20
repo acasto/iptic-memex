@@ -81,12 +81,13 @@ Gating and CLI‑only flows
 - Auto-submit: if a command sets `auto_submit: true` and `TOOLS.allow_auto_submit` is enabled, the next prompt is skipped after execution.
 
 ### Official Tool Calling (OpenAI-compatible)
-- Flags (config.ini `[TOOLS]`):
-  - `use_official_tools = true|false` to enable Chat Completions tool calling.
-  - `use_pseudo_tools = true|false` to keep legacy block-based tools.
+- Settings:
+  - `[DEFAULT].enable_tools = true|false` to globally enable/disable tools.
+  - `[TOOLS].tool_mode = official|pseudo` sets the baseline mode (default `official`).
+  - Overrides: per provider (`[Provider].tool_mode`) or per model (`[Model].tool_mode`) can be `official|pseudo|none`.
 - Source of truth: `actions/assistant_commands_action.py` registry defines available tools and arg names. A schema builder maps these to OpenAI tool specs (lowercase names, auto descriptions, string args, plus `content`).
 - Provider (OpenAI):
-  - Sends `tools`/`tool_choice` when official tools are enabled.
+  - Sends `tools`/`tool_choice` when effective tool mode is `official`.
   - Parses `tool_calls` in non-streaming and streaming. Streaming aggregates argument deltas without printing JSON.
 - Turn orchestration:
   - On a tool call, the runner replaces the last assistant message (provider view) with an assistant message containing `tool_calls`, executes the mapped actions, and appends `tool` role messages with `tool_call_id` and real outputs. Then it auto-submits the follow-up assistant turn.
@@ -107,13 +108,12 @@ Gating and CLI‑only flows
   - Tool/function calling support in `llama-cpp-python` varies by model/build and is not reliable across the board.
   - Many local models emit tool calls mid‑reply or after long reasoning traces; some builds ignore provided tools entirely.
 - Our approach (for now):
-  - The llama.cpp provider uses pseudo‑tools only. Official Chat Completions tool calling is not used with llama.cpp until upstream support stabilizes.
-  - If `TOOLS.use_official_tools = true`, it applies to cloud providers (e.g., OpenAI). llama.cpp continues to rely on pseudo‑tools.
+  - The llama.cpp provider uses pseudo‑tools only (`tool_mode = pseudo`). Official tool calling is not used with llama.cpp until upstream support stabilizes.
 - Rationale:
   - Avoid added complexity/coupling and brittle textual detection in the provider.
 - Notes:
   - Settings like `use_old_system_role` can still be set per model/provider.
-  - Ensure `use_pseudo_tools` is enabled when working with llama.cpp.
+  - Ensure `[LlamaCpp].tool_mode = pseudo` when working with llama.cpp.
 
 ## Stepwise Actions & UI Adapters (Core)
 - UI adapters: `session.ui` provides `ask_text/ask_bool/ask_choice/ask_files` and `emit(event_type, data)`.
