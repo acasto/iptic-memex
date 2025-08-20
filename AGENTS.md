@@ -106,15 +106,21 @@ Gating and CLI‑only flows
 - Support varies by build:
   - Some builds expose OpenAI-style `tools/tool_calls` and accept `tools`.
   - Others only support legacy `functions/function_call`.
-  - Some local models emit tool calls inline as text (e.g., `<tool_call>{...}</tool_call>`) or bare JSON blocks.
-- Current behavior:
+  - Some local models emit tool calls inline as text (e.g., `<tool_call>{...}</tool_call>`) or as bare JSON at the start of an assistant turn.
+- Current behavior (implemented):
   - The llama.cpp provider sends both `tools` and `functions` (with `function_call: auto`) to maximize compatibility.
-  - Assistant tool calls are encoded with `tool_calls` in messages; tool results use `role: 'tool'` and `tool_call_id`.
-  - Streaming with official tools may fall back to non-stream to keep the tool loop robust.
-  - We plan to add a textual tool-call detector (tags/raw JSON) to normalize inline calls into the same execution path and hide them from the transcript via an output filter.
-- Per-model/provider toggles:
-  - Settings like `use_old_system_role` can be set per model. Likewise, `use_pseudo_tools` will be toggleable per model/provider so you can prefer pseudo-tools for specific local models.
-  - A future `llamacpp_tool_mode` option will allow choosing `tools|functions|both` per model/provider for the request payload.
+  - When the backend does not emit native `tool_calls/function_call`, the provider performs textual detection of inline calls and normalizes them to the same OpenAI-style shape for the TurnRunner:
+    - Non-streaming: detects `<tool_call>...</tool_call>` blocks or leading JSON/arrays and suppresses that text from the assistant output, surfacing calls via `get_tool_calls()`.
+    - Streaming: a shared `StreamToolCallDetector` inspects deltas, suppresses visible JSON/tags, and returns normalized calls at the end of the stream. If parsing fails, it falls back to yielding the visible text.
+  - After tools execute, tool results are fed back to llama.cpp using legacy `function` role messages (name + content) for maximum compatibility. The provider does not inject an assistant message with `tool_calls` into the llama.cpp request.
+  - Follow-up generation proceeds normally, with the runner auto-submitting the next assistant turn when enabled.
+- Toggle (debug):
+  - `[LlamaCpp] detect_tool_calls = true|false` in `config.ini` controls textual detection.
+    - `true` (default): Detect and route inline tool calls through official tools (raw tool-call text is hidden from the transcript).
+    - `false`: Disable detection so raw `<tool_call>...</tool_call>` or JSON is visible for troubleshooting; no official tools will run from llamacpp output in this mode.
+- Notes:
+  - Settings like `use_old_system_role` can be set per model/provider.
+  - `use_pseudo_tools` remains available if you prefer legacy block-based tools for specific local models.
 
 ## Stepwise Actions & UI Adapters (Core)
 - UI adapters: `session.ui` provides `ask_text/ask_bool/ask_choice/ask_files` and `emit(event_type, data)`.

@@ -185,7 +185,8 @@ class LlamaCppProvider(APIProvider):
                 # Detect textual tool calls when official tools are enabled but
                 # backend did not emit native tool_calls/function_call.
                 try:
-                    if bool(self.session.get_option('TOOLS', 'use_official_tools', fallback=False)):
+                    detect_textual = bool(self.session.get_option('LlamaCpp', 'detect_tool_calls', fallback=True))
+                    if bool(self.session.get_option('TOOLS', 'use_official_tools', fallback=False)) and detect_textual:
                         # If the message already contains native tool calls, return normally
                         msg = (response.get('choices') or [{}])[0].get('message') or {}
                         if not (msg.get('tool_calls') or msg.get('function_call')):
@@ -236,9 +237,10 @@ class LlamaCppProvider(APIProvider):
         prompt_tokens = self.llm.tokenize(prompt_str.encode('utf-8'), add_bos=True)
         prompt_token_count = len(prompt_tokens)
 
-        # If official tools are enabled, use a shared detector to handle streaming
+        # If official tools are enabled and detection is on, use shared detector
         try:
-            if bool(self.session.get_option('TOOLS', 'use_official_tools', fallback=False)):
+            detect_textual = bool(self.session.get_option('LlamaCpp', 'detect_tool_calls', fallback=True))
+            if bool(self.session.get_option('TOOLS', 'use_official_tools', fallback=False)) and detect_textual:
                 from utils.stream_tool_call_detector import StreamToolCallDetector
                 detector = StreamToolCallDetector(prefix_buffer_size=64)
                 completion_str = ""
@@ -301,7 +303,7 @@ class LlamaCppProvider(APIProvider):
         # Streaming textual tool-call detection buffer (enabled when official tools are on)
         detect_official = False
         try:
-            detect_official = bool(self.session.get_option('TOOLS', 'use_official_tools', fallback=False))
+            detect_official = bool(self.session.get_option('TOOLS', 'use_official_tools', fallback=False)) and bool(self.session.get_option('LlamaCpp', 'detect_tool_calls', fallback=True))
         except Exception:
             detect_official = False
         buffer = []

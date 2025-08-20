@@ -83,6 +83,43 @@ class AssistantYoutrackToolAction(InteractionAction):
     def run(self, args: dict, content: str = ""):
         mode = args.get('mode', '').lower()
 
+        # Accept common synonyms/short forms from models to preserve compatibility
+        # with pseudo-tools phrasing (e.g., mode="projects")
+        mode_aliases = {
+            'projects': 'get_projects',
+            'list_projects': 'get_projects',
+            'get_project': 'get_projects',
+
+            'issues': 'get_issues',
+            'list_issues': 'get_issues',
+            'search_issues': 'get_issues',
+
+            'issue': 'get_issue_details',
+            'details': 'get_issue_details',
+            'issue_details': 'get_issue_details',
+
+            'create': 'create_issue',
+            'new_issue': 'create_issue',
+
+            'assign': 'assign_issue',
+            'assign_issue': 'assign_issue',
+
+            'set_state': 'update_state',
+            'set_status': 'update_state',
+            'update_status': 'update_state',
+            'state': 'update_state',
+
+            'priority': 'update_priority',
+            'set_priority': 'update_priority',
+
+            'type': 'update_type',
+            'set_type': 'update_type',
+
+            'comment': 'add_comment',
+            'add_comment': 'add_comment',
+        }
+        mode = mode_aliases.get(mode, mode)
+
         # Debugging: Log the mode and arguments
         # self.session.add_context('assistant', {
         #     'name': 'youtrack_debug',
