@@ -103,24 +103,17 @@ Gating and CLI‑only flows
 - Limitations: With extended thinking, only `tool_choice: auto|none` is supported.
 
 #### Local Backends (llama.cpp)
-- Support varies by build:
-  - Some builds expose OpenAI-style `tools/tool_calls` and accept `tools`.
-  - Others only support legacy `functions/function_call`.
-  - Some local models emit tool calls inline as text (e.g., `<tool_call>{...}</tool_call>`) or as bare JSON at the start of an assistant turn.
-- Current behavior (implemented):
-  - The llama.cpp provider sends both `tools` and `functions` (with `function_call: auto`) to maximize compatibility.
-  - When the backend does not emit native `tool_calls/function_call`, the provider performs textual detection of inline calls and normalizes them to the same OpenAI-style shape for the TurnRunner:
-    - Non-streaming: detects `<tool_call>...</tool_call>` blocks or leading JSON/arrays and suppresses that text from the assistant output, surfacing calls via `get_tool_calls()`.
-    - Streaming: a shared `StreamToolCallDetector` inspects deltas, suppresses visible JSON/tags, and returns normalized calls at the end of the stream. If parsing fails, it falls back to yielding the visible text.
-  - After tools execute, tool results are fed back to llama.cpp using legacy `function` role messages (name + content) for maximum compatibility. The provider does not inject an assistant message with `tool_calls` into the llama.cpp request.
-  - Follow-up generation proceeds normally, with the runner auto-submitting the next assistant turn when enabled.
-- Toggle (debug):
-  - `[LlamaCpp] detect_tool_calls = true|false` in `config.ini` controls textual detection.
-    - `true` (default): Detect and route inline tool calls through official tools (raw tool-call text is hidden from the transcript).
-    - `false`: Disable detection so raw `<tool_call>...</tool_call>` or JSON is visible for troubleshooting; no official tools will run from llamacpp output in this mode.
+- Current status:
+  - Tool/function calling support in `llama-cpp-python` varies by model/build and is not reliable across the board.
+  - Many local models emit tool calls mid‑reply or after long reasoning traces; some builds ignore provided tools entirely.
+- Our approach (for now):
+  - The llama.cpp provider uses pseudo‑tools only. Official Chat Completions tool calling is not used with llama.cpp until upstream support stabilizes.
+  - If `TOOLS.use_official_tools = true`, it applies to cloud providers (e.g., OpenAI). llama.cpp continues to rely on pseudo‑tools.
+- Rationale:
+  - Avoid added complexity/coupling and brittle textual detection in the provider.
 - Notes:
-  - Settings like `use_old_system_role` can be set per model/provider.
-  - `use_pseudo_tools` remains available if you prefer legacy block-based tools for specific local models.
+  - Settings like `use_old_system_role` can still be set per model/provider.
+  - Ensure `use_pseudo_tools` is enabled when working with llama.cpp.
 
 ## Stepwise Actions & UI Adapters (Core)
 - UI adapters: `session.ui` provides `ask_text/ask_bool/ask_choice/ask_files` and `emit(event_type, data)`.
