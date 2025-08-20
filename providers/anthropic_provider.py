@@ -243,8 +243,7 @@ class AnthropicProvider(APIProvider):
         try:
             mode = getattr(self.session, 'get_effective_tool_mode', lambda: 'none')()
             if mode == 'official':
-                from utils.tool_schema import build_anthropic_tool_specs
-                tools_spec = build_anthropic_tool_specs(self.session) or []
+                tools_spec = self.get_tools_for_request() or []
                 if tools_spec:
                     params['tools'] = tools_spec
                     if current_params.get('tool_choice') is not None:
@@ -451,8 +450,21 @@ class AnthropicProvider(APIProvider):
     # Provider-native tool spec construction
     def get_tools_for_request(self) -> list:
         try:
-            from utils.tool_schema import build_anthropic_tool_specs
-            return build_anthropic_tool_specs(self.session) or []
+            cmd = self.session.get_action('assistant_commands')
+            if not cmd or not hasattr(cmd, 'get_tool_specs'):
+                return []
+            canonical = cmd.get_tool_specs() or []
+            tools = []
+            for spec in canonical:
+                try:
+                    tools.append({
+                        'name': spec.get('name'),
+                        'description': spec.get('description'),
+                        'input_schema': spec.get('parameters') or {'type': 'object', 'properties': {}},
+                    })
+                except Exception:
+                    continue
+            return tools
         except Exception:
             return []
 

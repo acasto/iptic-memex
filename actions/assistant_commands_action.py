@@ -79,6 +79,74 @@ class AssistantCommandsAction(InteractionAction):
             if new_commands:
                 self.commands.update(new_commands)
 
+    # ---- Canonical tool specs for providers ----
+    def _auto_description(self, cmd_key: str, handler_name: str) -> str:
+        key = (cmd_key or '').strip()
+        handler = (handler_name or '').strip()
+        return f"Assistant command {key} mapped to action '{handler}'."
+
+    def _infer_required(self, cmd_key: str) -> list:
+        k = (cmd_key or '').upper()
+        if k == 'CMD':
+            return ['command']
+        if k == 'FILE':
+            return ['mode', 'file']
+        if k == 'WEBSEARCH':
+            return ['query']
+        if k == 'OPENLINK':
+            return ['url']
+        if k == 'YOUTRACK':
+            return ['mode']
+        if k == 'MATH':
+            return ['expression']
+        if k == 'MEMORY':
+            return ['action']
+        return []
+
+    def get_tool_specs(self) -> list:
+        """Return canonical, provider-agnostic tool specs derived from the registry.
+
+        Shape per spec:
+          { name, description, parameters: {type:'object', properties:{...}, required:[...]} }
+        """
+        specs = []
+        for cmd_key, info in (self.commands or {}).items():
+            try:
+                handler = (info.get('function') or {}).get('name', '')
+                name = str(cmd_key).lower()
+                desc = info.get('description') or self._auto_description(cmd_key, handler)
+                arg_names = list(info.get('args', []) or [])
+
+                # Default properties: strings for all declared args + freeform content
+                properties = {a: {"type": "string"} for a in arg_names}
+                properties['content'] = {"type": "string"}
+
+                # Merge schema overrides when present
+                schema = info.get('schema') or {}
+                schema_props = schema.get('properties') or {}
+                if isinstance(schema_props, dict):
+                    for k, v in schema_props.items():
+                        try:
+                            properties[k] = v
+                        except Exception:
+                            continue
+
+                required = info.get('required') or self._infer_required(cmd_key)
+
+                specs.append({
+                    'name': name,
+                    'description': desc,
+                    'parameters': {
+                        'type': 'object',
+                        'properties': properties,
+                        'required': required,
+                        'additionalProperties': True,
+                    }
+                })
+            except Exception:
+                continue
+        return specs
+
     def run(self, response: str = None):
         # Backstop: sanitize out <think> ... </think> segments so parser
         # never considers tools mentioned inside thinking sections.

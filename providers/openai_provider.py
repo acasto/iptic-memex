@@ -554,8 +554,24 @@ class OpenAIProvider(APIProvider):
     # Provider-native tool spec construction
     def get_tools_for_request(self) -> list:
         try:
-            from utils.tool_schema import build_official_tool_specs
-            return build_official_tool_specs(self.session) or []
+            cmd = self.session.get_action('assistant_commands')
+            if not cmd or not hasattr(cmd, 'get_tool_specs'):
+                return []
+            canonical = cmd.get_tool_specs() or []
+            tools = []
+            for spec in canonical:
+                try:
+                    tools.append({
+                        'type': 'function',
+                        'function': {
+                            'name': spec.get('name'),
+                            'description': spec.get('description'),
+                            'parameters': spec.get('parameters') or {'type': 'object', 'properties': {}},
+                        }
+                    })
+                except Exception:
+                    continue
+            return tools
         except Exception:
             return []
 

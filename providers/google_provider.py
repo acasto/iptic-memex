@@ -181,6 +181,33 @@ class GoogleProvider(APIProvider):
                 if param in current_params and current_params[param] is not None:
                     gen_params[param] = current_params[param]
 
+            # Attach tools when effective mode is official (passed separately, not in GenerationConfig)
+            tools_obj = None
+            try:
+                mode = getattr(self.session, 'get_effective_tool_mode', lambda: 'none')()
+            except Exception:
+                mode = 'none'
+            if mode == 'official':
+                try:
+                    cmd = self.session.get_action('assistant_commands')
+                    if cmd and hasattr(cmd, 'get_tool_specs'):
+                        canonical = cmd.get_tool_specs() or []
+                        decls = []
+                        for spec in canonical:
+                            decls.append({
+                                'name': spec.get('name'),
+                                'description': spec.get('description'),
+                                'parameters': spec.get('parameters') or {'type': 'object', 'properties': {}},
+                            })
+                        if decls:
+                            from google.generativeai import types as gx_types
+                            tools_obj = [gx_types.Tool(function_declarations=decls)]
+                except Exception:
+                    tools_obj = None
+            # Ensure 'tools' isn't placed into GenerationConfig
+            if 'tools' in gen_params:
+                gen_params.pop('tools', None)
+
             # Handle special parameters
             stream = gen_params.pop('stream', False)
             if 'model' in gen_params:
@@ -195,6 +222,7 @@ class GoogleProvider(APIProvider):
             response = self.gchat.send_message(
                 messages[-1]['parts'],
                 stream=stream,
+                tools=tools_obj if tools_obj else None,
                 generation_config=genai.GenerationConfig(**gen_params),
                 safety_settings=safety_settings
             )
@@ -241,8 +269,32 @@ class GoogleProvider(APIProvider):
 
             final_chunk = None
             for chunk in response:
+                txt_emitted = False
                 if hasattr(chunk, 'text'):
-                    yield chunk.text
+                    try:
+                        txt = chunk.text
+                    except Exception:
+                        txt = None
+                    if txt:
+                        yield txt
+                        txt_emitted = True
+                if not txt_emitted:
+                    # Try to extract any textual parts without coercing function_call to text
+                    try:
+                        candidates = getattr(chunk, 'candidates', None)
+                        if candidates:
+                            for cand in candidates:
+                                content = getattr(cand, 'content', None)
+                                parts = getattr(content, 'parts', None) if content else None
+                                if parts:
+                                    for p in parts:
+                                        t = getattr(p, 'text', None) if hasattr(p, 'text') else (
+                                            p.get('text') if isinstance(p, dict) else None)
+                                        if t:
+                                            yield t
+                                            txt_emitted = True
+                    except Exception:
+                        pass
                 final_chunk = chunk
 
             # Capture usage from final chunk
@@ -258,9 +310,15 @@ class GoogleProvider(APIProvider):
                 self.total_usage['completion_tokens'] += self.turn_usage['completion_tokens']
                 self.total_usage['total_tokens'] += self.turn_usage['total_tokens']
                 self.total_usage['cached_tokens'] += self.turn_usage['cached_tokens']
+                # Store last response for tool-call extraction
+                self._last_response = final_chunk
 
         except Exception as e:
-            yield f"Stream error: {str(e)}"
+            # Suppress noisy conversion errors (e.g., function_call parts not convertible to text)
+            msg = str(e)
+            if 'Could not convert' in msg and 'function_call' in msg:
+                return
+            yield f"Stream error: {msg}"
 
     def assemble_message(self) -> list:
         """Assemble the message from context"""
@@ -313,6 +371,45 @@ class GoogleProvider(APIProvider):
     def get_messages(self):
         """Return assembled messages"""
         return self.assemble_message()
+
+    def get_tool_calls(self):
+        """Return normalized tool calls from the last response, if present.
+
+        Shape: [{"id": str|None, "name": str, "arguments": dict}]
+        """
+        resp = self._last_response
+        out = []
+        if not resp:
+            return out
+        try:
+            # Prefer candidates -> content.parts[*].function_call
+            candidates = getattr(resp, 'candidates', None)
+            if candidates:
+                for cand in candidates:
+                    content = getattr(cand, 'content', None)
+                    parts = getattr(content, 'parts', None) if content else None
+                    if parts:
+                        for p in parts:
+                            fc = getattr(p, 'function_call', None) if hasattr(p, 'function_call') else (
+                                p.get('function_call') if isinstance(p, dict) else None)
+                            if fc:
+                                name = getattr(fc, 'name', None) if hasattr(fc, 'name') else fc.get('name')
+                                args = getattr(fc, 'args', None) if hasattr(fc, 'args') else (fc.get('args') or {})
+                                if name:
+                                    out.append({'id': None, 'name': str(name).strip().lower(), 'arguments': args or {}})
+                if out:
+                    return out
+            # Some SDKs expose response.function_calls
+            fcs = getattr(resp, 'function_calls', None)
+            if isinstance(fcs, list):
+                for fc in fcs:
+                    name = getattr(fc, 'name', None) if hasattr(fc, 'name') else (fc.get('name') if isinstance(fc, dict) else None)
+                    args = getattr(fc, 'args', None) if hasattr(fc, 'args') else (fc.get('args') if isinstance(fc, dict) else {})
+                    if name:
+                        out.append({'id': None, 'name': str(name).strip().lower(), 'arguments': args or {}})
+            return out
+        except Exception:
+            return []
 
     def get_usage(self):
         """Return usage statistics including cache metrics"""

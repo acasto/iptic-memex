@@ -85,9 +85,15 @@ Gating and CLI‑only flows
   - `[DEFAULT].enable_tools = true|false` to globally enable/disable tools.
   - `[TOOLS].tool_mode = official|pseudo` sets the baseline mode (default `official`).
   - Overrides: per provider (`[Provider].tool_mode`) or per model (`[Model].tool_mode`) can be `official|pseudo|none`.
-- Source of truth: `actions/assistant_commands_action.py` registry defines available tools and arg names. A schema builder maps these to OpenAI tool specs (lowercase names, auto descriptions, string args, plus `content`).
+- Source of truth: `actions/assistant_commands_action.py` registry defines available tools, metadata, and canonical specs. Each provider maps these canonical specs to its API shape.
 - Provider (OpenAI):
   - Sends `tools`/`tool_choice` when effective tool mode is `official`.
+  
+- Provider (Google/Gemini):
+  - Sends function declarations as Gemini tools when effective tool mode is `official`.
+  - Mapping: assistant commands → Google functionDeclarations via provider-local builder from the canonical registry specs.
+  - Streaming: only textual parts are surfaced; `function_call` parts are not coerced to text. Tool calls are parsed from candidates’ content parts and normalized for the TurnRunner.
+  - Note: No `tool_choice` control is wired at this time; the model decides when to call.
   - Parses `tool_calls` in non-streaming and streaming. Streaming aggregates argument deltas without printing JSON.
 - Turn orchestration:
   - On a tool call, the runner replaces the last assistant message (provider view) with an assistant message containing `tool_calls`, executes the mapped actions, and appends `tool` role messages with `tool_call_id` and real outputs. Then it auto-submits the follow-up assistant turn.
