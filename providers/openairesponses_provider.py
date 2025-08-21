@@ -382,8 +382,12 @@ class OpenAIResponsesProvider(APIProvider):
                         except Exception:
                             pass
 
-                    # Final usage
-                    usage = getattr(event, 'usage', None)
+                    # Final usage: for Responses streams, usage is on the response object
+                    usage = None
+                    if resp_obj is not None:
+                        usage = getattr(resp_obj, 'usage', None)
+                    if usage is None:
+                        usage = getattr(event, 'usage', None)
                     if usage is not None:
                         self.turn_usage = usage
                         ti = getattr(usage, 'input_tokens', None)

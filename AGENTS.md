@@ -156,6 +156,63 @@ Gating and CLI‑only flows
     - `chain_minimize_input = true` to avoid resending history while chaining.
     - Optional: `enable_builtin_tools = web_search_preview,file_search` to expose built‑ins.
   - Reasoning: set `reasoning = true` and `reasoning_effort = minimal|low|medium|high` on the model.
+
+### Provider: OpenAIResponses
+
+- Name: `OpenAIResponses` (module: `providers/openairesponses_provider.py`).
+- Purpose: Use OpenAI’s Responses API instead of Chat Completions while keeping the same TurnRunner/tooling UX.
+- Selection: Choose per model via `provider = OpenAIResponses` in `models.ini`.
+
+- Key config (config.ini → `[OpenAIResponses]`):
+  - `active = True`
+  - `store = False` (default in repo; set to `True` to enable server‑side chaining)
+  - `use_previous_response = False` (set `True` to pass `previous_response_id` when available)
+  - `chain_minimize_input = True` (send only the latest user/tool window when chaining)
+  - `tool_mode = official` (uses canonical tool registry)
+  - Optional: `enable_builtin_tools = web_search_preview,file_search`
+
+- Example model (models.ini):
+```
+[gpt-5-mini-resp]
+provider = OpenAIResponses
+model_name = gpt-5-mini
+stream = true
+# pricing for cost calc (example only; use your current rates)
+price_unit = 1000000
+price_in = 2.0
+price_out = 10.0
+# reasoning controls
+reasoning = true
+reasoning_effort = minimal
+# token cap (mapped to max_output_tokens)
+max_completion_tokens = 4096
+```
+
+- Usage/cost tracking:
+  - Usage: aggregates `input_tokens` and `output_tokens` (fallback to prompt/completion) and `output_tokens_details.reasoning_tokens`.
+  - Cost: uses model `price_in`/`price_out` and `price_unit`. When `bill_reasoning_as_output = True`, reasoning tokens are billed as output.
+  - Introspection: `show usage`, `show cost` will reflect both streaming and non‑streaming runs.
+
+- Tool calling details:
+  - Functions are built from `actions/assistant_commands_action.py` into Responses schema with:
+    - `parameters.type = object`, `parameters.additionalProperties = false`, and `parameters.required` including every key in `parameters.properties`.
+    - `strict = true`.
+  - Tool calls in outputs are parsed as `function_call` items and normalized for TurnRunner.
+  - Provider clears `get_tool_calls()` after read to avoid double execution in follow‑ups.
+
+- Tool result mapping (input side):
+  - Assistant tool calls from the prior turn are sent as `function_call` input items `{type, call_id, name, arguments}`.
+  - Tool outputs are sent as `function_call_output` input items `{type, call_id, output}`.
+  - Both must share the same `call_id`; the provider assembles the pair from chat context.
+
+- Streaming + state:
+  - Provider captures streaming `response.id` and applies it as `previous_response_id` on the next request when `store=true` and `use_previous_response=true`.
+  - With `chain_minimize_input=true`, only the latest window is sent during chaining: either the last user message or `function_call` + `function_call_output` for tool loops.
+
+- Notes and caveats:
+  - `verbosity` is not a Responses request parameter; omit it.
+  - Built‑in tools (e.g., `web_search_preview`, `file_search`, `code_interpreter`) may require additional resources/ids; enabling the flag only declares availability.
+  - Privacy: `store=true` persists Response objects server‑side for chaining/retrieval. Disable to avoid persistence; costs remain token‑based.
 - UI adapters: `session.ui` provides `ask_text/ask_bool/ask_choice/ask_files` and `emit(event_type, data)`.
   - CLI blocks (`CLIUI`, `capabilities.blocking=True`); Web/TUI raise `InteractionNeeded` (`blocking=False`).
 - Stepwise protocol (mode-agnostic):

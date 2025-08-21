@@ -408,6 +408,48 @@ def test_streaming_captures_response_id_and_uses_previous_id(monkeypatch):
     _ = prov.chat()
     assert prov._client.responses.last_params.get('previous_response_id') == 'resp_stream_1'
 
+def test_streaming_usage_and_cost(monkeypatch):
+    mod = load_provider_module()
+    class FakeEvent:
+        def __init__(self, typ, resp_id=None, usage=None):
+            self.type = typ
+            class R:
+                def __init__(self, id, usage):
+                    self.id = id
+                    self.output = []
+                    self.usage = usage
+            self.response = R(resp_id, usage) if resp_id else None
+            self.usage = None
+
+    class StreamCostClient(FakeResponsesClient):
+        def create(self, **kwargs):
+            self.last_params = kwargs
+            usage = FakeUsage(input_tokens=2000, output_tokens=1000, total_tokens=3000, reasoning_tokens=200)
+            return iter([FakeEvent('response.created', 'resp_s', None), FakeEvent('response.completed', 'resp_s', usage)])
+
+    class StreamCostOpenAI(FakeOpenAI):
+        def __init__(self, **options):
+            super().__init__(**options)
+            self.responses = StreamCostClient()
+
+    monkeypatch.setattr(mod, 'OpenAI', StreamCostOpenAI)
+
+    session = FakeSession(
+        prompt_text=None,
+        chat_turns=[{'role': 'user', 'message': 'hi'}],
+        params={'provider': 'OpenAIResponses', 'api_key': 'x', 'model_name': 'gpt-5', 'stream': True,
+                'price_unit': 1000000, 'price_in': 2.0, 'price_out': 10.0, 'bill_reasoning_as_output': True},
+    )
+    prov = mod.OpenAIResponsesProvider(session)
+    _ = list(prov.stream_chat())
+    usage = prov.get_usage()
+    assert usage['total_in'] == 2000 and usage['total_out'] == 1000 and usage.get('total_reasoning') == 200
+    cost = prov.get_cost()
+    # input: 2000/1e6*2 = 0.004; output: (1000+200)/1e6*10 = 0.012; total=0.016
+    assert round(cost['input_cost'], 6) == 0.004
+    assert round(cost['output_cost'], 6) == 0.012
+    assert round(cost['total_cost'], 6) == 0.016
+
 def test_chain_minimize_input_window(monkeypatch):
     mod = load_provider_module()
     class CaptureClient(FakeResponsesClient):
