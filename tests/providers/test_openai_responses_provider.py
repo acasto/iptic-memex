@@ -371,3 +371,36 @@ def test_streaming_captures_response_id_and_uses_previous_id(monkeypatch):
     session._params['use_previous_response'] = True
     _ = prov.chat()
     assert prov._client.responses.last_params.get('previous_response_id') == 'resp_stream_1'
+
+def test_chain_minimize_input_window(monkeypatch):
+    mod = load_provider_module()
+    class CaptureClient(FakeResponsesClient):
+        def create(self, **kwargs):
+            self.last_params = kwargs
+            return FakeResponse(output_text="ok")
+    class CaptureOpenAI(FakeOpenAI):
+        def __init__(self, **options):
+            super().__init__(**options)
+            self.responses = CaptureClient()
+    monkeypatch.setattr(mod, 'OpenAI', CaptureOpenAI)
+
+    # Simulate chaining enabled with previous_response_id present
+    session = FakeSession(
+        prompt_text=None,
+        chat_turns=[
+            {'role': 'user', 'message': 'u1'},
+            {'role': 'assistant', 'message': '', 'tool_calls': [
+                {'id': 'fc_x', 'name': 'math', 'arguments': {'expression': '2+2'}}
+            ]},
+            {'role': 'tool', 'message': '4', 'tool_call_id': 'fc_x'},
+        ],
+        params={'provider': 'OpenAIResponses', 'api_key': 'x', 'model_name': 'gpt-5', 'store': True, 'use_previous_response': True, 'chain_minimize_input': True},
+    )
+    prov = mod.OpenAIResponsesProvider(session)
+    prov._last_response_id = 'resp_prev'
+    _ = prov.chat()
+    items = prov._client.responses.last_params.get('input')
+    # With chain_minimize_input, we should only include function_call + function_call_output, not the earlier user
+    types = [it.get('type') for it in items if isinstance(it, dict)]
+    assert 'function_call' in types and 'function_call_output' in types
+    assert all(t != 'message' for t in types)

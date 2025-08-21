@@ -122,6 +122,40 @@ Gating and CLI‑only flows
   - Ensure `[LlamaCpp].tool_mode = pseudo` when working with llama.cpp.
 
 ## Stepwise Actions & UI Adapters (Core)
+## OpenAI Responses API
+- Overview:
+  - Forward-looking replacement for Chat Completions with typed events, native tools, and optional state.
+  - Recommended for agentic apps: cleaner tool loops and better streaming semantics.
+
+- Key differences:
+  - Input items: send a list of typed items instead of a single `messages[]` array.
+  - Tools: function tools are first‑class; tool calls appear as `function_call` items and tool results as `function_call_output` items.
+  - Token cap: use `max_output_tokens`.
+  - Reasoning: use nested `reasoning: {effort: "minimal|low|medium|high"}`.
+  - Stateful chaining: opt‑in via `store` and `previous_response_id`.
+
+- Streaming + state:
+  - Provider captures `response.id` from streaming events (`response.created`/`response.completed`).
+  - If `[OpenAIResponses].store = true` and `use_previous_response = true`, the next turn includes `previous_response_id` automatically.
+  - To reduce tokens while chaining, enable `chain_minimize_input = true` to send only the latest window (last user message, or `function_call` + `function_call_output`).
+
+- Tool schema (function tools):
+  - Built from the canonical registry in `assistant_commands_action.py`.
+  - Responses requires: `parameters.additionalProperties = false` and `parameters.required` includes every key in `parameters.properties`.
+  - Provider enforces `strict: true` and normalizes schemas accordingly.
+
+- Tool I/O mapping:
+  - Assistant tool calls → `function_call` input items (include `call_id`, `name`, and JSON `arguments`).
+  - Tool results → `function_call_output` input items (include `call_id`, JSON `output`).
+  - The pair must share the same `call_id` (provider assembles both from chat context during the next turn).
+
+- Config quickstart:
+  - models.ini: `provider = OpenAIResponses`; set `stream = true`.
+  - config.ini `[OpenAIResponses]`:
+    - `store = true`, `use_previous_response = true` to enable stateful chaining.
+    - `chain_minimize_input = true` to avoid resending history while chaining.
+    - Optional: `enable_builtin_tools = web_search_preview,file_search` to expose built‑ins.
+  - Reasoning: set `reasoning = true` and `reasoning_effort = minimal|low|medium|high` on the model.
 - UI adapters: `session.ui` provides `ask_text/ask_bool/ask_choice/ask_files` and `emit(event_type, data)`.
   - CLI blocks (`CLIUI`, `capabilities.blocking=True`); Web/TUI raise `InteractionNeeded` (`blocking=False`).
 - Stepwise protocol (mode-agnostic):

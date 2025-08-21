@@ -99,7 +99,7 @@ class OpenAIResponsesProvider(APIProvider):
             pass
         return ""
 
-    def _assemble_input(self) -> List[Dict[str, Any]]:
+    def _assemble_input(self, chain_minimize: bool = False) -> List[Dict[str, Any]]:
         """Build Responses API `input` from chat history and contexts.
 
         We mirror the existing context assembly but target a simple, safe
@@ -114,7 +114,36 @@ class OpenAIResponsesProvider(APIProvider):
 
         turns = chat.get()
         import json
-        for turn in turns:
+
+        # When chaining with previous_response_id and minimization is enabled,
+        # include only the latest interaction window (tool call + output), or
+        # the last user message if no tools are involved.
+        if chain_minimize and turns:
+            idx_tool_assistant = None
+            idx_last_tool = None
+            for i in range(len(turns) - 1, -1, -1):
+                t = turns[i]
+                if idx_last_tool is None and t.get('role') == 'tool':
+                    idx_last_tool = i
+                if idx_tool_assistant is None and t.get('role') == 'assistant' and 'tool_calls' in t:
+                    idx_tool_assistant = i
+                if idx_tool_assistant is not None and idx_last_tool is not None:
+                    break
+
+            if idx_last_tool is not None and idx_tool_assistant is not None and idx_tool_assistant < idx_last_tool:
+                # Include only the assistant function_call(s) and subsequent tool outputs
+                window = turns[idx_tool_assistant:]
+            else:
+                # Include only the last user message
+                # Find last user turn
+                j = len(turns) - 1
+                while j >= 0 and turns[j].get('role') != 'user':
+                    j -= 1
+                window = [turns[j]] if j >= 0 else [turns[-1]]
+        else:
+            window = turns
+
+        for turn in window:
             role = turn.get('role')
             # Assistant tool calls: include as function_call items for pairing with outputs
             if role == 'assistant' and 'tool_calls' in turn:
@@ -194,7 +223,12 @@ class OpenAIResponsesProvider(APIProvider):
         try:
             p = self.session.get_params()
             instructions = self._assemble_instructions()
-            input_items = self._assemble_input()
+            # Determine if we'll chain with previous_response_id and minimize input
+            chain_minimize = False
+            will_chain = bool(p.get('store') and p.get('use_previous_response') and self._last_response_id)
+            if will_chain and bool(p.get('chain_minimize_input', True)):
+                chain_minimize = True
+            input_items = self._assemble_input(chain_minimize=chain_minimize)
 
             # Base params
             api_params: Dict[str, Any] = {
