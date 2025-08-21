@@ -38,36 +38,114 @@ class AssistantCommandsAction(InteractionAction):
         self.commands = {
             "CMD": {
                 "args": ["command", "arguments"],
+                "description": "Execute a local shell command. Provide the program in 'command' and an optional space-delimited string in 'arguments'.",
+                "required": ["command"],
+                "schema": {
+                    "properties": {
+                        "command": {"type": "string", "description": "Program to execute (e.g., 'echo', 'grep')."},
+                        "arguments": {"type": "string", "description": "Space-delimited arguments string (quoted as needed)."},
+                        "content": {"type": "string", "description": "Unused for CMD; include arguments in 'arguments'."}
+                    }
+                },
                 'auto_submit': True,
                 "function": {"type": "action", "name": cmd_tool}
             },
             "MATH": {
                 "args": ["bc_flags", "expression"],
+                "description": "Evaluate arithmetic with the 'bc' calculator. Provide the expression; optional 'bc_flags' like '-l' enable math library or scale.",
+                "required": ["expression"],
+                "schema": {
+                    "properties": {
+                        "bc_flags": {"type": "string", "description": "Flags for bc (e.g., '-l' for math library)."},
+                        "expression": {"type": "string", "description": "Expression to evaluate; if omitted, 'content' is used."},
+                        "content": {"type": "string", "description": "Expression fallback when 'expression' is not set."}
+                    }
+                },
                 'auto_submit': True,
                 "function": {"type": "action", "name": "assistant_math_tool"}
             },
             "OPENLINK": {
-                "args": ["url"],
+                "args": ["url", "urls"],
+                "description": "Open one or more HTTP/HTTPS links in the user's default browser. Provide a single 'url', a comma-separated 'urls', or list URLs on separate lines in content.",
+                "required": [],
+                "schema": {
+                    "properties": {
+                        "url": {"type": "string", "description": "Single URL to open; protocol auto-added if missing."},
+                        "urls": {"type": "string", "description": "Comma-separated list of URLs to open."},
+                        "content": {"type": "string", "description": "Optional newline-separated URLs to open; lines starting with # are ignored."}
+                    }
+                },
                 'auto_submit': True,
                 "function": {"type": "action", "name": "assistant_openlink_tool"}
             },
             "MEMORY": {
                 "args": ["action", "memory", "project", "id"],
+                "description": "Save, read, or clear short memories in a local store. Use action=save|read|clear with optional 'project' scope and 'id' for specific records.",
+                "required": ["action"],
+                "schema": {
+                    "properties": {
+                        "action": {"type": "string", "enum": ["save", "read", "clear"], "description": "Operation to perform."},
+                        "memory": {"type": "string", "description": "Memory text to save (or use 'content')."},
+                        "project": {"type": "string", "description": "Project scope (use 'all' with action=read|clear)."},
+                        "id": {"type": "string", "description": "Specific memory ID for read/clear."},
+                        "content": {"type": "string", "description": "Memory text fallback when 'memory' is not set."}
+                    }
+                },
                 'auto_submit': True,
                 "function": {"type": "action", "name": "assistant_memory_tool"}
             },
             "FILE": {
                 "args": ["mode", "file", "new_name", "recursive", "block"],
+                "description": "Read or modify files in the workspace. Modes: read, write, append, edit, summarize, delete, rename, copy. Use 'content' for write/append/edit.",
+                "required": ["mode", "file"],
+                "schema": {
+                    "properties": {
+                        "mode": {"type": "string", "enum": ["read", "write", "append", "edit", "summarize", "delete", "rename", "copy"], "description": "Operation to perform."},
+                        "file": {"type": "string", "description": "Target file path (relative to workspace)."},
+                        "new_name": {"type": "string", "description": "New name/path for rename or copy."},
+                        "recursive": {"type": "boolean", "description": "When deleting, remove directories recursively if true."},
+                        "block": {"type": "string", "description": "Identifier of a %%BLOCK:...%% to append to 'content'."},
+                        "content": {"type": "string", "description": "Content to write/append or edit instructions (for edit mode)."}
+                    }
+                },
                 'auto_submit': True,
                 "function": {"type": "action", "name": "assistant_file_tool"}
             },
             "WEBSEARCH": {
-                "args": ["query", "recency"],
+                "args": ["query", "recency", "domains", "mode"],
+                "description": "Search the web. Provide 'query'. Optional 'mode' can be 'basic' or 'advanced'.",
+                "required": ["query"],
+                "schema": {
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query text."},
+                        "recency": {"type": "string", "description": "Recency filter (e.g., 'day', 'week', 'month')."},
+                        "domains": {"type": "string", "description": "Comma-separated domain filter list (e.g., 'example.com,another.com')."},
+                        "mode": {"type": "string", "enum": ["basic", "advanced"], "description": "Search mode: 'basic' for simple queries or 'advanced' for deeper analysis."},
+                        "content": {"type": "string", "description": "Additional terms appended to the query."}
+                    }
+                },
                 'auto_submit': True,
                 "function": {"type": "action", "name": search_tool}
             },
             "YOUTRACK": {
                 "args": ["mode", "project_id", "issue_id", "block", "summary", "query", "assignee", "state", "priority", "type"],
+                "description": "Interact with YouTrack: list projects/issues, fetch details, create and update issues, or add comments. Configure base_url and api_key in settings.",
+                "required": ["mode"],
+                "schema": {
+                    "properties": {
+                        "mode": {"type": "string", "enum": ["get_projects", "get_issues", "get_issue_details", "create_issue", "update_summary", "update_description", "assign_issue", "update_state", "update_priority", "update_type", "add_comment"], "description": "Operation to perform."},
+                        "project_id": {"type": "string", "description": "Project short name (e.g., 'PROJ')."},
+                        "issue_id": {"type": "string", "description": "Issue idReadable (e.g., 'PROJ-123')."},
+                        "summary": {"type": "string", "description": "Issue summary for create/update."},
+                        "query": {"type": "string", "description": "Additional query/filter terms."},
+                        "assignee": {"type": "string", "description": "Assignee username/display name for assignment."},
+                        "state": {"type": "string", "description": "New issue state/status."},
+                        "priority": {"type": "string", "description": "New issue priority."},
+                        "type": {"type": "string", "description": "Issue type (e.g., Bug, Task)."},
+                        "block": {"type": "string", "description": "Identifier of a %%BLOCK:...%% to append to 'content'."},
+                        "content": {"type": "string", "description": "Longer text for description or comment where applicable."}
+                    }
+                },
                 'auto_submit': True,
                 "function": {"type": "action", "name": "assistant_youtrack_tool"}
             }
