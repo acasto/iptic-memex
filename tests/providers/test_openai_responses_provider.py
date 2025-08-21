@@ -31,10 +31,11 @@ class FakeSession:
 
 
 class FakeUsage:
-    def __init__(self, prompt_tokens=0, completion_tokens=0, total_tokens=0):
-        self.prompt_tokens = prompt_tokens
-        self.completion_tokens = completion_tokens
+    def __init__(self, input_tokens=0, output_tokens=0, total_tokens=0, reasoning_tokens=0):
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
         self.total_tokens = total_tokens
+        self.output_tokens_details = {'reasoning_tokens': reasoning_tokens}
 
 
 class FakeResponse:
@@ -330,6 +331,41 @@ def test_maps_reasoning_effort_into_nested_reasoning(monkeypatch):
     params = prov._client.responses.last_params
     assert 'reasoning' in params and isinstance(params['reasoning'], dict)
     assert params['reasoning'].get('effort') == 'high'
+
+def test_usage_and_cost_calculation_nonstream(monkeypatch):
+    # Fake client produces usage with input/output tokens and reasoning details
+    class CostResponsesClient(FakeResponsesClient):
+        def create(self, **kwargs):
+            self.last_params = kwargs
+            usage = FakeUsage(input_tokens=1000, output_tokens=500, total_tokens=1500, reasoning_tokens=100)
+            return FakeResponse(output_text="ok", usage=usage)
+
+    class CostOpenAI(FakeOpenAI):
+        def __init__(self, **options):
+            super().__init__(**options)
+            self.responses = CostResponsesClient()
+
+    mod = load_provider_module()
+    monkeypatch.setattr(mod, 'OpenAI', CostOpenAI)
+
+    session = FakeSession(
+        prompt_text=None,
+        chat_turns=[{'role': 'user', 'message': 'hi'}],
+        params={
+            'provider': 'OpenAIResponses', 'api_key': 'x', 'model_name': 'gpt-5',
+            'price_unit': 1000000, 'price_in': 2.0, 'price_out': 10.0,
+            'bill_reasoning_as_output': True,
+        },
+    )
+    prov = mod.OpenAIResponsesProvider(session)
+    _ = prov.chat()
+    usage = prov.get_usage()
+    assert usage['total_in'] == 1000 and usage['total_out'] == 500 and usage.get('total_reasoning') == 100
+    cost = prov.get_cost()
+    # input: 1000/1e6*2 = 0.002; output: (500+100)/1e6*10 = 0.006; total=0.008
+    assert round(cost['input_cost'], 6) == 0.002
+    assert round(cost['output_cost'], 6) == 0.006
+    assert round(cost['total_cost'], 6) == 0.008
 
 def test_streaming_captures_response_id_and_uses_previous_id(monkeypatch):
     # Fake streaming event iterator

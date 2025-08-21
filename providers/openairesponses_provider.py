@@ -290,8 +290,26 @@ class OpenAIResponsesProvider(APIProvider):
                 usage = getattr(resp, 'usage', None)
                 if usage is not None:
                     self.turn_usage = usage
-                    self.running_usage['total_in'] += getattr(usage, 'prompt_tokens', 0)
-                    self.running_usage['total_out'] += getattr(usage, 'completion_tokens', 0)
+                    # Prefer Responses fields: input_tokens/output_tokens
+                    ti = getattr(usage, 'input_tokens', None)
+                    to = getattr(usage, 'output_tokens', None)
+                    if ti is None:
+                        ti = getattr(usage, 'prompt_tokens', 0)
+                    if to is None:
+                        to = getattr(usage, 'completion_tokens', 0)
+                    self.running_usage['total_in'] += ti or 0
+                    self.running_usage['total_out'] += to or 0
+                    # Reasoning tokens (Responses: output_tokens_details)
+                    try:
+                        otd = getattr(usage, 'output_tokens_details', None)
+                        if isinstance(otd, dict):
+                            rt = otd.get('reasoning_tokens', 0)
+                        else:
+                            rt = getattr(otd, 'reasoning_tokens', 0)
+                        if rt:
+                            self.running_usage['reasoning_tokens'] = self.running_usage.get('reasoning_tokens', 0) + rt
+                    except Exception:
+                        pass
                 # Parse function tool calls from non-streaming outputs
                 self._last_tool_calls = []
                 outputs = getattr(resp, 'output', None)
@@ -368,8 +386,25 @@ class OpenAIResponsesProvider(APIProvider):
                     usage = getattr(event, 'usage', None)
                     if usage is not None:
                         self.turn_usage = usage
-                        self.running_usage['total_in'] += getattr(usage, 'prompt_tokens', 0)
-                        self.running_usage['total_out'] += getattr(usage, 'completion_tokens', 0)
+                        ti = getattr(usage, 'input_tokens', None)
+                        to = getattr(usage, 'output_tokens', None)
+                        if ti is None:
+                            ti = getattr(usage, 'prompt_tokens', 0)
+                        if to is None:
+                            to = getattr(usage, 'completion_tokens', 0)
+                        self.running_usage['total_in'] += ti or 0
+                        self.running_usage['total_out'] += to or 0
+                        # Reasoning tokens from streaming usage
+                        try:
+                            otd = getattr(usage, 'output_tokens_details', None)
+                            if isinstance(otd, dict):
+                                rt = otd.get('reasoning_tokens', 0)
+                            else:
+                                rt = getattr(otd, 'reasoning_tokens', 0)
+                            if rt:
+                                self.running_usage['reasoning_tokens'] = self.running_usage.get('reasoning_tokens', 0) + rt
+                        except Exception:
+                            pass
                     # Completed response with outputs: collect tool calls
                     if resp_obj is not None:
                         outputs = getattr(resp_obj, 'output', None)
@@ -541,12 +576,32 @@ class OpenAIResponsesProvider(APIProvider):
             'total_tokens': self.running_usage.get('total_in', 0) + self.running_usage.get('total_out', 0),
             'total_time': self.running_usage.get('total_time', 0.0),
         }
+        # Include reasoning totals if tracked
+        if 'reasoning_tokens' in self.running_usage:
+            stats['total_reasoning'] = self.running_usage.get('reasoning_tokens', 0)
         if self.turn_usage is not None:
+            ti = getattr(self.turn_usage, 'input_tokens', None)
+            to = getattr(self.turn_usage, 'output_tokens', None)
+            if ti is None:
+                ti = getattr(self.turn_usage, 'prompt_tokens', 0)
+            if to is None:
+                to = getattr(self.turn_usage, 'completion_tokens', 0)
             stats.update({
-                'turn_in': getattr(self.turn_usage, 'prompt_tokens', 0),
-                'turn_out': getattr(self.turn_usage, 'completion_tokens', 0),
-                'turn_total': getattr(self.turn_usage, 'total_tokens', 0),
+                'turn_in': ti or 0,
+                'turn_out': to or 0,
+                'turn_total': getattr(self.turn_usage, 'total_tokens', (ti or 0) + (to or 0)),
             })
+            # Per-turn reasoning
+            try:
+                otd = getattr(self.turn_usage, 'output_tokens_details', None)
+                if isinstance(otd, dict):
+                    rt = otd.get('reasoning_tokens', None)
+                else:
+                    rt = getattr(otd, 'reasoning_tokens', None)
+                if rt is not None:
+                    stats['turn_reasoning'] = rt
+            except Exception:
+                pass
         return stats
 
     def reset_usage(self) -> None:
@@ -558,15 +613,25 @@ class OpenAIResponsesProvider(APIProvider):
         }
 
     def get_cost(self) -> dict:
-        # Reuse existing cost logic assumptions: defer to caller that knows pricing tables.
+        """Calculate cost using model pricing (same approach as OpenAI provider)."""
         usage = self.get_usage()
         if not usage:
             return None
-        return {
-            'currency': 'USD',
-            'input_tokens': usage.get('total_in', 0),
-            'output_tokens': usage.get('total_out', 0),
-            'total_tokens': usage.get('total_tokens', 0),
-            # Actual cost calculation depends on model-specific pricing; left to higher-level cost module.
-            'estimated_cost': None,
-        }
+        try:
+            price_unit = float(self.session.get_params().get('price_unit', 1000000))
+            price_in = float(self.session.get_params().get('price_in', 0))
+            price_out = float(self.session.get_params().get('price_out', 0))
+
+            input_cost = (usage['total_in'] / price_unit) * price_in
+            bill_reasoning = bool(self.session.get_params().get('bill_reasoning_as_output', True))
+            total_reasoning = usage.get('total_reasoning', 0)
+            billable_out = usage['total_out'] + (total_reasoning if bill_reasoning else 0)
+            output_cost = (billable_out / price_unit) * price_out
+
+            return {
+                'input_cost': round(input_cost, 6),
+                'output_cost': round(output_cost, 6),
+                'total_cost': round(input_cost + output_cost, 6),
+            }
+        except (ValueError, TypeError):
+            return None
