@@ -330,3 +330,44 @@ def test_maps_reasoning_effort_into_nested_reasoning(monkeypatch):
     params = prov._client.responses.last_params
     assert 'reasoning' in params and isinstance(params['reasoning'], dict)
     assert params['reasoning'].get('effort') == 'high'
+
+def test_streaming_captures_response_id_and_uses_previous_id(monkeypatch):
+    # Fake streaming event iterator
+    class FakeEvent:
+        def __init__(self, typ, resp_id=None):
+            self.type = typ
+            class R:
+                def __init__(self, id):
+                    self.id = id
+                    self.output = []
+            self.response = R(resp_id) if resp_id else None
+            self.usage = None
+
+    class StreamResponsesClient(FakeResponsesClient):
+        def create(self, **kwargs):
+            self.last_params = kwargs
+            return iter([FakeEvent('response.created', 'resp_stream_1'), FakeEvent('response.completed', 'resp_stream_1')])
+
+    class StreamOpenAI(FakeOpenAI):
+        def __init__(self, **options):
+            super().__init__(**options)
+            self.responses = StreamResponsesClient()
+
+    mod = load_provider_module()
+    monkeypatch.setattr(mod, 'OpenAI', StreamOpenAI)
+
+    # First streaming call: should capture response id
+    session = FakeSession(
+        prompt_text=None,
+        chat_turns=[{'role': 'user', 'message': 'hello'}],
+        params={'provider': 'OpenAIResponses', 'api_key': 'x', 'model_name': 'gpt-5', 'stream': True},
+    )
+    prov = mod.OpenAIResponsesProvider(session)
+    chunks = list(prov.stream_chat())
+    assert prov._last_response_id == 'resp_stream_1'
+
+    # Next call with store/use_previous_response should include previous_response_id
+    session._params['store'] = True
+    session._params['use_previous_response'] = True
+    _ = prov.chat()
+    assert prov._client.responses.last_params.get('previous_response_id') == 'resp_stream_1'

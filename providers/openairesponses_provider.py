@@ -322,6 +322,14 @@ class OpenAIResponsesProvider(APIProvider):
                         delta = getattr(event, 'delta', None)
                         if isinstance(delta, str) and delta:
                             yield delta
+                    # Capture response id for chaining (store/previous_response_id)
+                    resp_obj = getattr(event, 'response', None)
+                    if resp_obj is not None and getattr(resp_obj, 'id', None):
+                        try:
+                            self._last_response_id = getattr(resp_obj, 'id', None)
+                        except Exception:
+                            pass
+
                     # Final usage
                     usage = getattr(event, 'usage', None)
                     if usage is not None:
@@ -329,7 +337,6 @@ class OpenAIResponsesProvider(APIProvider):
                         self.running_usage['total_in'] += getattr(usage, 'prompt_tokens', 0)
                         self.running_usage['total_out'] += getattr(usage, 'completion_tokens', 0)
                     # Completed response with outputs: collect tool calls
-                    resp_obj = getattr(event, 'response', None)
                     if resp_obj is not None:
                         outputs = getattr(resp_obj, 'output', None)
                         if isinstance(outputs, list):
