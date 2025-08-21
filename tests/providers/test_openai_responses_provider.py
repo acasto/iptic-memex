@@ -38,10 +38,11 @@ class FakeUsage:
 
 
 class FakeResponse:
-    def __init__(self, output_text="", usage=None):
+    def __init__(self, output_text="", usage=None, output=None):
         self.output_text = output_text
         self.usage = usage or FakeUsage()
         self.id = "resp_123"
+        self.output = output or []
 
 
 class FakeResponsesClient:
@@ -136,6 +137,137 @@ def test_chat_includes_minimal_input_when_empty(monkeypatch):
     assert isinstance(inp, list) and len(inp) == 1
     assert inp[0]['role'] == 'user'
     assert isinstance(inp[0]['content'], str)
+
+def test_tools_mapping_and_tool_call_parsing(monkeypatch):
+    # Fake assistant_commands to expose canonical specs
+    class FakeAssistantCommands:
+        def get_tool_specs(self):
+            return [{
+                'name': 'get_weather',
+                'description': 'Get weather',
+                'parameters': {
+                    'type': 'object',
+                    'properties': {'city': {'type': 'string'}},
+                    'required': ['city'],
+                    'additionalProperties': True  # provider must override to False
+                }
+            }]
+
+    class SessionWithTools(FakeSession):
+        def get_action(self, name):
+            if name == 'assistant_commands':
+                return FakeAssistantCommands()
+            return None
+        def get_effective_tool_mode(self):
+            return 'official'
+
+    # Fake client returns a response with a function_call output
+    class ToolFakeResponsesClient(FakeResponsesClient):
+        def create(self, **kwargs):
+            self.last_params = kwargs
+            class Item:
+                def __init__(self):
+                    self.type = 'function_call'
+                    self.name = 'get_weather'
+                    self.arguments = '{"city":"Boston"}'
+                    self.id = 'fc_1'
+            return FakeResponse(output_text="", output=[Item()])
+
+    class ToolFakeOpenAI(FakeOpenAI):
+        def __init__(self, **options):
+            super().__init__(**options)
+            self.responses = ToolFakeResponsesClient()
+
+    mod = load_provider_module()
+    monkeypatch.setattr(mod, 'OpenAI', ToolFakeOpenAI)
+
+    session = SessionWithTools(
+        prompt_text=None,
+        chat_turns=[{'role': 'user', 'message': 'Q'}],
+        params={'provider': 'OpenAIResponses', 'api_key': 'x', 'model_name': 'gpt-5'},
+    )
+    prov = mod.OpenAIResponsesProvider(session)
+    _ = prov.chat()
+    # Tools sent
+    sent = prov._client.responses.last_params
+    assert 'tools' in sent and isinstance(sent['tools'], list) and sent['tools'][0]['type'] == 'function'
+    assert sent['tools'][0]['parameters'].get('additionalProperties') is False
+    props = sent['tools'][0]['parameters'].get('properties')
+    req = sent['tools'][0]['parameters'].get('required')
+    assert isinstance(props, dict) and set(req) == set(props.keys())
+    # Tool calls parsed
+    calls = prov.get_tool_calls()
+    assert calls and calls[0]['name'] == 'get_weather' and calls[0]['arguments'].get('city') == 'Boston'
+    # Subsequent read should be empty (cleared after read)
+    calls2 = prov.get_tool_calls()
+    assert calls2 == []
+
+def test_tool_result_turn_maps_to_function_call_output(monkeypatch):
+    mod = load_provider_module()
+    monkeypatch.setattr(mod, 'OpenAI', FakeOpenAI)
+
+    # Capture last input sent
+    class CaptureClient(FakeResponsesClient):
+        def create(self, **kwargs):
+            self.last_params = kwargs
+            return FakeResponse(output_text="done")
+
+    class CaptureOpenAI(FakeOpenAI):
+        def __init__(self, **options):
+            super().__init__(**options)
+            self.responses = CaptureClient()
+
+    monkeypatch.setattr(mod, 'OpenAI', CaptureOpenAI)
+
+    # Chat with a tool result turn
+    session = FakeSession(
+        prompt_text=None,
+        chat_turns=[
+            {'role': 'user', 'message': 'calc'},
+            {'role': 'tool', 'message': '42', 'tool_call_id': 'fc_123'},
+        ],
+        params={'provider': 'OpenAIResponses', 'api_key': 'x', 'model_name': 'gpt-5'},
+    )
+    prov = mod.OpenAIResponsesProvider(session)
+    _ = prov.chat()
+    sent = prov._client.responses.last_params
+    items = sent.get('input')
+    assert any(isinstance(it, dict) and it.get('type') == 'function_call_output' and it.get('call_id') == 'fc_123' for it in items)
+
+def test_includes_function_call_and_output_pair_in_same_request(monkeypatch):
+    mod = load_provider_module()
+    class CaptureClient(FakeResponsesClient):
+        def create(self, **kwargs):
+            self.last_params = kwargs
+            return FakeResponse(output_text="ok")
+    class CaptureOpenAI(FakeOpenAI):
+        def __init__(self, **options):
+            super().__init__(**options)
+            self.responses = CaptureClient()
+    monkeypatch.setattr(mod, 'OpenAI', CaptureOpenAI)
+
+    # Simulate a chat where the assistant emitted a tool call (captured in chat),
+    # and we now include the tool result turn.
+    session = FakeSession(
+        prompt_text=None,
+        chat_turns=[
+            {'role': 'user', 'message': 'do math'},
+            {'role': 'assistant', 'message': '', 'tool_calls': [
+                {'id': 'fc_1', 'name': 'math', 'arguments': {'expression': '1+2'}}
+            ]},
+            {'role': 'tool', 'message': '3', 'tool_call_id': 'fc_1'},
+        ],
+        params={'provider': 'OpenAIResponses', 'api_key': 'x', 'model_name': 'gpt-5'},
+    )
+    prov = mod.OpenAIResponsesProvider(session)
+    _ = prov.chat()
+    items = prov._client.responses.last_params.get('input')
+    # Must include both a function_call and a function_call_output with matching call_id
+    types = [it.get('type') for it in items if isinstance(it, dict)]
+    assert 'function_call' in types and 'function_call_output' in types
+    fc = next(it for it in items if isinstance(it, dict) and it.get('type') == 'function_call')
+    fo = next(it for it in items if isinstance(it, dict) and it.get('type') == 'function_call_output')
+    assert fc.get('call_id') == fo.get('call_id') == 'fc_1'
 
 def test_maps_max_completion_tokens_to_max_output_tokens(monkeypatch):
     mod = load_provider_module()

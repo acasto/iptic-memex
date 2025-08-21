@@ -113,8 +113,48 @@ class OpenAIResponsesProvider(APIProvider):
             return input_items
 
         turns = chat.get()
+        import json
         for turn in turns:
             role = turn.get('role')
+            # Assistant tool calls: include as function_call items for pairing with outputs
+            if role == 'assistant' and 'tool_calls' in turn:
+                try:
+                    for tc in (turn.get('tool_calls') or []):
+                        name = tc.get('name')
+                        args = tc.get('arguments')
+                        call_id = tc.get('id') or tc.get('call_id')
+                        if not name or not call_id:
+                            continue
+                        if not isinstance(args, str):
+                            try:
+                                args = json.dumps(args or {})
+                            except Exception:
+                                args = '{}'
+                        input_items.append({
+                            'type': 'function_call',
+                            'call_id': call_id,
+                            'name': name,
+                            'arguments': args,
+                        })
+                except Exception:
+                    pass
+                # Do not include assistant text in input; continue to next turn
+                continue
+            # Convert tool outputs to function_call_output items
+            if role == 'tool':
+                call_id = turn.get('tool_call_id') or turn.get('id')
+                output_text = turn.get('message') or ''
+                try:
+                    output_json = json.dumps(output_text)
+                except Exception:
+                    output_json = '""'
+                if call_id:
+                    input_items.append({'type': 'function_call_output', 'call_id': call_id, 'output': output_json})
+                # Skip normal message handling for tool turns
+                continue
+            # Skip any other assistant messages
+            if role == 'assistant':
+                continue
             # Combine primary text + any non-image contexts into a single text block
             text_parts: List[str] = []
             # Primary message text (the canonical field used across the app)
@@ -218,6 +258,28 @@ class OpenAIResponsesProvider(APIProvider):
                     self.turn_usage = usage
                     self.running_usage['total_in'] += getattr(usage, 'prompt_tokens', 0)
                     self.running_usage['total_out'] += getattr(usage, 'completion_tokens', 0)
+                # Parse function tool calls from non-streaming outputs
+                self._last_tool_calls = []
+                outputs = getattr(resp, 'output', None)
+                if isinstance(outputs, list):
+                    import json
+                    for item in outputs:
+                        try:
+                            if getattr(item, 'type', None) == 'function_call':
+                                name = getattr(item, 'name', None)
+                                args = getattr(item, 'arguments', None)
+                                call_id = getattr(item, 'id', None) or getattr(item, 'call_id', None)
+                                args_obj = {}
+                                if isinstance(args, str):
+                                    try:
+                                        args_obj = json.loads(args)
+                                    except Exception:
+                                        args_obj = {}
+                                elif isinstance(args, dict):
+                                    args_obj = args
+                                self._last_tool_calls.append({'id': call_id, 'name': name, 'arguments': args_obj})
+                        except Exception:
+                            continue
             except Exception:
                 pass
 
@@ -266,6 +328,32 @@ class OpenAIResponsesProvider(APIProvider):
                         self.turn_usage = usage
                         self.running_usage['total_in'] += getattr(usage, 'prompt_tokens', 0)
                         self.running_usage['total_out'] += getattr(usage, 'completion_tokens', 0)
+                    # Completed response with outputs: collect tool calls
+                    resp_obj = getattr(event, 'response', None)
+                    if resp_obj is not None:
+                        outputs = getattr(resp_obj, 'output', None)
+                        if isinstance(outputs, list):
+                            import json
+                            calls = []
+                            for item in outputs:
+                                try:
+                                    if getattr(item, 'type', None) == 'function_call':
+                                        name = getattr(item, 'name', None)
+                                        args = getattr(item, 'arguments', None)
+                                        call_id = getattr(item, 'id', None) or getattr(item, 'call_id', None)
+                                        args_obj = {}
+                                        if isinstance(args, str):
+                                            try:
+                                                args_obj = json.loads(args)
+                                            except Exception:
+                                                args_obj = {}
+                                        elif isinstance(args, dict):
+                                            args_obj = args
+                                        calls.append({'id': call_id, 'name': name, 'arguments': args_obj})
+                                except Exception:
+                                    continue
+                            if calls:
+                                self._last_tool_calls = calls
                 except Exception:
                     # If we don't recognize the event, ignore quietly
                     pass
@@ -343,17 +431,64 @@ class OpenAIResponsesProvider(APIProvider):
 
     # Tool calls normalization (MVP: none; return empty list)
     def get_tool_calls(self) -> List[Dict[str, Any]]:
-        return list(self._last_tool_calls or [])
+        calls = list(self._last_tool_calls or [])
+        # Clear after read so we don't re-run tools on the follow-up turn
+        self._last_tool_calls = None
+        return calls
 
-    # Provider-native tool spec construction (MVP: return empty)
+    # Provider-native tool spec construction for Responses API
     def get_tools_for_request(self) -> list:
         try:
             cmd = self.session.get_action('assistant_commands')
             if not cmd or not hasattr(cmd, 'get_tool_specs'):
                 return []
-            # TODO: Map canonical tool specs to Responses function schema
-            # in a subsequent iteration.
-            return []
+            canonical = cmd.get_tool_specs() or []
+            out = []
+            for spec in canonical:
+                try:
+                    params = spec.get('parameters') or {'type': 'object', 'properties': {}}
+                    # Force Responses-required schema shape: additionalProperties must be present and false
+                    try:
+                        params = dict(params)
+                    except Exception:
+                        params = {'type': 'object', 'properties': {}}
+                    if 'type' not in params:
+                        params['type'] = 'object'
+                    if 'properties' not in params or not isinstance(params['properties'], dict):
+                        params['properties'] = {}
+                    # Remove non-argument convenience fields (e.g., 'content')
+                    try:
+                        if 'content' in params['properties']:
+                            params['properties'].pop('content', None)
+                    except Exception:
+                        pass
+                    params['additionalProperties'] = False
+                    # Ensure required includes every key in properties as per Responses validation
+                    prop_keys = list(params['properties'].keys())
+                    req = params.get('required')
+                    if not isinstance(req, list) or set(req) != set(prop_keys):
+                        params['required'] = prop_keys
+
+                    out.append({
+                        'type': 'function',
+                        'name': spec.get('name'),
+                        'description': spec.get('description'),
+                        'parameters': params,
+                        'strict': True,
+                    })
+                except Exception:
+                    continue
+            # Optionally add built-in tools if explicitly enabled via config
+            try:
+                enabled_builtin = self.session.get_params().get('enable_builtin_tools')
+                if enabled_builtin:
+                    names = [s.strip() for s in str(enabled_builtin).split(',') if s.strip()]
+                    for name in names:
+                        # Minimal inclusion without provider-managed resources
+                        out.append({'type': name})
+            except Exception:
+                pass
+            return out
         except Exception:
             return []
 
