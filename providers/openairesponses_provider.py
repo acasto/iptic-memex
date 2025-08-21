@@ -365,52 +365,51 @@ class OpenAIResponsesProvider(APIProvider):
 
         try:
             for event in resp:
-                # The Responses SDK emits typed events. We try a few common shapes
-                # but stay defensive to avoid breaking when shapes differ.
+                # Typed events per Responses streaming API
                 try:
                     etype = getattr(event, 'type', None)
-                    # Text deltas
-                    if etype and 'output_text' in str(etype) and hasattr(event, 'delta'):
+                    resp_obj = getattr(event, 'response', None)
+
+                    # Text deltas only
+                    if etype == 'response.output_text.delta':
                         delta = getattr(event, 'delta', None)
                         if isinstance(delta, str) and delta:
                             yield delta
-                    # Capture response id for chaining (store/previous_response_id)
-                    resp_obj = getattr(event, 'response', None)
+                        # Continue to allow ID capture below as well
+
+                    # Capture response id for chaining on any event that carries it
                     if resp_obj is not None and getattr(resp_obj, 'id', None):
                         try:
                             self._last_response_id = getattr(resp_obj, 'id', None)
                         except Exception:
                             pass
 
-                    # Final usage: for Responses streams, usage is on the response object
-                    usage = None
-                    if resp_obj is not None:
+                    # On completed, record usage and parse tool calls
+                    if etype == 'response.completed' and resp_obj is not None:
                         usage = getattr(resp_obj, 'usage', None)
-                    if usage is None:
-                        usage = getattr(event, 'usage', None)
-                    if usage is not None:
-                        self.turn_usage = usage
-                        ti = getattr(usage, 'input_tokens', None)
-                        to = getattr(usage, 'output_tokens', None)
-                        if ti is None:
-                            ti = getattr(usage, 'prompt_tokens', 0)
-                        if to is None:
-                            to = getattr(usage, 'completion_tokens', 0)
-                        self.running_usage['total_in'] += ti or 0
-                        self.running_usage['total_out'] += to or 0
-                        # Reasoning tokens from streaming usage
-                        try:
-                            otd = getattr(usage, 'output_tokens_details', None)
-                            if isinstance(otd, dict):
-                                rt = otd.get('reasoning_tokens', 0)
-                            else:
-                                rt = getattr(otd, 'reasoning_tokens', 0)
-                            if rt:
-                                self.running_usage['reasoning_tokens'] = self.running_usage.get('reasoning_tokens', 0) + rt
-                        except Exception:
-                            pass
-                    # Completed response with outputs: collect tool calls
-                    if resp_obj is not None:
+                        if usage is not None:
+                            self.turn_usage = usage
+                            ti = getattr(usage, 'input_tokens', None)
+                            to = getattr(usage, 'output_tokens', None)
+                            if ti is None:
+                                ti = getattr(usage, 'prompt_tokens', 0)
+                            if to is None:
+                                to = getattr(usage, 'completion_tokens', 0)
+                            self.running_usage['total_in'] += ti or 0
+                            self.running_usage['total_out'] += to or 0
+                            # Reasoning tokens from streaming usage
+                            try:
+                                otd = getattr(usage, 'output_tokens_details', None)
+                                if isinstance(otd, dict):
+                                    rt = otd.get('reasoning_tokens', 0)
+                                else:
+                                    rt = getattr(otd, 'reasoning_tokens', 0)
+                                if rt:
+                                    self.running_usage['reasoning_tokens'] = self.running_usage.get('reasoning_tokens', 0) + rt
+                            except Exception:
+                                pass
+
+                        # Parse and normalize function tool calls from final output
                         outputs = getattr(resp_obj, 'output', None)
                         if isinstance(outputs, list):
                             import json
