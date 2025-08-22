@@ -116,9 +116,10 @@ class LoadRagAction(InteractionAction):
                 pass
             return True
 
-        # Build a readable summary block
+        # Build a readable summary block and print it
         lines: List[str] = []
-        lines.append(f"RAG results (query: {query})\n")
+        header = f"RAG results (query: {query})"
+        lines.append(header)
         for i, item in enumerate(results, start=1):
             score = item['score']
             path = item['path']
@@ -129,17 +130,25 @@ class LoadRagAction(InteractionAction):
             prev = item.get('preview') or []
             if prev:
                 for pl in prev:
-                    # indent preview lines
                     lines.append(f"      {pl}")
             lines.append("")
         content = "\n".join(lines)
 
-        # Add to context
-        self.session.add_context('rag', {'name': f"RAG: {query}", 'content': content})
+        # Print summary before prompting
         try:
-            self.session.ui.emit('status', {'message': f"Loaded RAG results into context ({len(results)} hits)."})
+            out = self.session.utils.output
+            out.write()
+            out.write(content.rstrip())
+            out.write()
         except Exception:
-            pass
+            # Fallback: single status emission
+            try:
+                self.session.ui.emit('status', {'message': content})
+            except Exception:
+                pass
+
+        # Add to context (consolidated block)
+        self.session.add_context('rag', {'name': f"RAG: {query}", 'content': content})
 
         # Offer to load full files in blocking UIs
         try:
@@ -147,27 +156,42 @@ class LoadRagAction(InteractionAction):
         except Exception:
             blocking = False
         if blocking:
+            # Ask via text to ensure blank Enter respects default 'n'
             try:
-                if self.session.ui.ask_bool('Load any full files from results?', default=False):
-                    choice = self.session.ui.ask_text('Enter indices (e.g., 1,3) or "all":')
-                    to_load: List[str] = []
-                    if choice and choice.strip().lower() == 'all':
-                        to_load = list({item['path'] for item in results})
-                    else:
-                        try:
-                            idxs = {int(x.strip()) for x in (choice or '').split(',') if x.strip().isdigit()}
-                            for j in idxs:
-                                if 1 <= j <= len(results):
-                                    to_load.append(results[j - 1]['path'])
-                        except Exception:
-                            to_load = []
-                    if to_load:
-                        try:
-                            self.session.get_action('load_file').run(to_load)
-                        except Exception:
-                            pass
+                raw = self.session.ui.ask_text("Load any full files from results? [y/N]: ")
             except Exception:
-                pass
+                raw = self.session.utils.input.get_input(prompt="Load any full files from results? [y/N]: ")
+            ans = (raw or '').strip().lower()
+            want_load = True if ans in ('y', 'yes') else False
+            if want_load:
+                # Echo compact list to assist selection
+                try:
+                    compact = [f"{i+1:>2}. {r['path']}" for i, r in enumerate(results)]
+                    self.session.utils.output.write("\nSelect files to load:")
+                    for line in compact:
+                        self.session.utils.output.write(line)
+                    self.session.utils.output.write()
+                except Exception:
+                    pass
+                try:
+                    choice = self.session.ui.ask_text('Enter indices (e.g., 1,3) or "all":')
+                except Exception:
+                    choice = self.session.utils.input.get_input(prompt='Enter indices (e.g., 1,3) or "all": ')
+                to_load: List[str] = []
+                if (choice or '').strip().lower() == 'all':
+                    to_load = list({item['path'] for item in results})
+                else:
+                    try:
+                        idxs = {int(x.strip()) for x in (choice or '').split(',') if x.strip().isdigit()}
+                        for j in idxs:
+                            if 1 <= j <= len(results):
+                                to_load.append(results[j - 1]['path'])
+                    except Exception:
+                        to_load = []
+                if to_load:
+                    try:
+                        self.session.get_action('load_file').run(to_load)
+                    except Exception:
+                        pass
 
         return True
-
