@@ -55,6 +55,15 @@ class APIProvider(ABC):
         """
         return []
 
+    # --- Optional embeddings support ---------------------------------
+    def embed(self, texts: List[str], model: Optional[str] = None) -> List[List[float]]:
+        """Return embeddings for a list of texts using the provider, if supported.
+
+        Providers that support embeddings should override this method. Default
+        implementation raises NotImplementedError to signal lack of support.
+        """
+        raise NotImplementedError("Embeddings not supported by this provider")
+
 
 class InteractionMode(ABC):
     """

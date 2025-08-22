@@ -55,6 +55,10 @@ class UserCommandsAction(InteractionAction):
                 "description": "Load raw text into the context",
                 "function": {"type": "action", "name": "load_raw"},
             },
+            "load rag": {
+                "description": "Load a RAG context",
+                "function": {"type": "action", "name": "load_rag"},
+            },
             "load code": {
                 "description": "Load code into the context",
                 "function": {"type": "action", "name": "fetch_code_snippet"},
@@ -182,7 +186,11 @@ class UserCommandsAction(InteractionAction):
             "run command": {
                 "description": "Run a command",
                 "function": {"type": "action", "name": "run_command"},
-            }
+            },
+            "rag update": {
+                "description": "Update the RAG context",
+                "function": {"type": "action", "name": "rag_update"},
+            },
         }
         # Check for and load user commands
         user_commands = self.session.get_action('register_user_commands')

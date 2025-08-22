@@ -4,6 +4,7 @@ import openai
 from openai import OpenAI
 from base_classes import APIProvider
 from actions.process_contexts_action import ProcessContextsAction
+from typing import List, Optional
 
 
 class OpenAIProvider(APIProvider):
@@ -92,6 +93,16 @@ class OpenAIProvider(APIProvider):
             options['timeout'] = params['timeout']
 
         return OpenAI(**options)
+
+    # --- Embeddings ---------------------------------------------------
+    def embed(self, texts: List[str], model: Optional[str] = None) -> List[List[float]]:
+        """Create embeddings for a list of texts using OpenAI embeddings API."""
+        # Resolve model: prefer explicit, else tools.embedding_model, else a sane default
+        chosen = model or self.session.get_tools().get('embedding_model') or 'text-embedding-3-small'
+        # OpenAI client exposes embeddings.create
+        resp = self.client.embeddings.create(model=chosen, input=texts)
+        # The SDK returns objects with .data[*].embedding
+        return [item.embedding for item in (resp.data or [])]
 
     def chat(self):
         """

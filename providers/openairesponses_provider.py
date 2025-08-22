@@ -571,6 +571,13 @@ class OpenAIResponsesProvider(APIProvider):
         except Exception:
             return []
 
+    # --- Embeddings ---------------------------------------------------
+    def embed(self, texts: list[str], model: str | None = None) -> list[list[float]]:
+        """Create embeddings using OpenAI embeddings API via the same client."""
+        chosen = model or self.session.get_tools().get('embedding_model') or 'text-embedding-3-small'
+        resp = self._client.embeddings.create(model=chosen, input=texts)
+        return [item.embedding for item in (resp.data or [])]
+
     # --- Usage and cost -------------------------------------------------
     def get_usage(self) -> Dict[str, Any]:
         stats = {
