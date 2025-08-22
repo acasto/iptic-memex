@@ -49,14 +49,6 @@ class LoadRagAction(InteractionAction):
             except Exception:
                 preview_lines = 0
 
-        # Ask for query
-        try:
-            query = self.session.ui.ask_text("Enter RAG query (or 'q' to exit): ")
-        except Exception:
-            query = self.session.utils.input.get_input(prompt="Enter RAG query (or 'q' to exit): ")
-        if not query or query.strip().lower() == 'q':
-            return False
-
         indexes, active, vector_db, embedding_model = load_rag_config(self.session)
         if not indexes:
             try:
@@ -96,102 +88,123 @@ class LoadRagAction(InteractionAction):
                 pass
             return False
 
-        # Perform search
-        res = search(
-            indexes=indexes,
-            names=names,
-            vector_db=vector_db,
-            embed_query_fn=lambda batch: prov.embed(batch, model=embedding_model or 'text-embedding-3-small'),
-            query=query,
-            k=8,
-            preview_lines=max(0, int(preview_lines)),
-            per_index_cap=None,
-        )
-
-        results = res.get('results', [])
-        if not results:
+        # Interactive query loop
+        while True:
+            # Ask for query
             try:
-                self.session.ui.emit('status', {'message': 'No RAG matches.'})
+                query = self.session.ui.ask_text("Enter RAG query (or 'q' to exit): ")
             except Exception:
-                pass
-            return True
+                query = self.session.utils.input.get_input(prompt="Enter RAG query (or 'q' to exit): ")
+            if not query or query.strip().lower() == 'q':
+                return True
 
-        # Build a readable summary block and print it
-        lines: List[str] = []
-        header = f"RAG results (query: {query})"
-        lines.append(header)
-        for i, item in enumerate(results, start=1):
-            score = item['score']
-            path = item['path']
-            ls = item['line_start']
-            le = item['line_end']
-            idx = item['index']
-            lines.append(f"{i:>2}. [{score:.3f}] ({idx}) {path}#L{ls}-L{le}")
-            prev = item.get('preview') or []
-            if prev:
-                for pl in prev:
-                    lines.append(f"      {pl}")
-            lines.append("")
-        content = "\n".join(lines)
+            # Perform search
+            res = search(
+                indexes=indexes,
+                names=names,
+                vector_db=vector_db,
+                embed_query_fn=lambda batch: prov.embed(batch, model=embedding_model or 'text-embedding-3-small'),
+                query=query,
+                k=8,
+                preview_lines=max(0, int(preview_lines)),
+                per_index_cap=None,
+            )
 
-        # Print summary before prompting
-        try:
-            out = self.session.utils.output
-            out.write()
-            out.write(content.rstrip())
-            out.write()
-        except Exception:
-            # Fallback: single status emission
-            try:
-                self.session.ui.emit('status', {'message': content})
-            except Exception:
-                pass
-
-        # Add to context (consolidated block)
-        self.session.add_context('rag', {'name': f"RAG: {query}", 'content': content})
-
-        # Offer to load full files in blocking UIs
-        try:
-            blocking = bool(getattr(self.session.ui, 'capabilities', None) and self.session.ui.capabilities.blocking)
-        except Exception:
-            blocking = False
-        if blocking:
-            # Ask via text to ensure blank Enter respects default 'n'
-            try:
-                raw = self.session.ui.ask_text("Load any full files from results? [y/N]: ")
-            except Exception:
-                raw = self.session.utils.input.get_input(prompt="Load any full files from results? [y/N]: ")
-            ans = (raw or '').strip().lower()
-            want_load = True if ans in ('y', 'yes') else False
-            if want_load:
-                # Echo compact list to assist selection
+            results = res.get('results', [])
+            if not results:
                 try:
-                    compact = [f"{i+1:>2}. {r['path']}" for i, r in enumerate(results)]
-                    self.session.utils.output.write("\nSelect files to load:")
-                    for line in compact:
-                        self.session.utils.output.write(line)
-                    self.session.utils.output.write()
+                    self.session.ui.emit('status', {'message': 'No RAG matches. Try another query or enter q to exit.'})
                 except Exception:
                     pass
+                continue
+
+            # Build a readable summary block and print it
+            lines: List[str] = []
+            header = f"RAG results (query: {query})"
+            lines.append(header)
+            for i, item in enumerate(results, start=1):
+                score = item['score']
+                path = item['path']
+                ls = item['line_start']
+                le = item['line_end']
+                idx = item['index']
+                lines.append(f"{i:>2}. [{score:.3f}] ({idx}) {path}#L{ls}-L{le}")
+                prev = item.get('preview') or []
+                if prev:
+                    for pl in prev:
+                        lines.append(f"      {pl}")
+                lines.append("")
+            content = "\n".join(lines)
+
+            # Print summary before prompting
+            try:
+                out = self.session.utils.output
+                out.write()
+                out.write(content.rstrip())
+                out.write()
+            except Exception:
+                # Fallback: single status emission
                 try:
-                    choice = self.session.ui.ask_text('Enter indices (e.g., 1,3) or "all":')
+                    self.session.ui.emit('status', {'message': content})
                 except Exception:
-                    choice = self.session.utils.input.get_input(prompt='Enter indices (e.g., 1,3) or "all": ')
-                to_load: List[str] = []
-                if (choice or '').strip().lower() == 'all':
-                    to_load = list({item['path'] for item in results})
-                else:
+                    pass
+
+            # Confirm use of results before adding to context
+            try:
+                raw_use = self.session.ui.ask_text("Use these results? [Y/n]: ")
+            except Exception:
+                raw_use = self.session.utils.input.get_input(prompt="Use these results? [Y/n]: ")
+            use_ans = (raw_use or '').strip().lower()
+            use_results = False if use_ans in ('n', 'no') else True
+            if not use_results:
+                # Loop back to a new query
+                continue
+
+            # Add to context (consolidated block)
+            self.session.add_context('rag', {'name': f"RAG: {query}", 'content': content})
+
+            # Offer to load full files in blocking UIs
+            try:
+                blocking = bool(getattr(self.session.ui, 'capabilities', None) and self.session.ui.capabilities.blocking)
+            except Exception:
+                blocking = False
+            if blocking:
+                # Ask via text to ensure blank Enter respects default 'n'
+                try:
+                    raw = self.session.ui.ask_text("Load any full files from results? [y/N]: ")
+                except Exception:
+                    raw = self.session.utils.input.get_input(prompt="Load any full files from results? [y/N]: ")
+                ans = (raw or '').strip().lower()
+                want_load = True if ans in ('y', 'yes') else False
+                if want_load:
+                    # Echo compact list to assist selection
                     try:
-                        idxs = {int(x.strip()) for x in (choice or '').split(',') if x.strip().isdigit()}
-                        for j in idxs:
-                            if 1 <= j <= len(results):
-                                to_load.append(results[j - 1]['path'])
-                    except Exception:
-                        to_load = []
-                if to_load:
-                    try:
-                        self.session.get_action('load_file').run(to_load)
+                        compact = [f"{i+1:>2}. {r['path']}" for i, r in enumerate(results)]
+                        self.session.utils.output.write("\nSelect files to load:")
+                        for line in compact:
+                            self.session.utils.output.write(line)
+                        self.session.utils.output.write()
                     except Exception:
                         pass
+                    try:
+                        choice = self.session.ui.ask_text('Enter indices (e.g., 1,3) or "all":')
+                    except Exception:
+                        choice = self.session.utils.input.get_input(prompt='Enter indices (e.g., 1,3) or "all": ')
+                    to_load: List[str] = []
+                    if (choice or '').strip().lower() == 'all':
+                        to_load = list({item['path'] for item in results})
+                    else:
+                        try:
+                            idxs = {int(x.strip()) for x in (choice or '').split(',') if x.strip().isdigit()}
+                            for j in idxs:
+                                if 1 <= j <= len(results):
+                                    to_load.append(results[j - 1]['path'])
+                        except Exception:
+                            to_load = []
+                    if to_load:
+                        try:
+                            self.session.get_action('load_file').run(to_load)
+                        except Exception:
+                            pass
 
-        return True
+            return True
