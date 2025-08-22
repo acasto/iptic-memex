@@ -170,24 +170,6 @@ class AssistantCommandsAction(InteractionAction):
         handler = (handler_name or '').strip()
         return f"Assistant command {key} mapped to action '{handler}'."
 
-    def _infer_required(self, cmd_key: str) -> list:
-        k = (cmd_key or '').upper()
-        if k == 'CMD':
-            return ['command']
-        if k == 'FILE':
-            return ['mode', 'file']
-        if k == 'WEBSEARCH':
-            return ['query']
-        if k == 'OPENLINK':
-            return ['url']
-        if k == 'YOUTRACK':
-            return ['mode']
-        if k == 'MATH':
-            return ['expression']
-        if k == 'MEMORY':
-            return ['action']
-        return []
-
     def get_tool_specs(self) -> list:
         """Return canonical, provider-agnostic tool specs derived from the registry.
 
@@ -216,7 +198,8 @@ class AssistantCommandsAction(InteractionAction):
                         except Exception:
                             continue
 
-                required = info.get('required') or self._infer_required(cmd_key)
+                # Use 'required' from command spec if present; default to []
+                required = info['required'] if 'required' in info else []
 
                 specs.append({
                     'name': name,
