@@ -47,6 +47,13 @@ class PromptContext(InteractionContext):
             resolved_content = self.prompt_resolver.resolve(content)
             if resolved_content:
                 processed_content = self.process_templates(resolved_content)
+                # Append conditional addenda (pseudo tools + supplementals)
+                try:
+                    addenda = self.session.get_action('build_system_addenda').run()
+                except Exception:
+                    addenda = ""
+                if addenda:
+                    processed_content = (processed_content + "\n\n" + addenda) if processed_content else addenda
                 self.prompt['content'] = processed_content
                 self.prompt['name'] = content if isinstance(content, str) else 'resolved'
                 return
@@ -55,6 +62,13 @@ class PromptContext(InteractionContext):
         if isinstance(content, str):
             # Process templates if needed
             processed_content = self.process_templates(content)
+            # Append conditional addenda
+            try:
+                addenda = self.session.get_action('build_system_addenda').run()
+            except Exception:
+                addenda = ""
+            if addenda:
+                processed_content = (processed_content + "\n\n" + addenda) if processed_content else addenda
             self.prompt['content'] = processed_content
             self.prompt['name'] = 'direct'
 

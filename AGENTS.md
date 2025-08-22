@@ -47,6 +47,20 @@
 - Helper/internal actions that never prompt (e.g., filesystem helpers, simple runners) may still subclass `InteractionAction` and expose utility methods.
 - Access helpers via `self.session.utils` (I/O, spinners) and configs via `self.session.get_option(...)`.
 
+### System Prompt Addenda (Post-Templating)
+- Core now appends conditional addenda to the system prompt without template placeholders.
+- Sources (resolved via `PromptResolver`, support chains or literal text):
+  - Pseudo-tools guidance when effective tool mode is `pseudo` from `[TOOLS].pseudo_tool_prompt`.
+  - Supplemental prompts layered at `[DEFAULT].supplemental_prompt`, per-provider (`[Provider].supplemental_prompt`), and per-model (`[Model].supplemental_prompt` in `models.ini`).
+- Injection order and de-duplication:
+  - Order: Pseudo-tools → DEFAULT → Provider → Model.
+  - Exact-text de-dup removes repeats while preserving order (works well with rolled-up configs).
+- Implementation:
+  - `actions/build_system_addenda_action.py` composes addenda.
+  - `contexts/prompt_context.py` appends addenda after template handlers run and before providers assemble requests.
+- Migration:
+  - The `{{pseudo_tool_prompt}}` template handler and placeholder have been removed. No template handlers are required for core addenda.
+
 Minimal template (Stepwise)
 
 ```python
@@ -120,6 +134,24 @@ Gating and CLI‑only flows
 - Notes:
   - Settings like `use_old_system_role` can still be set per model/provider.
   - Ensure `[LlamaCpp].tool_mode = pseudo` when working with llama.cpp.
+
+### Retrieval-Augmented Generation (RAG)
+- Overview:
+  - Lightweight local RAG pipeline under `rag/`: discovery → chunking → embeddings → on-disk vector store → semantic search.
+  - Artifacts per index live under `vector_db/<index>/` (configurable via `vector_db`).
+- Commands:
+  - `rag update` (action: `actions/rag_update_action.py`): build or refresh indexes using the current embedding provider (prefers current provider; falls back to an embedding-capable provider).
+  - `load rag` (action: `actions/load_rag_action.py`): interactive query and summary; loads top matches into chat context.
+- Config:
+  - `[RAG]`: list indexes as `name = /path/to/folder`.
+  - `[TOOLS].embedding_model`: choose an embedding model (e.g., `text-embedding-3-small`).
+  - Optional `[TOOLS].embedding_provider` to override which provider performs embeddings.
+- Internals:
+  - `rag/vector_store.py`: `NaiveStore` layout – `manifest.json`, `chunks.jsonl`, `embeddings.json`.
+  - `rag/indexer.py`: chunks text, batches embeddings, writes artifacts.
+  - `rag/search.py`: loads artifacts, embeds query, cosine similarity, maps to line-range previews.
+  - `rag/fs_utils.py`: pulls `[RAG]` config, active index, paths, and embedding model/provider.
+  - See `rag/README.md` for details and roadmaps (incremental updates, locks, backends).
 
 ## Stepwise Actions & UI Adapters (Core)
 ## OpenAI Responses API

@@ -24,6 +24,7 @@ envisioned a device that would compress and store all of their knowledge. https:
   - Fetch and integrate web content using simplified extraction (Trafilatura) or raw scraping (BeautifulSoup).
   - Add multiline text, code snippets, or specific segments from files into your conversation context.
   - Organize multiple content sources under a unified project view for focused sessions.
+  - Retrieval-Augmented Generation (RAG): Index your folders and semantically retrieve snippets into context using `rag_update` and `load_rag` commands.
 
 - **Broad LLM Provider Support**
   - Works seamlessly with providers such as OpenAI, Anthropic, Google Gemini, OpenRouter, Perplexity, Groq, Mistral, DeepSeek, Cohere, Fireworks AI, Together AI, and local Llama.cpp instances.
@@ -42,6 +43,7 @@ envisioned a device that would compress and store all of their knowledge. https:
   - **Web Search (%%WEBSEARCH%%)**: Perform web searches via Perplexity Sonar and get cited, summarized results integrated into your context.
   - **Math Calculator (%%MATH%%)**: Tackle complex calculations using bc behind the scenes
   - **Memory (%%MEMORY%%)**: Store and recall facts or context across sessions in SQLite with support for project-specific memory.
+  - **RAG**: Build local indexes with embeddings and query them to load relevant snippets into chat context.
 
 - **Enhanced User Experience**
   - Real-time response streaming with syntax highlighting in code blocks.
@@ -52,6 +54,26 @@ envisioned a device that would compress and store all of their knowledge. https:
   - Support for user actions that can override or extend core actions, register user or assistant commands, and more.
   - An extensible SQLite persistence layer (currently used for stats and memories). 
   - Mode-agnostic actions: Most actions are now Stepwise and use UI adapters (`ask_text/ask_bool/ask_choice/ask_files`, `emit`). CLI retains richer loops; Web/TUI receive structured prompts.
+
+—
+
+## System Prompt Addenda (Supplementals + Pseudo-Tools)
+
+Memex can automatically append conditional addenda to the system prompt after templating, without requiring template placeholders:
+
+- Pseudo-tools note: when the effective tool mode is `pseudo`, the content from `[TOOLS].pseudo_tool_prompt` is appended. This value can be a prompt chain key or literal text and is resolved via the same prompt resolver as other prompts.
+- Supplemental prompts: add per-environment corrections or tips using `supplemental_prompt` keys:
+  - `[DEFAULT].supplemental_prompt`
+  - `[Provider].supplemental_prompt` (e.g., `[OpenAI].supplemental_prompt`)
+  - `[Model].supplemental_prompt` (in `models.ini`)
+  - Values support prompt chains and literal text.
+
+Order and de-duplication:
+- Final system prompt adds: Pseudo-tools → DEFAULT → Provider → Model.
+- Exact-text de-duplication removes repeated segments while preserving order (useful with merged configs).
+
+Notes:
+- This replaces the old `{{pseudo_tool_prompt}}` template handler. No template handlers are required for core functionality.
 
 ---
 
@@ -168,6 +190,17 @@ See [INSTALL.md](INSTALL.md) for details on how to adjust requirements.txt as ne
    - `run code` Extract and execute code blocks (Python or Bash) from the assistant’s response (requires confirmation).
    - `save code` Save code blocks from the assistant’s response to a file.
    - `run command` Run an arbitrary shell command from the user side to include the output for the assistant.
+   - `load rag` Query configured RAG indexes and load a result summary into context.
+   - `rag update` Build or refresh RAG indexes from configured folders.
+
+RAG quickstart
+- Configure indexes in the `[RAG]` section of `config.ini` (keys are index names; values are folder paths). Example:
+  - `[RAG]\nnotes = ~/Notes\nresearch = ~/Research`
+- Set `vector_db` (default in repo config is `~/.config/iptic-memex/vector_store`).
+- Choose an embedding model via `[TOOLS].embedding_model` (e.g., `text-embedding-3-small`). Optional: `embedding_provider` to override which provider performs embeddings.
+- Build indexes: `rag update` (prompts for which index if not specified).
+- Query: `load rag` (interactive prompt) or `load rag <index>`; results are summarized and added to context.
+- Internals and format details live in `rag/README.md`.
   
 Notes:
 - Web/TUI streaming is MVP. When actions need input mid-stream, the server emits a terminal `done` SSE with a `needs_interaction` token; the client resumes over JSON.
