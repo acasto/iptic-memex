@@ -188,8 +188,15 @@ class UserCommandsAction(InteractionAction):
         user_commands = self.session.get_action('register_user_commands')
         if user_commands:
             new_commands = user_commands.run()
-            if new_commands:
-                self.commands.update(new_commands)
+            if isinstance(new_commands, dict) and new_commands:
+                # Shallow per-command merge to allow partial overrides
+                for name, cfg in new_commands.items():
+                    if name in self.commands and isinstance(self.commands[name], dict) and isinstance(cfg, dict):
+                        merged = dict(self.commands[name])
+                        merged.update(cfg)
+                        self.commands[name] = merged
+                    else:
+                        self.commands[name] = cfg
         # Filter out commands whose actions can't run
         for cmd_name, cmd_info in list(self.commands.items()):
             if cmd_info["function"]["type"] == "action":

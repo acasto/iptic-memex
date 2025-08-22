@@ -43,7 +43,17 @@ class AssistantReloadToolAction(InteractionAction):
         return name
 
     def run(self, args: Optional[dict] = None, content: str = "") -> None:
+        # Accept names via content (newline-separated), or via args: target or comma-separated targets
         lines = [ln.strip() for ln in (content or "").splitlines() if ln.strip() and not ln.strip().startswith('#')]
+        if not lines and isinstance(args, dict):
+            tgt = (args.get('target') or '').strip()
+            tgts = (args.get('targets') or '').strip()
+            collected = []
+            if tgt:
+                collected.append(tgt)
+            if tgts:
+                collected.extend([x.strip() for x in tgts.split(',') if x.strip()])
+            lines = collected
 
         registry = getattr(self.session, "_registry", None)
         if registry is None or not hasattr(registry, "_action_cache"):
