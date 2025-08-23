@@ -5,7 +5,7 @@ from typing import List
 
 from rag.fs_utils import load_rag_config
 from rag.indexer import update_index
-from rag.provider_utils import get_embedding_provider
+from typing import Optional
 import os
 
 
@@ -19,14 +19,55 @@ class RagUpdateAction(InteractionAction):
 
     def __init__(self, session):
         self.session = session
+        self._env = __import__('os').environ
 
     @staticmethod
     def can_run(session) -> bool:
         # Always available for user command; embedding may error later if no provider
         return True
 
-    def _get_embedding_provider(self):
-        return get_embedding_provider(self.session)
+    def _looks_like_gguf(self, path: str) -> bool:
+        try:
+            p = os.path.expanduser(str(path or ''))
+            return bool(p) and (p.lower().endswith('.gguf') or os.path.exists(p))
+        except Exception:
+            return False
+
+    def _resolve_embedder(self) -> Optional[object]:
+        tools = self.session.get_tools()
+        embedding_model = tools.get('embedding_model') or ''
+        explicit = (tools.get('embedding_provider') or '').strip()
+        strict_raw = tools.get('embedding_provider_strict')
+        strict = True if strict_raw is None else bool(strict_raw)
+
+        names: list[str] = []
+        if explicit:
+            names.append(explicit)
+        elif self._looks_like_gguf(embedding_model):
+            names.append('LlamaCpp')
+
+        if not strict:
+            # Current chat provider, if any
+            try:
+                current = self.session.get_params().get('provider')
+                if current:
+                    names.append(str(current))
+            except Exception:
+                pass
+            # Add known providers or any active provider sections
+            try:
+                for sec in self.session.config.base_config.sections():
+                    if sec not in names:
+                        names.append(sec)
+            except Exception:
+                pass
+
+        # Try to instantiate in order
+        for name in names:
+            prov = self.session._registry.create_provider(name)
+            if prov and hasattr(prov, 'embed'):
+                return prov
+        return None
 
     def run(self, args: List[str] | None = None):
         args = args or []
@@ -52,10 +93,15 @@ class RagUpdateAction(InteractionAction):
         else:
             names = active if active else list(indexes.keys())
 
-        prov = self._get_embedding_provider()
+        prov = self._resolve_embedder()
         if prov is None or not hasattr(prov, 'embed'):
+            err = getattr(self.session._registry, '_provider_factory_last_error', None)
+            if isinstance(err, dict) and err.get('name') and err.get('error'):
+                msg = f"Embedding provider '{err['name']}' failed to initialize: {err['error']}. Check credentials/config for that provider."
+            else:
+                msg = 'No embedding-capable provider available. Configure [TOOLS].embedding_provider and [TOOLS].embedding_model, or set embedding_provider_strict = false to allow fallbacks.'
             try:
-                self.session.ui.emit('error', {'message': 'No embedding-capable provider available. Configure [TOOLS].embedding_provider and [TOOLS].embedding_model (e.g., embedding_provider = LlamaCpp + embedding_model = /path/model.gguf, or embedding_provider = OpenAI + embedding_model = text-embedding-3-small). Set embedding_provider_strict = false to allow fallbacks.'})
+                self.session.ui.emit('error', {'message': msg})
             except Exception:
                 pass
             return False

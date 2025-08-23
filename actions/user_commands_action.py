@@ -191,6 +191,10 @@ class UserCommandsAction(InteractionAction):
                 "description": "Update the RAG context",
                 "function": {"type": "action", "name": "rag_update"},
             },
+            "rag status": {
+                "description": "Show RAG index status",
+                "function": {"type": "action", "name": "rag_status"},
+            },
         }
         # Check for and load user commands
         user_commands = self.session.get_action('register_user_commands')

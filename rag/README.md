@@ -6,6 +6,7 @@ A small, self-contained retrieval system that indexes user-configured folders an
 - User commands (core):
   - `rag update [index?]`: build/refresh one or more indexes.
   - `load rag [index?] [preview_lines?]`: search indexes, add a readable results block to context, optionally load full files.
+  - `rag status [index?]`: show per-index status (paths, counts, vector dim, last updated) and consistency checks.
 - Read-only against indexed folders; all artifacts live under `vector_db/<index>/`.
 - Default backend is a naive cosine similarity without new deps (implemented in pure Python here); FAISS/sqlite-vec planned as optional backends.
 
@@ -32,12 +33,14 @@ A small, self-contained retrieval system that indexes user-configured folders an
 
 ## Actions (adapters)
 - `actions/rag_update_action.py`
-  - Uses provider `embed()` (OpenAI providers implemented) to build indexes.
+  - Uses any provider that implements `embed()` to build indexes (selected via `[TOOLS].embedding_provider`).
   - Validates optional index arg against `[RAG]`.
 - `actions/load_rag_action.py`
   - Prompts for query; optional `index` and `preview_lines` args.
   - Adds a `rag` context block with ranked results and optional previews.
   - In blocking UIs, offers to load selected full files via existing `load file` command.
+ - `actions/rag_status_action.py`
+  - Prints status for configured indexes (or a specific index) with manifest summary and chunk/embedding consistency.
 
 ## Contexts
 - `contexts/rag_context.py`: Minimal `{ name, content }` wrapper used by `load rag` output.
@@ -65,10 +68,13 @@ A small, self-contained retrieval system that indexes user-configured folders an
 
 ## Provider Integration
 - Providers can implement `embed(texts: list[str], model?: str) -> list[list[float]]`.
-- Implemented: OpenAIProvider, OpenAIResponsesProvider, LlamaCpp (via provider and a lightweight shim).
+- Implemented: OpenAIProvider, OpenAIResponsesProvider, LlamaCpp.
 - Privacy-safe default: RAG does not fallback to network embeddings unless you explicitly opt-in.
   - Configure both `[TOOLS].embedding_provider` and `[TOOLS].embedding_model`.
   - To allow fallbacks (e.g., try local then remote), set `[TOOLS].embedding_provider_strict = false`.
+ - Mixed providers are supported: when `[TOOLS].embedding_provider` differs from the active chat provider,
+   RAG instantiates the embedding provider with its own config section (API key, base_url, etc.).
+   This avoids coupling embeddings to the chat provider’s settings.
 
 ### Local embeddings (llama.cpp)
 - The `LlamaCpp` provider implements `embed()` using the local GGUF model via `llama_cpp`.
@@ -119,6 +125,8 @@ Near-term improvements
 - Incremental updates: track file mtimes/hashes; only re-embed changed chunks; delete removed docs.
 - Per-index file locks: simple `.lock` in `vector_db/<index>/` to avoid concurrent writers.
 - Knobs: `[TOOLS] rag_top_k` (default 8), `rag_per_index_cap`, `rag_preview_lines_default`.
+- `rag status` JSON output option for scripting and integrations.
+- Configurable include extensions for discovery (beyond .md/.mdx/.txt/.rst) via a future `[RAG] include_exts` key.
 - UX: dedupe near-identical results; group hits by file with consolidated previews; ANSI highlighting for preview matches (optional).
 - Assistant tool (later): `RAGSEARCH` official tool returning structured citations; assistant requests user to load files as needed.
 

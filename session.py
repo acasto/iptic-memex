@@ -20,6 +20,11 @@ class Session:
         self.usage_stats = {}
         self.user_data = {}  # For arbitrary session data
         self._registry = registry
+        try:
+            # Link back so registry can construct providers with this session
+            setattr(self._registry, 'session', self)
+        except Exception:
+            pass
         self.current_model = None  # Track the current model
         self.ui = None  # UI adapter (CLI/Web/TUI)
 

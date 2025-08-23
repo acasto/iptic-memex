@@ -24,16 +24,15 @@ class LlamaCppProvider(APIProvider):
         self._embed_llm = None
         self._embed_model_path = None
 
-        # Get fresh params for initialization
-        params = self.session.get_params()
+        # Defer chat model initialization until first chat() call
+        self.llm = None
+        self._chat_model_path = None
 
-        # Extract or set defaults for llama-cpp
-        model_path = params.get('model_path', './models/7B/llama-model.gguf')
-        # Example: you can allow specifying n_ctx or other llama-specific params:
-        n_ctx = params.get('context_size', 2048)
-        embedding = params.get('embedding', False)
-        n_gpu_layers = int(params.get('n_gpu_layers', -1))
-        verbose = params.get('verbose', False)
+        # Capture llama.cpp params; resolve upon first use
+        params = self.session.get_params()
+        self._n_ctx = params.get('context_size', 2048)
+        self._n_gpu_layers = int(params.get('n_gpu_layers', -1))
+        self._verbose = params.get('verbose', False)
 
         # If you want to enable speculative decoding when requested:
         self.draft_model = None
@@ -55,22 +54,7 @@ class LlamaCppProvider(APIProvider):
             )
             logits_all = True
 
-        # Initialize the Llama model
-        f = io.StringIO()
-        with redirect_stderr(f):
-            self.llm = Llama(
-                model_path=model_path,
-                n_ctx=n_ctx,
-                embedding=embedding,
-                n_gpu_layers=n_gpu_layers,
-                draft_model=self.draft_model,
-                logits_all=logits_all,
-                use_mlock=False,
-                flash_attn=True,
-                # type_k=6,
-                # type_v=6,  # not supported yet in upstream
-                verbose=verbose
-            )
+        self._logits_all = logits_all
 
         # Parameters we might want to map from self.params to llama_cpp.create_chat_completion()
         # Unlike OpenAI, llama-cpp-python tries to support a similar interface, so most should just pass through.
@@ -133,6 +117,9 @@ class LlamaCppProvider(APIProvider):
             #            'include_usage': True,
             #        }
 
+            # Ensure chat model is initialized lazily now that we're about to chat
+            self._get_chat_llm()
+
             # llama-cpp-python expects messages and supports similar arguments
             api_parms['messages'] = messages
 
@@ -188,6 +175,7 @@ class LlamaCppProvider(APIProvider):
             prompt_str += msg['content']
 
         # Tokenize the prompt (must encode to bytes)
+        # Ensure tokenizer available (chat llm initialized by chat())
         prompt_tokens = self.llm.tokenize(prompt_str.encode('utf-8'), add_bos=True)
         prompt_token_count = len(prompt_tokens)
 
@@ -230,6 +218,29 @@ class LlamaCppProvider(APIProvider):
         # print(f"TPS: {total_token_count / self.running_usage['total_time']}")
 
     # --- Embeddings support ---
+    def _get_chat_llm(self) -> Llama:
+        """Lazy-initialize the chat-capable Llama instance."""
+        if self.llm is not None:
+            return self.llm
+        params = self.session.get_params()
+        model_path = params.get('model_path')
+        if not model_path or not os.path.exists(os.path.expanduser(model_path)):
+            raise RuntimeError(f"Model path does not exist: {model_path}")
+        f = io.StringIO()
+        with redirect_stderr(f):
+            self.llm = Llama(
+                model_path=model_path,
+                n_ctx=self._n_ctx,
+                embedding=False,
+                n_gpu_layers=self._n_gpu_layers,
+                draft_model=self.draft_model,
+                logits_all=self._logits_all,
+                use_mlock=False,
+                flash_attn=True,
+                verbose=self._verbose,
+            )
+        self._chat_model_path = model_path
+        return self.llm
     def _get_embed_llm(self, model_path: Optional[str] = None) -> Llama:
         """Get or create a llama.cpp instance configured for embeddings.
 

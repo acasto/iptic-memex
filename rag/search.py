@@ -99,19 +99,23 @@ def search(
     """
     # Load all vectors
     all_items: List[Tuple[str, Dict[str, Any], List[float]]] = []
+    index_status: List[Dict[str, Any]] = []
     for name in names:
         index_dir = os.path.join(os.path.expanduser(vector_db), name)
         chunks, embs = _load_index(index_dir)
         if not chunks or not embs:
+            index_status.append({'index': name, 'dir': index_dir, 'loaded': 0, 'reason': 'missing'})
             continue
         if len(chunks) != len(embs):
             # Skip malformed index
+            index_status.append({'index': name, 'dir': index_dir, 'loaded': 0, 'reason': 'mismatch'})
             continue
         for ch, vec in zip(chunks, embs):
             all_items.append((name, ch, vec))
+        index_status.append({'index': name, 'dir': index_dir, 'loaded': len(chunks), 'reason': None})
 
     if not all_items:
-        return {"query": query, "results": []}
+        return {"query": query, "results": [], "stats": {"total_items": 0, "indices": index_status, "vector_db": vector_db}}
 
     # Normalize vectors
     norm_items = [(name, ch, _normalize(vec)) for (name, ch, vec) in all_items]
@@ -152,5 +156,4 @@ def search(
             'preview': snippet,
         })
 
-    return {"query": query, "results": out}
-
+    return {"query": query, "results": out, "stats": {"total_items": len(all_items), "indices": index_status, "vector_db": vector_db}}

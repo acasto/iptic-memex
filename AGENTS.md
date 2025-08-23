@@ -136,7 +136,7 @@ Gating and CLI‑only flows
   - Ensure `[LlamaCpp].tool_mode = pseudo` when working with llama.cpp.
 
 ##### RAG embeddings with llama.cpp
-- The `LlamaCpp` provider implements `embed(texts, model?)` for local embeddings; RAG also includes a lightweight llama.cpp embedding shim.
+- The `LlamaCpp` provider implements `embed(texts, model?)` for local embeddings with a lightweight, lazy embedding handle.
 - Privacy-safe default (strict): RAG does not fallback to network embeddings unless you opt in.
 - Configure via `[TOOLS]`:
   - Local (recommended for private docs):

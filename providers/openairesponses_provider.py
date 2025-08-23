@@ -42,10 +42,9 @@ class OpenAIResponsesProvider(APIProvider):
         elif 'OPENAI_API_KEY' in os.environ:
             options['api_key'] = os.environ['OPENAI_API_KEY']
         else:
-            # Keep behavior consistent with existing provider: require key when provider explicitly selected
+            # Require key when provider explicitly selected; raise to allow callers to handle gracefully
             if params.get('provider', '').lower() == 'openairesponses':
-                print("\nOpenAI API Key is required\n")
-                quit()
+                raise RuntimeError("OpenAI API Key is required")
             options['api_key'] = 'none'
 
         # Support custom base_url + endpoint

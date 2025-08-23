@@ -192,6 +192,7 @@ See [INSTALL.md](INSTALL.md) for details on how to adjust requirements.txt as ne
    - `run command` Run an arbitrary shell command from the user side to include the output for the assistant.
    - `load rag` Query configured RAG indexes and load a result summary into context.
    - `rag update` Build or refresh RAG indexes from configured folders.
+   - `rag status` Show per-index status (paths, counts, vector dim, last updated) and consistency checks.
 
 RAG quickstart
 - Configure indexes in the `[RAG]` section of `config.ini` (keys are index names; values are folder paths). Example:
@@ -200,6 +201,7 @@ RAG quickstart
 - Choose an embedding model via `[TOOLS].embedding_model` (e.g., `text-embedding-3-small`). Optional: `embedding_provider` to override which provider performs embeddings.
 - Build indexes: `rag update` (prompts for which index if not specified).
 - Query: `load rag` (interactive prompt) or `load rag <index>`; results are summarized and added to context.
+ - Inspect: `rag status` to see index health and artifact details.
 - Internals and format details live in `rag/README.md`.
   
 Notes:

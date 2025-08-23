@@ -158,6 +158,106 @@ class ComponentRegistry:
             self._prompt_resolver = PromptResolver(self.config)
         return self._prompt_resolver
 
+    # --- Provider factory -----------------------------------------------
+    def create_provider(self, provider_name: str, *, params_override: Optional[dict] = None,
+                        isolated: bool = True):
+        """Instantiate a provider by name with an optional isolated param view.
+
+        - When isolated=True (default), the provider sees params composed from
+          [DEFAULT] + [<Provider>] + params_override only, preventing bleed from
+          the active chat provider.
+        - Delegates all other attributes/methods to the real session at call time.
+        """
+        # Reset last factory error before attempting
+        try:
+            setattr(self, '_provider_factory_last_error', None)
+        except Exception:
+            pass
+
+        cls = self.load_provider_class(provider_name)
+        if not cls:
+            try:
+                self.utils.output.warning(f"Provider '{provider_name}' not found")
+            except Exception:
+                print(f"Warning: Provider '{provider_name}' not found")
+            return None
+
+        # Build a lightweight session view for the provider instance
+        real_session = getattr(self, 'session', None)
+        # Some call-sites may not set registry.session; try to infer from config
+        if real_session is None:
+            # Fallback: provider may not need the session beyond params; create a stub
+            class _Stub:
+                pass
+            real_session = _Stub()
+            setattr(real_session, 'config', self.config)
+            setattr(real_session, '_registry', self)
+
+        if not isolated:
+            try:
+                return cls(real_session)
+            except Exception as e:
+                try:
+                    self._provider_factory_last_error = {'name': provider_name, 'error': str(e)}
+                except Exception:
+                    pass
+                try:
+                    self.utils.output.warning(f"Could not instantiate provider '{provider_name}': {e}")
+                except Exception:
+                    print(f"Warning: Could not instantiate provider '{provider_name}': {e}")
+                return None
+
+        params_override = params_override or {}
+        base_cfg = self.config.base_config
+
+        class ProviderParamView:
+            def __init__(self, session_obj, provider: str, overrides: dict):
+                self._s = session_obj
+                self._provider = provider
+                self._over = dict(overrides or {})
+
+            def __getattr__(self, item):
+                if item == 'get_params':
+                    return object.__getattribute__(self, 'get_params')
+                return getattr(self._s, item)
+
+            def get_params(self):
+                # Compose params from DEFAULT + provider section + overrides
+                params = {}
+                try:
+                    # DEFAULTs
+                    for k, v in base_cfg['DEFAULT'].items():
+                        params[k] = ConfigManager.fix_values(v)
+                    # Provider section
+                    if base_cfg.has_section(self._provider):
+                        for opt in base_cfg.options(self._provider):
+                            try:
+                                params[opt] = ConfigManager.fix_values(base_cfg.get(self._provider, opt))
+                            except Exception:
+                                continue
+                    # Overrides
+                    params.update(self._over)
+                    # Identify as this provider
+                    params['provider'] = self._provider
+                except Exception:
+                    pass
+                return params
+
+        view = ProviderParamView(real_session, provider_name, params_override)
+        try:
+            instance = cls(view)
+        except Exception as e:
+            try:
+                self._provider_factory_last_error = {'name': provider_name, 'error': str(e)}
+            except Exception:
+                pass
+            try:
+                self.utils.output.warning(f"Could not instantiate provider '{provider_name}': {e}")
+            except Exception:
+                print(f"Warning: Could not instantiate provider '{provider_name}': {e}")
+            return None
+        return instance
+
     def load_provider_class(self, provider_name: str):
         """Load a provider class dynamically, handling aliases via config.
 

@@ -5,7 +5,7 @@ from typing import List
 from base_classes import InteractionAction
 from rag.fs_utils import load_rag_config
 from rag.search import search
-from rag.provider_utils import get_embedding_provider, get_embedding_candidates
+import os
 
 
 class LoadRagAction(InteractionAction):
@@ -57,7 +57,7 @@ class LoadRagAction(InteractionAction):
             except Exception:
                 pass
             return False
-        names: List[str]
+        index_names: List[str]
         if index_name:
             if index_name not in indexes:
                 try:
@@ -65,15 +65,55 @@ class LoadRagAction(InteractionAction):
                 except Exception:
                     pass
                 return False
-            names = [index_name]
+            index_names = [index_name]
         else:
-            names = active if active else list(indexes.keys())
+            index_names = active if active else list(indexes.keys())
 
-        # Choose embedding provider for query (dedicated instance; honors [TOOLS].embedding_provider)
-        prov = get_embedding_provider(self.session)
-        if not prov:
+        # Build candidate embedding providers (explicit, GGUF hint, current provider, then other active sections when non-strict)
+        tools = self.session.get_tools()
+        embedding_model = tools.get('embedding_model') or ''
+        explicit = (tools.get('embedding_provider') or '').strip()
+        strict_raw = tools.get('embedding_provider_strict')
+        strict = True if strict_raw is None else bool(strict_raw)
+
+        provider_names: list[str] = []
+        if explicit:
+            provider_names.append(explicit)
+        else:
             try:
-                self.session.ui.emit('error', {'message': 'No embedding-capable provider available for query embedding. Configure [TOOLS].embedding_provider and [TOOLS].embedding_model (e.g., embedding_provider = LlamaCpp + embedding_model = /path/model.gguf, or embedding_provider = OpenAI + embedding_model = text-embedding-3-small). Set embedding_provider_strict = false to allow fallbacks.'})
+                p = os.path.expanduser(str(embedding_model))
+                if p and (p.lower().endswith('.gguf') or os.path.exists(p)):
+                    provider_names.append('LlamaCpp')
+            except Exception:
+                pass
+        if not strict:
+            try:
+                current = self.session.get_params().get('provider')
+                if current:
+                    provider_names.append(str(current))
+            except Exception:
+                pass
+            try:
+                for sec in self.session.config.base_config.sections():
+                    if sec not in provider_names:
+                        provider_names.append(sec)
+            except Exception:
+                pass
+        # Instantiate instances now for reuse across queries
+        candidates = []
+        for name in provider_names:
+            prov = self.session._registry.create_provider(name)
+            if prov and hasattr(prov, 'embed'):
+                candidates.append(prov)
+        if not candidates:
+            # Surface last provider factory error if present (agnostic, no provider-specific logic)
+            err = getattr(self.session._registry, '_provider_factory_last_error', None)
+            if isinstance(err, dict) and err.get('name') and err.get('error'):
+                msg = f"Embedding provider '{err['name']}' failed to initialize: {err['error']}. Check credentials/config for that provider."
+            else:
+                msg = 'No embedding-capable provider available for query embedding. Configure [TOOLS].embedding_provider and [TOOLS].embedding_model, or set embedding_provider_strict = false to allow fallbacks.'
+            try:
+                self.session.ui.emit('error', {'message': msg})
             except Exception:
                 pass
             return False
@@ -90,15 +130,11 @@ class LoadRagAction(InteractionAction):
 
             # Perform search with graceful fallback across candidate providers
             last_err = None
-            candidates = get_embedding_candidates(self.session)
-            # If strict mode produced no candidates, try the explicit provider only
-            if not candidates and prov:
-                candidates = [prov]
             for candidate in candidates:
                 try:
                     res = search(
                         indexes=indexes,
-                        names=names,
+                        names=index_names,
                         vector_db=vector_db,
                         embed_query_fn=lambda batch, _c=candidate: _c.embed(batch, model=embedding_model or 'text-embedding-3-small'),
                         query=query,
@@ -120,10 +156,25 @@ class LoadRagAction(InteractionAction):
 
             results = res.get('results', [])
             if not results:
-                try:
-                    self.session.ui.emit('status', {'message': 'No RAG matches. Try another query or enter q to exit.'})
-                except Exception:
-                    pass
+                # Provide additional hints if indexes failed to load
+                stats = res.get('stats') or {}
+                total = int(stats.get('total_items') or 0)
+                if total == 0:
+                    indices = stats.get('indices') or []
+                    lines = ["No RAG data loaded from indexes:"]
+                    for st in indices:
+                        reason = st.get('reason') or 'none'
+                        lines.append(f"- {st.get('index')}: {reason} ({st.get('dir')})")
+                    lines.append("Check [RAG] paths, file extensions (.md|.mdx|.txt|.rst), and that 'rag update' produced chunks.")
+                    try:
+                        self.session.ui.emit('warning', {'message': "\n".join(lines)})
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        self.session.ui.emit('status', {'message': 'No RAG matches. Try another query or enter q to exit.'})
+                    except Exception:
+                        pass
                 continue
 
             # Build a readable summary block and print it

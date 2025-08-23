@@ -70,9 +70,9 @@ class OpenAIProvider(APIProvider):
         # since OpenAI will probably be the most common provider. Will still error out on other providers that require
         # an API key though until we figure out a better way to handle  this (issue is above where we set it to none
         # so that it still works with local providers that don't require an API key)
-        if params['provider'].lower() == 'openai' and options['api_key'] == 'none':
-            print(f"\nOpenAI API Key is required\n")
-            quit()
+        if params.get('provider', '').lower() == 'openai' and options.get('api_key') == 'none':
+            # Raise instead of exiting so auxiliary usages (e.g., embeddings) can surface a clear error
+            raise RuntimeError("OpenAI API Key is required")
 
         if 'base_url' in params and params['base_url'] is not None:
             base_url = params['base_url']
