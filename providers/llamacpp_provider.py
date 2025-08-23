@@ -7,6 +7,8 @@ import io
 from contextlib import redirect_stderr
 from providers.llamacpp_draft_model import LlamaSmallModelDraft
 from providers.llamacpp_draft_model import LlamaSmallModelDraftWithMetrics
+import os
+from typing import List, Optional
 
 
 class LlamaCppProvider(APIProvider):
@@ -18,6 +20,9 @@ class LlamaCppProvider(APIProvider):
         self.session = session
         self.last_api_param = None
         self._last_response = None
+        # Embedding instance cache (separate from chat llm when needed)
+        self._embed_llm = None
+        self._embed_model_path = None
 
         # Get fresh params for initialization
         params = self.session.get_params()
@@ -223,6 +228,122 @@ class LlamaCppProvider(APIProvider):
         # Print the tokens per second
         # print()
         # print(f"TPS: {total_token_count / self.running_usage['total_time']}")
+
+    # --- Embeddings support ---
+    def _get_embed_llm(self, model_path: Optional[str] = None) -> Llama:
+        """Get or create a llama.cpp instance configured for embeddings.
+
+        If `model_path` is provided, it will be used; otherwise falls back to the
+        configured `model_path` in params. Caches a dedicated embedding instance
+        keyed by model path.
+        """
+        # Resolve desired path: explicit override or default from params
+        path = model_path
+        if not path:
+            params = self.session.get_params()
+            path = params.get('model_path')
+
+        # Reuse cached embed model if path matches
+        if self._embed_llm is not None and self._embed_model_path == path:
+            return self._embed_llm
+
+        # Build a fresh embedding-capable instance
+        params = self.session.get_params()
+        n_ctx = params.get('context_size', 2048)
+        n_gpu_layers = int(params.get('n_gpu_layers', -1))
+        verbose = params.get('verbose', False)
+
+        f = io.StringIO()
+        with redirect_stderr(f):
+            self._embed_llm = Llama(
+                model_path=path,
+                n_ctx=n_ctx,
+                embedding=True,
+                n_gpu_layers=n_gpu_layers,
+                use_mlock=False,
+                flash_attn=True,
+                verbose=verbose,
+            )
+        self._embed_model_path = path
+        return self._embed_llm
+
+    def embed(self, texts: List[str], model: Optional[str] = None) -> List[List[float]]:
+        """Create embeddings using llama.cpp locally.
+
+        Robust to models that only expose token-level embeddings by pooling.
+        Processes inputs one-by-one to avoid batch decode edge cases.
+        """
+        # Coerce single string inputs defensively
+        if isinstance(texts, str):
+            texts = [texts]
+
+        # Decide model path
+        model_path: Optional[str] = None
+        if model and (os.path.exists(os.path.expanduser(model)) or str(model).lower().endswith('.gguf')):
+            model_path = os.path.expanduser(model)
+        else:
+            params = self.session.get_params()
+            model_path = params.get('model_path')
+
+        llm = self._get_embed_llm(model_path)
+
+        def _pool(vec_or_token_vecs):
+            # If already a single vector [dim], return as floats
+            if isinstance(vec_or_token_vecs, list) and vec_or_token_vecs and isinstance(vec_or_token_vecs[0], (int, float)):
+                return [float(x) for x in vec_or_token_vecs]
+            # If token-level [[dim], ...], mean-pool
+            if isinstance(vec_or_token_vecs, list) and vec_or_token_vecs and isinstance(vec_or_token_vecs[0], list):
+                # mean over tokens
+                token_vecs = vec_or_token_vecs
+                if not token_vecs:
+                    return []
+                dim = len(token_vecs[0])
+                agg = [0.0] * dim
+                n = 0
+                for tv in token_vecs:
+                    # guard ragged output
+                    if len(tv) != dim:
+                        dim = min(dim, len(tv))
+                        tv = tv[:dim]
+                        agg = agg[:dim]
+                    for i, val in enumerate(tv):
+                        agg[i] += float(val)
+                    n += 1
+                if n == 0:
+                    return []
+                return [v / n for v in agg]
+            return []
+
+        out: List[List[float]] = []
+        for t in texts:
+            vec = None
+            # Prefer llama.cpp embed() per-item
+            try:
+                if hasattr(llm, 'embed'):
+                    buf = io.StringIO()
+                    with redirect_stderr(buf):
+                        res = llm.embed(t, truncate=True)
+                    vec = _pool(res)
+            except Exception:
+                vec = None
+            # Fallback to create_embedding per-item
+            if not vec:
+                try:
+                    buf = io.StringIO()
+                    with redirect_stderr(buf):
+                        resp = llm.create_embedding(t)
+                    if isinstance(resp, dict) and 'data' in resp:
+                        data = resp.get('data') or []
+                        if data:
+                            vec = [float(x) for x in (data[0].get('embedding') or [])]
+                    else:
+                        vec = _pool(resp)
+                except Exception:
+                    vec = None
+            if not vec:
+                raise RuntimeError('Failed to compute embedding with llama.cpp')
+            out.append(vec)
+        return out
 
     def assemble_message(self) -> list:
         """

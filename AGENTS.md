@@ -135,6 +135,19 @@ Gating and CLI‑only flows
   - Settings like `use_old_system_role` can still be set per model/provider.
   - Ensure `[LlamaCpp].tool_mode = pseudo` when working with llama.cpp.
 
+##### RAG embeddings with llama.cpp
+- The `LlamaCpp` provider implements `embed(texts, model?)` for local embeddings; RAG also includes a lightweight llama.cpp embedding shim.
+- Privacy-safe default (strict): RAG does not fallback to network embeddings unless you opt in.
+- Configure via `[TOOLS]`:
+  - Local (recommended for private docs):
+    - `embedding_provider = LlamaCpp`
+    - `embedding_model = /abs/path/to/model.gguf`
+  - Remote:
+    - `embedding_provider = OpenAI`
+    - `embedding_model = text-embedding-3-small`
+  - To allow fallback candidates, set `embedding_provider_strict = false`.
+- RAG indexing is incremental: unchanged chunks (by content hash) are reused when the embedding signature (provider/model) is unchanged. Manifest records `embedding_signature` and `vector_dim`.
+
 ### Retrieval-Augmented Generation (RAG)
 - Overview:
   - Lightweight local RAG pipeline under `rag/`: discovery → chunking → embeddings → on-disk vector store → semantic search.

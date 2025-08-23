@@ -5,6 +5,7 @@ from typing import List
 from base_classes import InteractionAction
 from rag.fs_utils import load_rag_config
 from rag.search import search
+from rag.provider_utils import get_embedding_provider, get_embedding_candidates
 
 
 class LoadRagAction(InteractionAction):
@@ -68,22 +69,11 @@ class LoadRagAction(InteractionAction):
         else:
             names = active if active else list(indexes.keys())
 
-        # Choose embedding provider for query
-        prov = getattr(self.session, 'provider', None)
-        if not prov or not hasattr(prov, 'embed'):
-            # Try fallback providers if needed
-            for fallback in ('openairesponses', 'openai'):
-                try:
-                    pclass = self.session._registry.load_provider_class(fallback)
-                    if pclass:
-                        prov = pclass(self.session)
-                        if hasattr(prov, 'embed'):
-                            break
-                except Exception:
-                    continue
-        if not prov or not hasattr(prov, 'embed'):
+        # Choose embedding provider for query (dedicated instance; honors [TOOLS].embedding_provider)
+        prov = get_embedding_provider(self.session)
+        if not prov:
             try:
-                self.session.ui.emit('error', {'message': 'No embedding-capable provider available for query embedding.'})
+                self.session.ui.emit('error', {'message': 'No embedding-capable provider available for query embedding. Configure [TOOLS].embedding_provider and [TOOLS].embedding_model (e.g., embedding_provider = LlamaCpp + embedding_model = /path/model.gguf, or embedding_provider = OpenAI + embedding_model = text-embedding-3-small). Set embedding_provider_strict = false to allow fallbacks.'})
             except Exception:
                 pass
             return False
@@ -98,17 +88,35 @@ class LoadRagAction(InteractionAction):
             if not query or query.strip().lower() == 'q':
                 return True
 
-            # Perform search
-            res = search(
-                indexes=indexes,
-                names=names,
-                vector_db=vector_db,
-                embed_query_fn=lambda batch: prov.embed(batch, model=embedding_model or 'text-embedding-3-small'),
-                query=query,
-                k=8,
-                preview_lines=max(0, int(preview_lines)),
-                per_index_cap=None,
-            )
+            # Perform search with graceful fallback across candidate providers
+            last_err = None
+            candidates = get_embedding_candidates(self.session)
+            # If strict mode produced no candidates, try the explicit provider only
+            if not candidates and prov:
+                candidates = [prov]
+            for candidate in candidates:
+                try:
+                    res = search(
+                        indexes=indexes,
+                        names=names,
+                        vector_db=vector_db,
+                        embed_query_fn=lambda batch, _c=candidate: _c.embed(batch, model=embedding_model or 'text-embedding-3-small'),
+                        query=query,
+                        k=8,
+                        preview_lines=max(0, int(preview_lines)),
+                        per_index_cap=None,
+                    )
+                    break
+                except Exception as e:
+                    last_err = e
+                    res = None
+                    continue
+            if res is None:
+                try:
+                    self.session.ui.emit('error', {'message': f'Embedding error during query: {last_err}'})
+                except Exception:
+                    pass
+                return False
 
             results = res.get('results', [])
             if not results:

@@ -5,6 +5,8 @@ from typing import List
 
 from rag.fs_utils import load_rag_config
 from rag.indexer import update_index
+from rag.provider_utils import get_embedding_provider
+import os
 
 
 class RagUpdateAction(InteractionAction):
@@ -24,37 +26,7 @@ class RagUpdateAction(InteractionAction):
         return True
 
     def _get_embedding_provider(self):
-        # Prefer current session provider if it supports embeddings
-        provider = getattr(self.session, 'provider', None)
-        if provider and hasattr(provider, 'embed'):
-            try:
-                # Probe minimal to ensure method exists; do not call network
-                getattr(provider, 'embed')
-                return provider
-            except Exception:
-                pass
-        # Try overriding provider via tools.embedding_provider
-        name = str(self.session.get_tools().get('embedding_provider') or '').strip().lower()
-        if name:
-            provider_class = self.session._registry.load_provider_class(name)
-            if provider_class:
-                try:
-                    prov = provider_class(self.session)
-                    if hasattr(prov, 'embed'):
-                        return prov
-                except Exception:
-                    pass
-        # Fallback: if current model's provider class is OpenAIResponses or OpenAI, use it
-        for fallback in ('openairesponses', 'openai'):
-            try:
-                provider_class = self.session._registry.load_provider_class(fallback)
-                if provider_class:
-                    prov = provider_class(self.session)
-                    if hasattr(prov, 'embed'):
-                        return prov
-            except Exception:
-                continue
-        return None
+        return get_embedding_provider(self.session)
 
     def run(self, args: List[str] | None = None):
         args = args or []
@@ -83,7 +55,7 @@ class RagUpdateAction(InteractionAction):
         prov = self._get_embedding_provider()
         if prov is None or not hasattr(prov, 'embed'):
             try:
-                self.session.ui.emit('error', {'message': 'No embedding-capable provider available. Configure [TOOLS].embedding_provider or use an OpenAI model.'})
+                self.session.ui.emit('error', {'message': 'No embedding-capable provider available. Configure [TOOLS].embedding_provider and [TOOLS].embedding_model (e.g., embedding_provider = LlamaCpp + embedding_model = /path/model.gguf, or embedding_provider = OpenAI + embedding_model = text-embedding-3-small). Set embedding_provider_strict = false to allow fallbacks.'})
             except Exception:
                 pass
             return False
@@ -107,17 +79,39 @@ class RagUpdateAction(InteractionAction):
                 self.session.ui.emit('status', {'message': f"Indexing {name}: {root}"})
             except Exception:
                 pass
+            # Build an embedding signature to avoid mixing vector backends/dims
+            sig = {
+                'provider': prov.__class__.__name__,
+                'embedding_id': embedding_model,
+            }
+            # If embedding_model looks like a local model path, record metadata
+            if embedding_model:
+                path = os.path.expanduser(str(embedding_model))
+                if os.path.exists(path) and path.lower().endswith('.gguf'):
+                    try:
+                        st = os.stat(path)
+                        sig.update({
+                            'model_path': path,
+                            'model_mtime': int(st.st_mtime),
+                            'model_size': int(st.st_size),
+                        })
+                    except Exception:
+                        pass
             stats = update_index(
                 index_name=name,
                 root_path=root,
                 vector_db=vector_db,
                 embed_fn=lambda batch: prov.embed(batch, model=embedding_model),
                 embedding_model=embedding_model or 'text-embedding-3-small',
+                embedding_signature=sig,
             )
             try:
-                self.session.ui.emit('status', {'message': f"Indexed {name}: files={stats['files']} chunks={stats['chunks']} embedded={stats['embedded']} -> {stats['index_dir']}"})
+                skipped = stats.get('skipped')
+                if skipped:
+                    self.session.ui.emit('status', {'message': f"Up to date {name}: files={stats['files']} chunks={stats['chunks']} -> {stats['index_dir']}"})
+                else:
+                    self.session.ui.emit('status', {'message': f"Indexed {name}: files={stats['files']} chunks={stats['chunks']} embedded={stats['embedded']} -> {stats['index_dir']}"})
             except Exception:
                 pass
 
         return True
-

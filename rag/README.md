@@ -65,14 +65,48 @@ A small, self-contained retrieval system that indexes user-configured folders an
 
 ## Provider Integration
 - Providers can implement `embed(texts: list[str], model?: str) -> list[list[float]]`.
-- Implemented: OpenAIProvider, OpenAIResponsesProvider.
-- If the current provider lacks `embed()`, actions attempt to instantiate a fallback (e.g., OpenAIResponses → OpenAI).
+- Implemented: OpenAIProvider, OpenAIResponsesProvider, LlamaCpp (via provider and a lightweight shim).
+- Privacy-safe default: RAG does not fallback to network embeddings unless you explicitly opt-in.
+  - Configure both `[TOOLS].embedding_provider` and `[TOOLS].embedding_model`.
+  - To allow fallbacks (e.g., try local then remote), set `[TOOLS].embedding_provider_strict = false`.
+
+### Local embeddings (llama.cpp)
+- The `LlamaCpp` provider implements `embed()` using the local GGUF model via `llama_cpp`.
+- Configure:
+  - `[TOOLS].embedding_provider = LlamaCpp`
+  - `[TOOLS].embedding_model = /path/to/model.gguf`
+  - Optional: `[TOOLS].embedding_provider_strict = false` to allow fallback to other providers.
+- Notes:
+  - The provider creates a dedicated embedding instance (`embedding=True`) and pools token-level outputs when needed.
+  - For robustness, embeddings are computed per-item to avoid batch decode edge cases.
+
+### Model hints (optional)
+- Some embedding models expect task prefixes for best quality.
+  - NOmic-Embed-Text-V2: prefix documents with `search_document: ` and queries with `search_query: `.
+- Potential step: add a config flag to enable these prefixes during indexing/search, e.g.:
+  - `[RAG] prefix_style = nomic` (documents use `search_document:`; queries use `search_query:`)
+  - This is off by default to avoid model coupling.
 
 ## Usage
 - Configure indexes in `[RAG]`, choose `embedding_model`, set `vector_db`.
 - Build: `rag update` or `rag update notes`.
 - Search: `load rag`, `load rag notes`, `load rag 3` (preview lines), `load rag notes 5`.
 - Results are added to context as a single consolidated, readable block.
+
+### Incremental updates
+- Indexing reuses embeddings for unchanged chunks based on content hashes when the embedding signature matches.
+- The manifest stores `embedding_signature` (provider/model info) and `vector_dim`.
+- Changing embedding provider/model rebuilds the index to avoid mixing vector spaces.
+
+### Minimal configs
+- Local embeddings (privacy-first):
+  - `[TOOLS]`
+    - `embedding_provider = LlamaCpp`
+    - `embedding_model = /abs/path/to/your-model.gguf`
+- Remote embeddings:
+  - `[TOOLS]`
+    - `embedding_provider = OpenAI`
+    - `embedding_model = text-embedding-3-small`
 
 ## Extension Points
 - Backends: add a new store implementing the same write/read contract; switch via a future `[RAG] backend=naive|faiss|sqlite-vec`.
@@ -108,4 +142,3 @@ Documentation & Tests
 
 ---
 This module is intentionally minimal for MVP, with clear seams for evolution. Keep actions as adapters; implement features here so UX remains stable while internals improve.
-
