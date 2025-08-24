@@ -2,6 +2,7 @@ import os
 import subprocess
 from base_classes import StepwiseAction, Completed
 from core.mode_runner import run_completion
+from utils.tool_args import get_str, get_bool
 
 
 class LoadImageAction(StepwiseAction):
@@ -19,14 +20,14 @@ class LoadImageAction(StepwiseAction):
         force_summary = False
         filename = None
         if isinstance(args, (list, tuple)):
-            if args and str(args[0]).lower() == 'summary':
+            if args and str(args[0]).strip().lower() == 'summary':
                 force_summary = True
                 args = args[1:]
             if args:
                 filename = " ".join(str(a) for a in args)
         elif isinstance(args, dict):
-            force_summary = bool(args.get('summary'))
-            filename = args.get('file') or args.get('path')
+            force_summary = bool(get_bool(args, 'summary', False))
+            filename = get_str(args, 'file') or get_str(args, 'path')
 
         use_summary = force_summary or not (model and self.session.get_option_from_model('vision', model))
 

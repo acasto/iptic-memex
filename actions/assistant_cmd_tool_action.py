@@ -3,6 +3,7 @@ import subprocess
 import shlex
 import os
 from typing import Optional
+from utils.tool_args import get_str
 
 
 class AssistantCmdToolAction(InteractionAction):
@@ -161,8 +162,8 @@ class AssistantCmdToolAction(InteractionAction):
 
     def run(self, args: Optional[dict] = None, content: str = "") -> None:
         """Main entry point for command execution"""
-        command = args.get('command', '').strip()
-        raw_args = args.get('arguments', '').strip()
+        command = get_str(args or {}, 'command', '') or ''
+        raw_args = get_str(args or {}, 'arguments', '') or ''
 
         # Combine command and arguments
         full_command = f"{command} {raw_args}".strip()

@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 import trafilatura
 from trafilatura.settings import use_config
 from base_classes import StepwiseAction, Completed
+from utils.tool_args import get_str
 
 
 class FetchFromWebAction(StepwiseAction):
@@ -17,9 +18,9 @@ class FetchFromWebAction(StepwiseAction):
         # Ask for URL if not provided
         url = None
         if isinstance(args, dict):
-            url = args.get('url')
+            url = get_str(args, 'url')
         elif isinstance(args, (list, tuple)) and args:
-            url = args[0]
+            url = str(args[0]).strip()
         if not url:
             url = self.session.ui.ask_text("Enter the URL to fetch (or 'q' to exit): ")
         if str(url).strip().lower() == 'q':

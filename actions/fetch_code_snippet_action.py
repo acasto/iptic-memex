@@ -2,6 +2,7 @@ import ast
 import os
 from typing import List, Dict, Tuple
 from base_classes import StepwiseAction, Completed
+from utils.tool_args import get_str
 
 
 class FetchCodeSnippetAction(StepwiseAction):
@@ -18,7 +19,7 @@ class FetchCodeSnippetAction(StepwiseAction):
         if isinstance(args, (list, tuple)) and args:
             filename = " ".join(str(a) for a in args)
         elif isinstance(args, dict):
-            filename = args.get('file') or args.get('path')
+            filename = get_str(args, 'file') or get_str(args, 'path')
         if not filename:
             filename = self.session.ui.ask_text("Enter Python filename (or q to exit): ")
 

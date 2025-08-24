@@ -1,5 +1,6 @@
 import requests
 from base_classes import InteractionAction
+from utils.tool_args import get_str
 import pytz
 from datetime import datetime
 
@@ -81,7 +82,7 @@ class AssistantYoutrackToolAction(InteractionAction):
         return local_time.strftime('%Y-%m-%d %H:%M:%S %Z')
 
     def run(self, args: dict, content: str = ""):
-        mode = args.get('mode', '').lower()
+        mode = (get_str(args or {}, 'mode', '') or '').lower()
 
         # Accept common synonyms/short forms from models to preserve compatibility
         # with pseudo-tools phrasing (e.g., mode="projects")
@@ -181,8 +182,8 @@ class AssistantYoutrackToolAction(InteractionAction):
 
     def _get_issues(self, args, content):
         """Retrieves issues, optionally filtered by project."""
-        project_short_name = args.get('project_id')  # Now optional
-        custom_query = args.get('query', '')
+        project_short_name = get_str(args or {}, 'project_id')  # Now optional
+        custom_query = get_str(args or {}, 'query', '') or ''
 
         # Build query components
         query_parts = []
@@ -251,7 +252,7 @@ class AssistantYoutrackToolAction(InteractionAction):
 
     def _get_issue_details(self, args, content):
         """Retrieves detailed information for a single issue, including comments."""
-        issue_id = args.get('issue_id')
+        issue_id = get_str(args or {}, 'issue_id')
         if not issue_id:
             self.session.add_context('assistant', {
                 'name': 'youtrack_tool_error',
@@ -308,8 +309,8 @@ class AssistantYoutrackToolAction(InteractionAction):
 
     def _create_issue(self, args, content):
         """Creates a new issue in a project."""
-        project_short_name = args.get('project_id')
-        summary = args.get('summary')
+        project_short_name = get_str(args or {}, 'project_id')
+        summary = get_str(args or {}, 'summary')
 
         if not project_short_name or not summary:
             self.session.add_context('assistant', {
@@ -328,9 +329,9 @@ class AssistantYoutrackToolAction(InteractionAction):
             data['description'] = content
 
         # Add optional priority, type, and assignee fields
-        priority = args.get('priority')
-        issue_type = args.get('type')
-        assignee = args.get('assignee')
+        priority = get_str(args or {}, 'priority')
+        issue_type = get_str(args or {}, 'type')
+        assignee = get_str(args or {}, 'assignee')
 
         custom_fields = []
         if priority:
@@ -394,7 +395,7 @@ class AssistantYoutrackToolAction(InteractionAction):
 
     def _update_summary(self, args, content):
         """Updates the summary (title) of an issue."""
-        issue_id = args.get('issue_id')
+        issue_id = get_str(args or {}, 'issue_id')
         if not issue_id:
             self.session.add_context('assistant', {
                 'name': 'youtrack_tool_error',
@@ -402,7 +403,7 @@ class AssistantYoutrackToolAction(InteractionAction):
             })
             return
 
-        summary = content if content else args.get('summary')
+        summary = content if content else get_str(args or {}, 'summary')
         if not summary:
             self.session.add_context('assistant', {
                 'name': 'youtrack_tool_error',
@@ -426,7 +427,7 @@ class AssistantYoutrackToolAction(InteractionAction):
 
     def _update_description(self, args, content):
         """Updates the description of an issue."""
-        issue_id = args.get('issue_id')
+        issue_id = get_str(args or {}, 'issue_id')
         if not issue_id:
             self.session.add_context('assistant', {
                 'name': 'youtrack_tool_error',
@@ -458,8 +459,8 @@ class AssistantYoutrackToolAction(InteractionAction):
 
     def _assign_issue(self, args, content):
         """Assigns an issue to a user."""
-        issue_id = args.get('issue_id')
-        assignee = args.get('assignee')
+        issue_id = get_str(args or {}, 'issue_id')
+        assignee = get_str(args or {}, 'assignee')
 
         if not issue_id or not assignee:
             self.session.add_context('assistant', {
@@ -589,7 +590,7 @@ class AssistantYoutrackToolAction(InteractionAction):
 
     def _add_comment(self, args, content):
         """Adds a comment to an issue."""
-        issue_id = args.get('issue_id')
+        issue_id = get_str(args or {}, 'issue_id')
 
         if not issue_id:
             self.session.add_context('assistant', {

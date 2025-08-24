@@ -4,6 +4,7 @@ from base_classes import StepwiseAction, Completed
 import os
 import tempfile
 from typing import Any, Dict
+from utils.tool_args import get_str, get_bool
 from core.mode_runner import run_completion
 
 
@@ -22,8 +23,8 @@ class AssistantFileToolAction(StepwiseAction):
 
     # ---- Stepwise protocol -------------------------------------------------
     def start(self, args: Dict, content: str = "") -> Completed:
-        mode = str(args.get('mode', '')).lower()
-        filename = args.get('file', '')
+        mode = (get_str(args, 'mode', '') or '').lower()
+        filename = get_str(args, 'file', '') or ''
         if not filename:
             self.session.add_context('assistant', {'name': 'file_tool_error', 'content': 'No filename provided'})
             return Completed({'ok': False, 'error': 'No filename provided'})
@@ -34,15 +35,15 @@ class AssistantFileToolAction(StepwiseAction):
             'edit': lambda f: self._handle_edit(f, content),
             'append': lambda f: self._handle_append(f, content),
             'summarize': self._handle_summary,
-            'delete': lambda f: self._handle_delete(f, str(args.get('recursive', '')).lower() == 'true'),
-            'rename': lambda f: self._handle_rename(f, args.get('new_name')),
-            'copy': lambda f: self._handle_copy(f, args.get('new_name')),
+            'delete': lambda f: self._handle_delete(f, bool(get_bool(args, 'recursive', False))),
+            'rename': lambda f: self._handle_rename(f, get_str(args, 'new_name')),
+            'copy': lambda f: self._handle_copy(f, get_str(args, 'new_name')),
         }
         handler = handlers.get(mode)
         if not handler:
             self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Invalid mode: {mode}'})
             return Completed({'ok': False, 'error': f'Invalid mode: {mode}'})
-        if mode in ('rename', 'copy') and not args.get('new_name'):
+        if mode in ('rename', 'copy') and not get_str(args, 'new_name'):
             self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'New name required for {mode} operation'})
             return Completed({'ok': False, 'error': f'New name required for {mode} operation'})
         handler(filename)
@@ -59,8 +60,8 @@ class AssistantFileToolAction(StepwiseAction):
                     self.session.add_context('assistant', {'name': 'file_tool_result', 'content': 'User canceled operation'})
                     return Completed({'ok': True, 'canceled': True})
 
-                mode = str(args.get('mode', '')).lower()
-                filename = args.get('file') or args.get('path') or ''
+                mode = (get_str(args, 'mode', '') or '').lower()
+                filename = get_str(args, 'file') or get_str(args, 'path') or ''
                 if mode in ('write', 'append'):
                     if mode == 'write':
                         self._handle_write(filename, content, force=True)
@@ -68,15 +69,15 @@ class AssistantFileToolAction(StepwiseAction):
                         self._handle_append(filename, content, force=True)
                     return Completed({'ok': True, 'mode': mode, 'file': filename, 'confirmed': True})
                 if mode == 'delete':
-                    recursive = str(args.get('recursive', '')).lower() == 'true'
+                    recursive = bool(get_bool(args, 'recursive', False))
                     self._handle_delete(filename, recursive, force=True)
                     return Completed({'ok': True, 'mode': mode, 'file': filename, 'confirmed': True})
                 if mode == 'rename':
-                    new_name = args.get('new_name')
+                    new_name = get_str(args, 'new_name')
                     self._handle_rename(filename, new_name, force=True)
                     return Completed({'ok': True, 'mode': mode, 'file': filename, 'new_name': new_name, 'confirmed': True})
                 if mode == 'copy':
-                    new_name = args.get('new_name')
+                    new_name = get_str(args, 'new_name')
                     self._handle_copy(filename, new_name, force=True)
                     return Completed({'ok': True, 'mode': mode, 'file': filename, 'new_name': new_name, 'confirmed': True})
                 if mode == 'read':

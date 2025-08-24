@@ -3,6 +3,7 @@ import glob
 from typing import List
 from base_classes import StepwiseAction, Completed
 from PyPDF2 import PdfReader
+from utils.tool_args import get_str
 
 
 class LoadPdfAction(StepwiseAction):
@@ -17,7 +18,7 @@ class LoadPdfAction(StepwiseAction):
         if isinstance(args, (list, tuple)):
             patterns = [str(a) for a in args]
         elif isinstance(args, dict):
-            val = args.get('files') or args.get('file') or args.get('pattern') or args.get('path')
+            val = args.get('files') or get_str(args, 'file') or get_str(args, 'pattern') or get_str(args, 'path')
             if isinstance(val, list):
                 patterns = [str(x) for x in val]
             elif isinstance(val, str):

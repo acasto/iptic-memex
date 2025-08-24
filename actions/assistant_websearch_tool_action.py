@@ -1,6 +1,7 @@
 from base_classes import InteractionAction
 from typing import Any, Dict, List, Optional
 from core.mode_runner import run_completion
+from utils.tool_args import get_str, get_list
 
 
 class AssistantWebsearchToolAction(InteractionAction):
@@ -89,7 +90,7 @@ class AssistantWebsearchToolAction(InteractionAction):
 
     def run(self, args: dict, content: str = ""):
         # Check if a mode is specified
-        mode = args.get('mode')
+        mode = get_str(args, 'mode')
         if mode:
             search_model = self.validate_search_model(mode)
         else:
@@ -101,7 +102,7 @@ class AssistantWebsearchToolAction(InteractionAction):
         self._search_model = search_model
 
         # Get query from args or content
-        query = args.get('query', '')
+        query = get_str(args, 'query', '') or ''
         if content:
             query = f"{query} {content}".strip()
 
@@ -112,18 +113,16 @@ class AssistantWebsearchToolAction(InteractionAction):
             })
             return
 
-        recency = args.get('recency')
+        recency = get_str(args, 'recency')
         params = {}
 
         # Add optional params if specified
         if recency:
             params['search_recency_filter'] = recency
 
-        domains = args.get('domains', '').split(',') if args.get('domains') else None
+        domains = get_list(args, 'domains')
         if domains:
-            filtered_domains = [d.strip() for d in domains if d.strip()]
-            if filtered_domains:
-                params['search_domain_filter'] = filtered_domains
+            params['search_domain_filter'] = domains
 
         final_query = f"{self._search_prompt}\n\n{query}" if self._search_prompt else query
 

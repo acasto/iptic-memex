@@ -3,6 +3,7 @@ import subprocess
 import shlex
 import os
 from typing import Tuple, Optional
+from utils.tool_args import get_str
 
 
 class AssistantDockerToolAction(InteractionAction):
@@ -174,8 +175,8 @@ class AssistantDockerToolAction(InteractionAction):
         # Build command from either content or arguments
         command_str = content
         if not command_str and args:
-            cmd = args.get('command', '').strip()
-            arguments = args.get('arguments', '').strip()
+            cmd = get_str(args, 'command', '') or ''
+            arguments = get_str(args, 'arguments', '') or ''
             command_str = f"{cmd} {arguments}".strip()
 
         if not command_str:

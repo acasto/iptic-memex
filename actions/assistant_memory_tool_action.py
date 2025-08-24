@@ -1,5 +1,6 @@
 from base_classes import InteractionAction
 from utils.storage_utils import TableSchema
+from utils.tool_args import get_str, get_int
 
 
 class AssistantMemoryToolAction(InteractionAction):
@@ -41,11 +42,12 @@ class AssistantMemoryToolAction(InteractionAction):
         """
         Execute memory operations based on provided arguments.
         """
-        action = args.get("action")
+        action = (get_str(args or {}, "action", "") or "").lower()
         # Determine memory content from either the "memory" argument or the content parameter
-        memory_content = args.get("memory", content)
+        mem_arg = get_str(args or {}, "memory")
+        memory_content = mem_arg if (mem_arg is not None and mem_arg != "") else content
         # Optional project context for this memory operation (could be None)
-        project = args.get("project")
+        project = get_str(args or {}, "project")
 
         if action == "save":
             if not memory_content:
@@ -97,7 +99,7 @@ class AssistantMemoryToolAction(InteractionAction):
                 })
 
         elif action == "read":
-            memory_id = args.get("id")
+            memory_id = get_int(args or {}, "id")
             if memory_id:
                 # Read a specific memory by its id
                 query = "SELECT id, memory, project, timestamp FROM memories WHERE id = ?"
@@ -105,7 +107,7 @@ class AssistantMemoryToolAction(InteractionAction):
             else:
                 # Read memories filtered by project if provided.
                 if project:
-                    if project.lower() == "all":
+                    if (project or '').lower() == "all":
                         query = "SELECT id, memory, project, timestamp FROM memories ORDER BY timestamp ASC"
                         rows = self.session.utils.storage.provider.execute(query)
                     else:
@@ -136,7 +138,7 @@ class AssistantMemoryToolAction(InteractionAction):
                 })
 
         elif action == "clear":
-            memory_id = args.get("id")
+            memory_id = get_int(args or {}, "id")
             if memory_id:
                 # Clear a specific memory by id
                 query = "DELETE FROM memories WHERE id = ?"
@@ -147,7 +149,7 @@ class AssistantMemoryToolAction(InteractionAction):
                 })
             else:
                 if project:
-                    if project.lower() == "all":
+                    if (project or '').lower() == "all":
                         # Clear all memories
                         query = "DELETE FROM memories"
                         self.session.utils.storage.provider.execute(query)

@@ -3,6 +3,7 @@ import subprocess
 import platform
 import shlex
 import urllib.parse
+from utils.tool_args import get_str, get_list
 
 
 class AssistantOpenlinkToolAction(InteractionAction):
@@ -82,11 +83,12 @@ class AssistantOpenlinkToolAction(InteractionAction):
 
         # If no URLs in content, try args
         if not urls and args:
-            if 'url' in args:
-                urls.append(args['url'])
-            elif 'urls' in args:
-                # Support comma-separated URLs in args
-                urls.extend([u.strip() for u in args['urls'].split(',') if u.strip()])
+            one = get_str(args, 'url')
+            many = get_list(args, 'urls')
+            if one:
+                urls.append(one)
+            elif many:
+                urls.extend(many)
 
         return urls
 
