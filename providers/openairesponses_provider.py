@@ -522,6 +522,11 @@ class OpenAIResponsesProvider(APIProvider):
                 return []
             canonical = cmd.get_tool_specs() or []
             out = []
+            # Config: allow optional properties to be explicitly null
+            try:
+                allow_nullable = bool(self.session.get_params().get('nullable_optionals', False))
+            except Exception:
+                allow_nullable = False
             for spec in canonical:
                 try:
                     params = spec.get('parameters') or {'type': 'object', 'properties': {}}
@@ -540,6 +545,42 @@ class OpenAIResponsesProvider(APIProvider):
                             params['properties'].pop('content', None)
                     except Exception:
                         pass
+                    # Optionally mark optional properties as nullable
+                    if allow_nullable:
+                        try:
+                            orig_required = []
+                            try:
+                                sp = spec.get('parameters') or {}
+                                rq = sp.get('required')
+                                if isinstance(rq, list):
+                                    orig_required = [str(x) for x in rq]
+                            except Exception:
+                                orig_required = []
+                            for key, sch in list(params['properties'].items()):
+                                if key in orig_required:
+                                    continue
+                                # Wrap existing schema in anyOf [..., {type: 'null'}]
+                                try:
+                                    if isinstance(sch, dict):
+                                        # If already anyOf, ensure null is included
+                                        if 'anyOf' in sch and isinstance(sch['anyOf'], list):
+                                            has_null = any(isinstance(it, dict) and it.get('type') == 'null' for it in sch['anyOf'])
+                                            if not has_null:
+                                                sch['anyOf'].append({'type': 'null'})
+                                        else:
+                                            # Preserve description at top-level if present
+                                            desc = sch.get('description')
+                                            first = dict(sch)
+                                            # Create new schema with anyOf
+                                            new_s = {'anyOf': [first, {'type': 'null'}]}
+                                            if desc is not None:
+                                                new_s['description'] = desc
+                                            params['properties'][key] = new_s
+                                except Exception:
+                                    # If anything goes wrong, leave schema as-is
+                                    continue
+                        except Exception:
+                            pass
                     params['additionalProperties'] = False
                     # Ensure required includes every key in properties as per Responses validation
                     prop_keys = list(params['properties'].keys())

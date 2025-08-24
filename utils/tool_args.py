@@ -1,3 +1,18 @@
+"""
+Argument normalization utilities for actions and tools.
+
+Common issues these helpers address:
+- Optional fields arriving as empty strings should be treated as "not provided".
+- Multi-value fields may appear as a list/tuple or a comma-separated string.
+- Boolean-like values may be strings (e.g., "false") and should not be truthy by accident.
+
+Typical usage:
+    name = get_str(args, 'name') or 'Untitled'
+    top_k = get_int(args, 'k') or 8
+    strict = bool(get_bool(args, 'strict', False))
+    tags = get_list(args, 'tags') or []
+"""
+
 from __future__ import annotations
 
 from typing import Any, Iterable, List, Optional
@@ -96,4 +111,3 @@ def get_list(args: dict, key: str, default: Optional[List[str]] = None, *, sep: 
         parts = [p.strip() if strip_items else p for p in s.split(sep)]
         out = [p for p in parts if p != ""]
     return out
-

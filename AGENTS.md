@@ -118,6 +118,37 @@ class MyAction(StepwiseAction):
         return Completed({'ok': True, 'resumed': True})
 ```
 
+### Argument Normalization Helpers
+- Location: `utils/tool_args.py`
+- Purpose: Safely parse optional tool/action arguments from models or users where values may arrive as empty strings, different scalar types, lists, or comma‑separated strings.
+- Functions:
+  - `get_str(args, key, default=None, strip=True, empty_as_none=True) -> str|None`: returns a clean string; blank becomes `None` by default.
+  - `get_int(args, key, default=None) -> int|None`: parses integers; blank/invalid -> default.
+  - `get_float(args, key, default=None) -> float|None`: parses floats; blank/invalid -> default.
+  - `get_bool(args, key, default=None) -> bool|None`: parses booleans from bools or strings (`true/false/1/0/yes/no/on/off`).
+  - `get_list(args, key, default=None, sep=',', strip_items=True) -> list[str]|None`: accepts a list/tuple or a comma‑separated string; trims items and drops empties.
+- Usage patterns:
+  - Treat empty or whitespace‑only strings as “not provided” for optional fields.
+  - Accept both arrays and comma‑separated strings for multi‑value inputs.
+  - Prefer `get_bool` for flags; avoid `bool('false')` pitfalls.
+- Examples:
+```python
+from utils.tool_args import get_str, get_int, get_bool, get_list
+
+def start(self, args=None, content=""):
+    # Strings: blank becomes None
+    name = get_str(args or {}, 'name') or 'Untitled'
+
+    # Numbers: parse or use defaults
+    top_k = get_int(args or {}, 'k') or 8
+
+    # Booleans: parse permissively
+    recursive = bool(get_bool(args or {}, 'recursive', False))
+
+    # Lists: accept comma‑separated string or list
+    indexes = get_list(args or {}, 'indexes') or []
+```
+
 Gating and CLI‑only flows
 - If an action is intentionally CLI‑only (interactive loops, REPLs), guard with `if not session.ui.capabilities.blocking:` and `ui.emit('warning', ...)` instead of `print`.
 - Prefer converting multi‑step/confirm flows to Stepwise so they work uniformly across Chat, Agent, Web, and TUI.
