@@ -1,7 +1,7 @@
 from __future__ import annotations
 import os
 import importlib.util
-from typing import Dict, List, Any, Optional, Literal, TypedDict, cast
+from typing import Dict, List, Any, Optional, Literal, TypedDict, cast, Iterable, Tuple
 from config_manager import SessionConfig
 from component_registry import ComponentRegistry
 
@@ -359,13 +359,15 @@ class Session:
         return tools
 
     # ---- Tools mode helpers -----------------------------------------
-    def get_effective_tool_mode(self) -> str:
+    def get_effective_tool_mode(self) -> Literal['official', 'pseudo', 'none']:
         """Return effective tool mode: 'official' | 'pseudo' | 'none'.
 
         Precedence when DEFAULT.enable_tools is true:
-        1) model.tool_mode
-        2) provider.tool_mode
-        3) [TOOLS].tool_mode (default 'official')
+        - Hard gate: if model/tools flag is False → 'none'
+        1) explicit param override self.params['tool_mode'] when present
+        2) model.tool_mode
+        3) provider.tool_mode
+        4) [TOOLS].tool_mode (default 'official')
         When DEFAULT.enable_tools is false → 'none'.
         """
         # Global gate
@@ -373,6 +375,27 @@ class Session:
         enabled = enabled_raw if isinstance(enabled_raw, bool) else str(enabled_raw).lower() not in ('false', '0', 'no')
         if not enabled:
             return 'none'
+
+        # Model-level boolean gate: if tools flag is explicitly false, disable
+        try:
+            # Prefer params value which includes model roll-up
+            tools_enabled = self.params.get('tools')
+            if tools_enabled is None:
+                tools_enabled = True
+            if isinstance(tools_enabled, str):
+                tools_enabled = tools_enabled.strip().lower() not in ('false', '0', 'no')
+            if tools_enabled is False:
+                return 'none'
+        except Exception:
+            pass
+
+        # Explicit override in params
+        try:
+            p_mode = (self.params.get('tool_mode') or '').strip().lower()
+            if p_mode in ('official', 'pseudo', 'none'):
+                return p_mode
+        except Exception:
+            pass
 
         # Model override
         try:
@@ -409,11 +432,11 @@ class Session:
             pass
         return 'official'
 
-    def remove_context_type(self, context_type: str):
+    def remove_context_type(self, context_type: str) -> None:
         """Remove all contexts of a specific type - backward compatibility"""
         self.clear_context(context_type)
 
-    def remove_context_item(self, context_type: str, index: int):
+    def remove_context_item(self, context_type: str, index: int) -> None:
         """Remove a specific context item by index - backward compatibility"""
         if context_type in self.context:
             if 0 <= index < len(self.context[context_type]):
@@ -473,145 +496,66 @@ class Session:
                 self.user_data['tools'] = {}
             self.user_data['tools'][key] = value
 
+    # ---- Internal run helpers (dev ergonomics) -----------------------
+    def run_internal_completion(
+        self,
+        message: str = '',
+        *,
+        overrides: Optional[dict] = None,
+        contexts: Optional[Iterable[Tuple[str, Any]]] = None,
+        capture: Literal['text', 'raw'] = 'text',
+    ):
+        """Run a one-shot internal completion using the embedded builder.
+
+        Returns core.mode_runner.ModeResult.
+        """
+        if not hasattr(self, '_builder') or getattr(self, '_builder', None) is None:
+            raise RuntimeError('Session builder is not available')
+        # Local import to avoid import-time cycles
+        from core.mode_runner import run_completion as _run_completion  # type: ignore
+        return _run_completion(
+            builder=self._builder,
+            overrides=overrides,
+            contexts=contexts,
+            message=message,
+            capture=capture,
+        )
+
+        
+    def run_internal_agent(
+        self,
+        steps: int,
+        *,
+        overrides: Optional[dict] = None,
+        contexts: Optional[Iterable[Tuple[str, Any]]] = None,
+        output: Optional[Literal['final', 'full', 'none']] = None,
+        verbose_dump: bool = False,
+    ):
+        """Run an internal agent loop using the embedded builder.
+
+        Returns core.mode_runner.ModeResult.
+        """
+        if not hasattr(self, '_builder') or getattr(self, '_builder', None) is None:
+            raise RuntimeError('Session builder is not available')
+        from core.mode_runner import run_agent as _run_agent  # type: ignore
+        return _run_agent(
+            builder=self._builder,
+            steps=steps,
+            overrides=overrides,
+            contexts=contexts,
+            output=output,
+            verbose_dump=verbose_dump,
+        )
+
 
 class SessionBuilder:
-    """
-    Builds fully configured sessions.
-    Handles initialization logic currently in Session.
-    """
-
+    """Use core.session_builder.SessionBuilder; kept for import compatibility."""
     def __init__(self, config_manager):
-        self.config_manager = config_manager
+        from core.session_builder import SessionBuilder as _SB
+        self._impl = _SB(config_manager)
 
     def build(self, mode: Optional[str] = None, **options) -> Session:
-        """
-        Build a new session with the given options.
-        """
-        # Create session config
-        session_config = self.config_manager.create_session_config(options)
-
-        # Create registry
-        registry = ComponentRegistry(session_config)
-
-        # Create session
-        session = Session(session_config, registry)
-
-        # Set the current model
-        session.current_model = options.get('model')
-
-        # Initialize provider
-        model = options.get('model')  # Get the model from options
-        provider_name = session_config.get_params(model).get('provider')
-        if provider_name:
-            provider_class = registry.load_provider_class(provider_name)
-            if provider_class:
-                session.provider = provider_class(session)
-
-        # Attach UI adapter according to mode (default to CLI)
-        ui_mode = (mode or 'chat').lower()
-        try:
-            if ui_mode in ('web',):
-                from ui.web import WebUI
-                session.ui = WebUI(session)
-            elif ui_mode in ('tui',):
-                from ui.tui import TUIUI
-                session.ui = TUIUI(session)
-            else:
-                from ui.cli import CLIUI
-                session.ui = CLIUI(session)
-        except Exception:
-            # Fallback to a minimal CLI UI if adapter import fails
-            try:
-                from ui.cli import CLIUI  # type: ignore
-                session.ui = CLIUI(session)
-            except Exception:
-                session.ui = None
-
-        # Initialize default contexts based on mode
-        try:
-            if mode != 'completion' or 'prompt' in options:
-                prompt_resolver = registry.get_prompt_resolver()
-                if prompt_resolver:
-                    # Get prompt from options or use default
-                    prompt_name = options.get('prompt', None)
-                    prompt_content = prompt_resolver.resolve(prompt_name)
-                    if prompt_content:
-                        session.add_context('prompt', prompt_content)
-        except Exception as e:
-            print(f"Warning: Could not load prompt context: {e}")
-
-        return session
+        return self._impl.build(mode=mode, **options)
 
     def rebuild_provider(self, session: Session) -> None:
-        """Rebuild provider after model switch"""
-        provider_name = session.params.get('provider')
-        if not provider_name:
-            return
-
-        provider_class = self._load_provider_class(provider_name)
-        if not provider_class:
-            try:
-                session.utils.output.warning(f"Could not load provider '{provider_name}' during rebuild.")
-            except Exception:
-                pass
-            return
-
-        # Preserve any provider-specific state if needed
-        old_usage = None
-        if hasattr(session.provider, 'get_usage'):
-            old_usage = session.provider.get_usage()
-
-        # Create new provider
-        session.provider = provider_class(session)
-
-        # Restore state if applicable
-        if old_usage and hasattr(session.provider, 'set_usage'):
-            session.provider.set_usage(old_usage)
-
-    def _load_provider_class(self, provider_name: str):
-        """Load a provider class dynamically, handling aliases"""
-        try:
-            # Check if this provider has an alias
-            provider_config = {}
-            if self.config_manager.base_config.has_section(provider_name):
-                provider_config = {
-                    option: self.config_manager.base_config.get(provider_name, option)
-                    for option in self.config_manager.base_config.options(provider_name)
-                }
-
-            # If there's an alias, use the aliased provider
-            actual_provider = provider_config.get('alias', provider_name)
-
-            # Convert provider name to module name (e.g., 'OpenAI' -> 'openai_provider')
-            module_name = f"{actual_provider.lower()}_provider"
-
-            # Try to import from providers package
-            module_path = os.path.join(os.path.dirname(__file__), 'providers', f"{module_name}.py")
-
-            if not os.path.isfile(module_path):
-                print(f"Warning: Provider module {module_path} not found")
-                return None
-
-            spec = importlib.util.spec_from_file_location(module_name, module_path)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-
-            # Look for a class that matches the actual provider name
-            class_name = f"{actual_provider}Provider"
-            if hasattr(module, class_name):
-                return getattr(module, class_name)
-
-            # Fallback: look for any class ending with 'Provider'
-            for attr_name in dir(module):
-                attr = getattr(module, attr_name)
-                if (isinstance(attr, type) and
-                        attr_name.endswith('Provider') and
-                        attr_name != 'APIProvider'):
-                    return attr
-
-            print(f"Warning: No provider class found in {module_name}")
-            return None
-
-        except Exception as e:
-            print(f"Warning: Could not load provider {provider_name}: {e}")
-            return None
+        return self._impl.rebuild_provider(session)

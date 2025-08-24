@@ -7,7 +7,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.par
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from turns import TurnRunner, TurnOptions
+from core.turns import TurnRunner, TurnOptions
 
 
 class FakeOutput:

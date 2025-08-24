@@ -1,5 +1,6 @@
 from base_classes import InteractionAction
-import subprocess
+from typing import Any, Dict, List, Optional
+from core.mode_runner import run_completion
 
 
 class AssistantWebsearchToolAction(InteractionAction):
@@ -81,7 +82,6 @@ class AssistantWebsearchToolAction(InteractionAction):
     def __init__(self, session):
         self.session = session
         self._search_prompt = self.session.get_tools().get('search_prompt', None)
-        self.memex_runner = session.get_action('memex_runner')
 
         # Validate search model during initialization
         initial_model = self.session.get_tools().get('search_model', "sonar")
@@ -127,69 +127,77 @@ class AssistantWebsearchToolAction(InteractionAction):
 
         final_query = f"{self._search_prompt}\n\n{query}" if self._search_prompt else query
 
+        # Build overrides for a subsession run
+        # Push search params into extra_body so OpenAI-compatible providers forward them
+        extra_body: Dict[str, Any] = {}
+        if 'search_recency_filter' in params:
+            extra_body['search_recency_filter'] = params['search_recency_filter']
+        if 'search_domain_filter' in params:
+            extra_body['search_domain_filter'] = params['search_domain_filter']
+
+        overrides: Dict[str, Any] = {'model': self._search_model}
+        if extra_body:
+            overrides['extra_body'] = extra_body
+
+        # Include citations in output when enabled
+        include_citations = bool(self.session.get_tools().get('sonar_citations', True))
+
+        # Execute completion internally
         try:
-            # Build the argument list for memex
-            memex_args = ['-m', self._search_model]
+            builder = getattr(self.session, '_builder', None)
+            if builder is None:
+                raise RuntimeError('Internal builder is unavailable for mode run')
 
-            for key, value in params.items():
-                memex_args.append(f'--{key}')
-                if isinstance(value, list):
-                    memex_args.append(','.join(value))
-                else:
-                    memex_args.append(str(value))
+            res = run_completion(
+                builder=builder,
+                overrides=overrides,
+                message=final_query,
+                capture=('raw' if include_citations else 'text'),
+            )
 
-            # Check if citations should be included (default to True)
-            include_citations = self.session.get_tools().get('sonar_citations', True)
+            summary = res.last_text or ''
 
-            # Add the raw flag if we want to parse citations
-            if include_citations:
-                memex_args.append('-r')
+            # Attempt to extract citations from raw response (best-effort)
+            if include_citations and res.raw is not None:
+                try:
+                    raw = res.raw
+                    content_text = None
+                    citations: Optional[List[Any]] = None
 
-            # Add the file argument to read from stdin
-            memex_args.extend(['-f', '-'])
-
-            # Run the command using the memex_runner, passing the query as stdin
-            result = self.memex_runner.run(*memex_args, input=final_query, text=True, capture_output=True)
-
-            if result.returncode != 0:
-                summary = f"Error: {result.stderr}"
-            else:
-                summary = result.stdout
-                # Parse citations if enabled
-                if include_citations:
+                    # Navigate typical OpenAI ChatCompletion shape
                     try:
-                        # The response is a string representation of a ChatCompletion object
-                        # Look for the content and citations using string parsing
-                        import re
+                        choice0 = getattr(raw, 'choices', [None])[0]
+                        if choice0 and hasattr(choice0, 'message'):
+                            msg = choice0.message
+                            content_text = getattr(msg, 'content', None)
+                            # Some backends attach citations at message or top-level
+                            citations = getattr(msg, 'citations', None) or getattr(raw, 'citations', None)
+                    except Exception:
+                        pass
 
-                        # Extract content using regex
-                        content_match = re.search(r"content='([^']*)'", summary)
-                        content = content_match.group(1) if content_match else summary
-
-                        # Extract citations list using regex
-                        citations_match = re.search(r"citations=\[(.*?)]", summary)
-                        if citations_match:
-                            # Split the citations string and clean up each citation
-                            citations = [c.strip(" '") for c in citations_match.group(1).split(',')]
-                            # Append citations to the content
-                            citation_text = "\n\nCitations:\n" + "\n".join(citations)
-                            summary = content + citation_text
-                        else:
-                            summary = content
-
-                    except Exception as e:
+                    # Fall back to dict-like access
+                    if citations is None:
                         try:
-                            self.session.ui.emit('warning', {'message': f"Error parsing raw response: {str(e)}"})
+                            d = raw if isinstance(raw, dict) else getattr(raw, '__dict__', {})
+                            # Message dict path
+                            if d and 'choices' in d and d['choices']:
+                                msgd = d['choices'][0].get('message') or {}
+                                citations = msgd.get('citations') or d.get('citations')
+                                content_text = msgd.get('content', content_text)
                         except Exception:
                             pass
-                        summary = result.stdout
 
-            self.session.add_context('assistant', {
-                'name': 'Search Results',
-                'content': summary
-            })
-        except (subprocess.SubprocessError, FileNotFoundError) as e:
-            self.session.add_context('assistant', {
-                'name': 'search_error',
-                'content': f'Search failed: {str(e)}'
-            })
+                    base_text = summary or (content_text or '')
+                    if citations and isinstance(citations, (list, tuple)):
+                        citation_lines = [str(c) for c in citations]
+                        base_text = base_text + ("\n\nCitations:\n" + "\n".join(citation_lines))
+                    summary = base_text
+                except Exception as e:
+                    try:
+                        self.session.ui.emit('warning', {'message': f"Citations extraction error: {e}"})
+                    except Exception:
+                        pass
+
+            self.session.add_context('assistant', {'name': 'Search Results', 'content': summary})
+        except Exception as e:
+            self.session.add_context('assistant', {'name': 'search_error', 'content': f'Search failed: {e}'})

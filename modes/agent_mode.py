@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from base_classes import InteractionMode
-from turns import TurnRunner, TurnOptions
+from core.turns import TurnRunner, TurnOptions
 
 
 class AgentMode(InteractionMode):

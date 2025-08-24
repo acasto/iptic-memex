@@ -2,6 +2,15 @@
 
 ## Project Structure & Modules
 - Root Python package: entrypoint `main.py`; core modules in the repo root (`session.py`, `component_registry.py`, `config_manager.py`, `base_classes.py`).
+- Core runtime: `core/` (shared building blocks)
+  - `turns.py` (TurnRunner, TurnOptions, TurnResult)
+  - `mode_runner.py` (headless internal runs for completion/agent)
+  - `provider_factory.py` (capability-aware provider instantiation)
+  - `prompt_resolver.py` (prompt chains/files/literals)
+  - `session_builder.py` (session construction; `session.SessionBuilder` re-exports)
+  - `utils.py` (UtilsHandler used by registry)
+  - `null_ui.py` (non-interactive UI for internal runs)
+  - `context_transfer.py` (copy contexts/chat across sessions)
 - Feature folders: `providers/` (LLM backends), `contexts/` (context sources/loaders), `prompts/` (templates), `modes/` (CLI modes), `tui/` (terminal UI), `utils/` (helpers), `scripts/` (small CLI wrappers), `examples/`, `sessions/`.
 - Configuration: project `config.ini`, `models.ini`; user-level config in `~/.config/iptic-memex/` (symlink `user-config` points there).
 
@@ -60,6 +69,32 @@
   - `contexts/prompt_context.py` appends addenda after template handlers run and before providers assemble requests.
 - Migration:
   - The `{{pseudo_tool_prompt}}` template handler and placeholder have been removed. No template handlers are required for core addenda.
+
+### Internal Runs (Helpers)
+- Two helpers on `session.Session` simplify running internal completions/agent loops from actions without subprocesses:
+  - `session.run_internal_completion(message: str, overrides: dict | None = None, contexts: Iterable[Tuple[str, Any]] | None = None, capture: 'text'|'raw' = 'text') -> ModeResult`
+  - `session.run_internal_agent(steps: int, overrides: dict | None = None, contexts: Iterable[Tuple[str, Any]] | None = None, output: 'final'|'full'|'none' | None = None, verbose_dump: bool = False) -> ModeResult`
+
+Example usage in an action:
+
+```python
+from base_classes import StepwiseAction, Completed
+
+class MyVisionSummarizer(StepwiseAction):
+    def __init__(self, session):
+        self.session = session
+
+    def start(self, args=None, content=None):
+        img = self.session.ui.ask_files("Pick an image:")
+        res = self.session.run_internal_completion(
+            message="Summarize this image",
+            overrides={"model": "my-vision-model", "vision": True},
+            contexts=[("image", img[0])],
+        )
+        return Completed({"summary": res.last_text})
+```
+
+- Rationale: less boilerplate than importing `core.mode_runner` in every action, consistent NullUI behavior, and easy to mock in tests.
 
 Minimal template (Stepwise)
 
@@ -313,6 +348,9 @@ max_completion_tokens = 4096
 ## Reasoning Models (OpenAI) – Params & Usage
 
 - Config-first: set provider-agnostic options in config.ini/models.ini; providers map them to API params.
+  - Capabilities (model-level): set `tools = true|false` and `vision = true|false` per model (defaults in `[DEFAULT]`: `tools = True`, `vision = False`).
+    - When `tools = false`, the effective tool mode hard-gates to `none` and providers do not send tool specs.
+    - When `vision = true`, providers that support multi-part messages will include image parts; otherwise images are omitted.
 - OpenAI reasoning settings (when `reasoning = true`):
   - Token cap:
     - Use `max_completion_tokens`. If omitted, `max_tokens` is mapped to it.
@@ -370,8 +408,8 @@ max_completion_tokens = 4096
 ## Turn Orchestration (TurnRunner)
 
 - Overview:
-  - `turns/runner.py` provides a mode‑agnostic engine that coordinates user turns, assistant turns, tool execution, auto‑submit follow‑ups, and sentinel handling.
-  - Used by: `ChatMode`, `AgentMode`, and Web endpoints (`/api/chat`, `/api/stream`). TUI benefits indirectly via shared session/actions.
+  - `core/turns.py` provides a mode‑agnostic engine that coordinates user turns, assistant turns, tool execution, auto‑submit follow‑ups, and sentinel handling.
+  - Used by: `ChatMode`, `AgentMode`, Web endpoints (`/api/chat`, `/api/stream`), and internal runs via `core/mode_runner.py`.
 
 - API:
   - `run_user_turn(input_text, options) -> TurnResult` for single‑turn flows with optional auto‑submit continuations (Chat/Web).

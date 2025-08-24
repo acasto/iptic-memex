@@ -39,7 +39,6 @@ class OpenAIProvider(APIProvider):
             'stream',
             'temperature',
             'top_p',
-            'tools',
             'tool_choice',
             'user',
             'extra_body'
@@ -490,8 +489,14 @@ class OpenAIProvider(APIProvider):
 
                     # Process contexts
                     if 'context' in turn and turn['context']:
+                        # Include images only when the current model supports vision
+                        include_images = False
+                        try:
+                            include_images = bool(self.session.get_params().get('vision', False))
+                        except Exception:
+                            include_images = False
                         for ctx in turn['context']:
-                            if ctx['type'] == 'image':
+                            if ctx['type'] == 'image' and include_images:
                                 img_data = ctx['context'].get()
                                 # Format image data for OpenAI's API
                                 content.append({

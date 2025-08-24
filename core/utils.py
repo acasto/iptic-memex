@@ -8,16 +8,10 @@ from utils.tab_completion_utils import TabCompletionHandler
 
 class UtilsHandler:
     """
-    Container for utility services.
-    Now receives SessionConfig instead of full ConfigHandler.
+    Container for utility services. Shared across CLI/Web/TUI and core.
     """
-    
+
     def __init__(self, config):
-        """
-        Initialize UtilsHandler with either SessionConfig (new) or ConfigHandler (legacy)
-        
-        :param config: SessionConfig instance (preferred) or ConfigHandler (legacy)
-        """
         self.config = config
         self._output = None
         self._input = None
@@ -33,18 +27,6 @@ class UtilsHandler:
         return self._output
 
     def replace_output(self, output_handler):
-        """
-        Replace the current output handler instance with a compatible sink.
-
-        The replacement should implement at least:
-        - write(message, level=..., style=..., prefix=..., end='\n', flush=False, spacing=None)
-        - debug/info/warning/error/critical helpers
-        - spinner()/stop_spinner()
-        - suppress_stdout_blanks(suppress_blank_lines: bool, collapse_bursts: bool)
-
-        This hook enables alternative front-ends (e.g., TUI or Web) to route
-        display output without changing action logic.
-        """
         self._output = output_handler
 
     @property
@@ -76,3 +58,4 @@ class UtilsHandler:
         if self._tab_completion is None:
             self._tab_completion = TabCompletionHandler(self.config, self.output)
         return self._tab_completion
+

@@ -4,8 +4,10 @@ from typing import List
 
 from base_classes import InteractionAction
 from rag.fs_utils import load_rag_config
+from core.provider_factory import ProviderFactory
 from rag.search import search
 import os
+from rag.fs_utils import read_text
 
 
 class LoadRagAction(InteractionAction):
@@ -69,54 +71,67 @@ class LoadRagAction(InteractionAction):
         else:
             index_names = active if active else list(indexes.keys())
 
-        # Build candidate embedding providers (explicit, GGUF hint, current provider, then other active sections when non-strict)
+        # Require explicit embedding provider and model; no fallbacks
         tools = self.session.get_tools()
-        embedding_model = tools.get('embedding_model') or ''
-        explicit = (tools.get('embedding_provider') or '').strip()
-        strict_raw = tools.get('embedding_provider_strict')
-        strict = True if strict_raw is None else bool(strict_raw)
-
-        provider_names: list[str] = []
-        if explicit:
-            provider_names.append(explicit)
-        else:
+        embedding_model = (tools.get('embedding_model') or '').strip()
+        embedding_provider = (tools.get('embedding_provider') or '').strip()
+        if not embedding_model or not embedding_provider:
             try:
-                p = os.path.expanduser(str(embedding_model))
-                if p and (p.lower().endswith('.gguf') or os.path.exists(p)):
-                    provider_names.append('LlamaCpp')
-            except Exception:
-                pass
-        if not strict:
-            try:
-                current = self.session.get_params().get('provider')
-                if current:
-                    provider_names.append(str(current))
-            except Exception:
-                pass
-            try:
-                for sec in self.session.config.base_config.sections():
-                    if sec not in provider_names:
-                        provider_names.append(sec)
-            except Exception:
-                pass
-        # Instantiate instances now for reuse across queries
-        candidates = []
-        for name in provider_names:
-            prov = self.session._registry.create_provider(name)
-            if prov and hasattr(prov, 'embed'):
-                candidates.append(prov)
-        if not candidates:
-            # Surface last provider factory error if present (agnostic, no provider-specific logic)
-            err = getattr(self.session._registry, '_provider_factory_last_error', None)
-            if isinstance(err, dict) and err.get('name') and err.get('error'):
-                msg = f"Embedding provider '{err['name']}' failed to initialize: {err['error']}. Check credentials/config for that provider."
-            else:
-                msg = 'No embedding-capable provider available for query embedding. Configure [TOOLS].embedding_provider and [TOOLS].embedding_model, or set embedding_provider_strict = false to allow fallbacks.'
-            try:
-                self.session.ui.emit('error', {'message': msg})
+                self.session.ui.emit('error', {'message': 'RAG requires [TOOLS].embedding_provider and [TOOLS].embedding_model to be set.'})
             except Exception:
                 pass
             return False
+        try:
+            provider = ProviderFactory.instantiate_by_name(
+                embedding_provider,
+                registry=self.session._registry,
+                session=self.session,
+                isolated=True,
+            )
+        except Exception:
+            provider = None
+        if not provider or not hasattr(provider, 'embed'):
+            try:
+                self.session.ui.emit('error', {'message': f"Embedding provider '{embedding_provider}' is not available or lacks 'embed()'."})
+            except Exception:
+                pass
+            return False
+
+        # Read RAG tuning knobs from [TOOLS]
+        def _get_tool_opt(name: str, default):
+            try:
+                return tools.get(name, default)
+            except Exception:
+                return default
+
+        try:
+            top_k = int(_get_tool_opt('rag_top_k', 8) or 8)
+        except Exception:
+            top_k = 8
+        raw_cap = _get_tool_opt('rag_per_index_cap', None)
+        try:
+            per_index_cap = int(raw_cap) if raw_cap is not None else None
+        except Exception:
+            per_index_cap = None
+        try:
+            preview_default = int(_get_tool_opt('rag_preview_lines', 3) or 3)
+        except Exception:
+            preview_default = 3
+        try:
+            threshold = float(_get_tool_opt('rag_similarity_threshold', 0.0) or 0.0)
+        except Exception:
+            threshold = 0.0
+        attach_mode = str(_get_tool_opt('rag_attach_mode', 'summary') or 'summary').strip().lower()
+        try:
+            budget = int(_get_tool_opt('rag_total_chars_budget', 20000) or 20000)
+        except Exception:
+            budget = 20000
+        group_by_file = bool(_get_tool_opt('rag_group_by_file', True))
+        merge_adjacent = bool(_get_tool_opt('rag_merge_adjacent', True))
+        try:
+            merge_gap = int(_get_tool_opt('rag_merge_gap', 5) or 5)
+        except Exception:
+            merge_gap = 5
 
         # Interactive query loop
         while True:
@@ -128,33 +143,34 @@ class LoadRagAction(InteractionAction):
             if not query or query.strip().lower() == 'q':
                 return True
 
-            # Perform search with graceful fallback across candidate providers
-            last_err = None
-            for candidate in candidates:
-                try:
-                    res = search(
-                        indexes=indexes,
-                        names=index_names,
-                        vector_db=vector_db,
-                        embed_query_fn=lambda batch, _c=candidate: _c.embed(batch, model=embedding_model or 'text-embedding-3-small'),
-                        query=query,
-                        k=8,
-                        preview_lines=max(0, int(preview_lines)),
-                        per_index_cap=None,
-                    )
-                    break
-                except Exception as e:
-                    last_err = e
-                    res = None
-                    continue
+            # Perform search
+            try:
+                res = search(
+                    indexes=indexes,
+                    names=index_names,
+                    vector_db=vector_db,
+                    embed_query_fn=lambda batch: provider.embed(batch, model=embedding_model),
+                    query=query,
+                    k=top_k,
+                    preview_lines=max(0, int(preview_lines or preview_default)),
+                    per_index_cap=per_index_cap,
+                )
+            except Exception:
+                res = None
             if res is None:
                 try:
-                    self.session.ui.emit('error', {'message': f'Embedding error during query: {last_err}'})
+                    self.session.ui.emit('error', {'message': 'Embedding error during query. Check [TOOLS].embedding_* settings.'})
                 except Exception:
                     pass
                 return False
 
             results = res.get('results', [])
+            # Apply similarity threshold
+            if threshold and threshold > 0.0:
+                try:
+                    results = [r for r in results if float(r.get('score') or 0.0) >= threshold]
+                except Exception:
+                    results = list(results)
             if not results:
                 # Provide additional hints if indexes failed to load
                 stats = res.get('stats') or {}
@@ -177,11 +193,45 @@ class LoadRagAction(InteractionAction):
                         pass
                 continue
 
+            # Optional grouping by file and merge adjacent ranges
+            grouped = []
+            if group_by_file:
+                try:
+                    from collections import defaultdict
+                    by_path = defaultdict(list)
+                    for r in results:
+                        by_path[r['path']].append(r)
+                    for path, items in by_path.items():
+                        items.sort(key=lambda r: (int(r.get('line_start') or 0), -float(r.get('score') or 0.0)))
+                        acc = []
+                        for r in items:
+                            if not acc:
+                                acc.append(dict(r))
+                                continue
+                            prev = acc[-1]
+                            gap = int(r.get('line_start') or 0) - int(prev.get('line_end') or 0)
+                            if merge_adjacent and r['path'] == prev['path'] and gap >= 0 and gap <= merge_gap:
+                                prev['line_end'] = max(int(prev['line_end']), int(r['line_end']))
+                                prev['score'] = max(float(prev['score']), float(r['score']))
+                                prev_prev = prev.get('preview') or []
+                                now_prev = r.get('preview') or []
+                                prev['preview'] = list(dict.fromkeys(prev_prev + now_prev))
+                            else:
+                                acc.append(dict(r))
+                        grouped.extend(acc)
+                except Exception:
+                    grouped = list(results)
+            else:
+                grouped = list(results)
+            # Re-apply top_k after grouping
+            grouped.sort(key=lambda r: float(r.get('score') or 0.0), reverse=True)
+            grouped = grouped[:top_k]
+
             # Build a readable summary block and print it
             lines: List[str] = []
             header = f"RAG results (query: {query})"
             lines.append(header)
-            for i, item in enumerate(results, start=1):
+            for i, item in enumerate(grouped, start=1):
                 score = item['score']
                 path = item['path']
                 ls = item['line_start']
@@ -200,6 +250,18 @@ class LoadRagAction(InteractionAction):
                 out = self.session.utils.output
                 out.write()
                 out.write(content.rstrip())
+                # Quick hint for non-default settings
+                hint_parts = []
+                if attach_mode != 'summary':
+                    hint_parts.append(f"attach={attach_mode}")
+                if top_k != 8:
+                    hint_parts.append(f"k={top_k}")
+                if per_index_cap is not None:
+                    hint_parts.append(f"per_index_cap={per_index_cap}")
+                if threshold and threshold > 0.0:
+                    hint_parts.append(f"threshold={threshold:.2f}")
+                if hint_parts:
+                    out.write("(" + ", ".join(hint_parts) + ")")
                 out.write()
             except Exception:
                 # Fallback: single status emission
@@ -219,51 +281,92 @@ class LoadRagAction(InteractionAction):
                 # Loop back to a new query
                 continue
 
-            # Add to context (consolidated block)
-            self.session.add_context('rag', {'name': f"RAG: {query}", 'content': content})
-
-            # Offer to load full files in blocking UIs
-            try:
-                blocking = bool(getattr(self.session.ui, 'capabilities', None) and self.session.ui.capabilities.blocking)
-            except Exception:
-                blocking = False
-            if blocking:
-                # Ask via text to ensure blank Enter respects default 'n'
-                try:
-                    raw = self.session.ui.ask_text("Load any full files from results? [y/N]: ")
-                except Exception:
-                    raw = self.session.utils.input.get_input(prompt="Load any full files from results? [y/N]: ")
-                ans = (raw or '').strip().lower()
-                want_load = True if ans in ('y', 'yes') else False
-                if want_load:
-                    # Echo compact list to assist selection
+            # Attach according to mode
+            if attach_mode == 'snippets':
+                # Build snippet content within budget from grouped ranges
+                remaining = max(0, int(budget))
+                blocks: List[str] = []
+                for it in grouped:
                     try:
-                        compact = [f"{i+1:>2}. {r['path']}" for i, r in enumerate(results)]
-                        self.session.utils.output.write("\nSelect files to load:")
-                        for line in compact:
-                            self.session.utils.output.write(line)
-                        self.session.utils.output.write()
-                    except Exception:
-                        pass
-                    try:
-                        choice = self.session.ui.ask_text('Enter indices (e.g., 1,3) or "all":')
-                    except Exception:
-                        choice = self.session.utils.input.get_input(prompt='Enter indices (e.g., 1,3) or "all": ')
-                    to_load: List[str] = []
-                    if (choice or '').strip().lower() == 'all':
-                        to_load = list({item['path'] for item in results})
-                    else:
+                        text = read_text(it['path']) or ''
+                        lines_src = text.splitlines()
+                        ls = max(1, int(it['line_start']))
+                        le = max(ls, int(it['line_end']))
+                        seg = "\n".join(lines_src[ls - 1:le])
+                        if not seg.strip():
+                            # Fallback to preview lines if file slice is empty
+                            prev_lines = it.get('preview') or []
+                            seg = "\n".join(prev_lines)
                         try:
-                            idxs = {int(x.strip()) for x in (choice or '').split(',') if x.strip().isdigit()}
-                            for j in idxs:
-                                if 1 <= j <= len(results):
-                                    to_load.append(results[j - 1]['path'])
+                            base = os.path.basename(str(it['path']))
                         except Exception:
-                            to_load = []
-                    if to_load:
+                            base = str(it['path'])
+                        header = f"## {base}#L{ls}-L{le}\n"
+                        blk = header + seg + "\n\n"
+                        if len(blk) <= remaining:
+                            blocks.append(blk)
+                            remaining -= len(blk)
+                        else:
+                            if remaining > len(header):
+                                take = remaining - len(header)
+                                blocks.append(header + seg[:max(0, take)])
+                                remaining = 0
+                            break
+                    except Exception:
+                        continue
+                    if remaining <= 0:
+                        break
+                snippet_content = "".join(blocks).strip()
+                if snippet_content:
+                    self.session.add_context('rag', {'name': f"RAG snippets: {query}", 'content': snippet_content})
+                else:
+                    # Fallback to summary if no snippet content could be assembled
+                    self.session.add_context('rag', {'name': f"RAG: {query}", 'content': content})
+            else:
+                # Default summary block
+                self.session.add_context('rag', {'name': f"RAG: {query}", 'content': content})
+
+            # Offer to load full files (summary mode only) in blocking UIs
+            if attach_mode == 'summary':
+                try:
+                    blocking = bool(getattr(self.session.ui, 'capabilities', None) and self.session.ui.capabilities.blocking)
+                except Exception:
+                    blocking = False
+                if blocking:
+                    try:
+                        raw = self.session.ui.ask_text("Load any full files from results? [y/N]: ")
+                    except Exception:
+                        raw = self.session.utils.input.get_input(prompt="Load any full files from results? [y/N]: ")
+                    ans = (raw or '').strip().lower()
+                    want_load = True if ans in ('y', 'yes') else False
+                    if want_load:
                         try:
-                            self.session.get_action('load_file').run(to_load)
+                            compact = [f"{i+1:>2}. {r['path']}#L{r['line_start']}-L{r['line_end']}" for i, r in enumerate(grouped)]
+                            self.session.utils.output.write("\nSelect files to load:")
+                            for line in compact:
+                                self.session.utils.output.write(line)
+                            self.session.utils.output.write()
                         except Exception:
                             pass
+                        try:
+                            choice = self.session.ui.ask_text('Enter indices (e.g., 1,3) or "all":')
+                        except Exception:
+                            choice = self.session.utils.input.get_input(prompt='Enter indices (e.g., 1,3) or "all": ')
+                        to_load: List[str] = []
+                        if (choice or '').strip().lower() == 'all':
+                            to_load = list({item['path'] for item in grouped})
+                        else:
+                            try:
+                                idxs = {int(x.strip()) for x in (choice or '').split(',') if x.strip().isdigit()}
+                                for j in idxs:
+                                    if 1 <= j <= len(grouped):
+                                        to_load.append(grouped[j - 1]['path'])
+                            except Exception:
+                                to_load = []
+                        if to_load:
+                            try:
+                                self.session.get_action('load_file').run(to_load)
+                            except Exception:
+                                pass
 
             return True

@@ -1,6 +1,7 @@
 import os
 import subprocess
 from base_classes import StepwiseAction, Completed
+from core.mode_runner import run_completion
 
 
 class LoadImageAction(StepwiseAction):
@@ -76,22 +77,37 @@ class LoadImageAction(StepwiseAction):
                     pass
                 return
 
-            # Prefer MemexRunnerAction if available
+            # Prefer internal ModeRunner when available; fallback to memex subprocess
             summary = None
             try:
-                runner = self.session.get_action('memex_runner')
-                res = runner.run('-m', vision_model, '-p', vision_prompt, '-f', image_path, check=False)
-                if res and hasattr(res, 'stdout'):
-                    summary = res.stdout
-                elif res and hasattr(res, 'returncode') and res.returncode != 0 and hasattr(res, 'stderr'):
-                    summary = f"Error: {res.stderr}"
+                builder = getattr(self.session, '_builder', None)
+                if builder is not None:
+                    result = run_completion(
+                        builder=builder,
+                        overrides={'model': vision_model, 'prompt': vision_prompt},
+                        contexts=[('image', image_path)],
+                        message='',
+                        capture='text',
+                    )
+                    summary = result.last_text
             except Exception:
-                # Fallback to subprocess directly
+                summary = None
+
+            if not summary:
                 try:
-                    result = subprocess.run(['memex', '-m', vision_model, '-p', vision_prompt, '-f', image_path], capture_output=True, text=True)
-                    summary = result.stdout if result.returncode == 0 else f"Error: {result.stderr}"
-                except Exception as e2:
-                    summary = f"Error: {e2}"
+                    runner = self.session.get_action('memex_runner')
+                    if runner:
+                        res = runner.run('-m', vision_model, '-p', vision_prompt, '-f', image_path, check=False)
+                        if res and hasattr(res, 'stdout'):
+                            summary = res.stdout
+                        elif res and hasattr(res, 'returncode') and res.returncode != 0 and hasattr(res, 'stderr'):
+                            summary = f"Error: {res.stderr}"
+                except Exception:
+                    try:
+                        result = subprocess.run(['memex', '-m', vision_model, '-p', vision_prompt, '-f', image_path], capture_output=True, text=True)
+                        summary = result.stdout if result.returncode == 0 else f"Error: {result.stderr}"
+                    except Exception as e2:
+                        summary = f"Error: {e2}"
 
             # Add the summary as raw text context
             self.session.add_context('multiline_input', {

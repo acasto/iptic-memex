@@ -37,6 +37,11 @@ class PromptContext(InteractionContext):
             content: The prompt content to process
         """
         # Handle none/false case
+        if isinstance(content, bool):
+            if content is False:
+                self.prompt['name'] = 'none'
+                self.prompt['content'] = ''
+                return
         if isinstance(content, str) and content.lower() in ['none', 'false']:
             self.prompt['name'] = 'none'
             self.prompt['content'] = ''

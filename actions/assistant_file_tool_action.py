@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from base_classes import StepwiseAction, Completed
-import subprocess
 import os
 import tempfile
 from typing import Any, Dict
+from core.mode_runner import run_completion
 
 
 class AssistantFileToolAction(StepwiseAction):
@@ -17,7 +17,7 @@ class AssistantFileToolAction(StepwiseAction):
         self.session = session
         self.fs_handler = session.get_action('assistant_fs_handler')
         self.token_counter = session.get_action('count_tokens')
-        self.memex_runner = session.get_action('memex_runner')
+        # Legacy subprocess runner (memex) no longer required; internal runs preferred
 
 
     # ---- Stepwise protocol -------------------------------------------------
@@ -183,13 +183,24 @@ class AssistantFileToolAction(StepwiseAction):
         if resolved_path is None:
             return
         try:
-            summary_prompt = self.session.get_tools().get('summary_prompt')
-            summary_model = self.session.get_tools().get('summary_model')
+            tools = self.session.get_tools()
+            summary_prompt = tools.get('summary_prompt')
+            summary_model = tools.get('summary_model')
             if not summary_model:
                 self.session.add_context('assistant', {'name': 'file_tool_error', 'content': 'No summary model configured'})
                 return
-            result = self.memex_runner.run('-m', summary_model, '-p', summary_prompt, '-f', resolved_path)
-            summary = result.stdout if result.returncode == 0 else f"Error: {result.stderr}"
+            builder = getattr(self.session, '_builder', None)
+            if builder is None:
+                self.session.add_context('assistant', {'name': 'file_tool_error', 'content': 'Internal builder unavailable for summary'})
+                return
+            res = run_completion(
+                builder=builder,
+                overrides={'model': summary_model, 'prompt': summary_prompt} if summary_prompt else {'model': summary_model},
+                contexts=[('file', resolved_path)],
+                message='',
+                capture='text',
+            )
+            summary = res.last_text or ''
             token_count = self.token_counter.count_tiktoken(summary)
             limit = int(self.session.get_tools().get('large_input_limit', 4000))
             if token_count > limit:
@@ -199,7 +210,7 @@ class AssistantFileToolAction(StepwiseAction):
                     self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Summary exceeds token limit ({limit}). Try using a different summarization approach.'})
                 return
             self.session.add_context('assistant', {'name': f'Summary of: {filename}', 'content': summary})
-        except subprocess.SubprocessError as e:
+        except Exception as e:
             self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Failed to get file summary: {str(e)}'})
 
     def _handle_delete(self, filename: str, recursive: bool = False, force: bool = False) -> None:
@@ -277,25 +288,22 @@ class AssistantFileToolAction(StepwiseAction):
             self._process_and_confirm_edit(filename, original_content, edited_content)
 
     def _run_edit_subprocess(self, edit_model: str, prompt_content: str) -> str | None:
-        temp_path = None
         try:
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as temp_file:
-                temp_file.write(prompt_content)
-                temp_path = temp_file.name
-            result = self.memex_runner.run('-m', edit_model, '-f', temp_path, check=True)
-            return result.stdout.strip()
-        except subprocess.CalledProcessError as e:
-            self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Edit LLM failed: {e.stderr}'})
-            return None
+            builder = getattr(self.session, '_builder', None)
+            if builder is None:
+                self.session.add_context('assistant', {'name': 'file_tool_error', 'content': 'Internal builder unavailable for edit'})
+                return None
+            res = run_completion(
+                builder=builder,
+                overrides={'model': edit_model},
+                contexts=None,
+                message=prompt_content,
+                capture='text',
+            )
+            return (res.last_text or '').strip()
         except Exception as e:
-            self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'An unexpected error occurred during edit subprocess: {str(e)}'})
+            self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Edit LLM failed: {e}'})
             return None
-        finally:
-            if temp_path and os.path.exists(temp_path):
-                try:
-                    os.unlink(temp_path)
-                except OSError:
-                    pass
 
     def _process_and_confirm_edit(self, filename: str, original_content: str, edited_content: str) -> None:
         if not edited_content:

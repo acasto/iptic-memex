@@ -1,5 +1,5 @@
 from base_classes import InteractionMode
-from turns import TurnRunner, TurnOptions
+from core.turns import TurnRunner, TurnOptions
 
 
 class ChatMode(InteractionMode):

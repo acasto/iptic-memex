@@ -55,6 +55,21 @@ A small, self-contained retrieval system that indexes user-configured folders an
   - `embedding_model=text-embedding-3-small` (or your choice)
   - Optional: `embedding_provider=openai|openairesponses|…` to override embedding provider only.
 
+### RAG tuning (in `[TOOLS]`)
+RAG exposes a few focused knobs under `[TOOLS]` to balance relevance vs context size:
+
+- `rag_top_k` (int, default 8): number of top results to consider.
+- `rag_per_index_cap` (int|None): cap results per index (default None).
+- `rag_preview_lines` (int, default 3): preview lines per hit in summary mode.
+- `rag_similarity_threshold` (float, default 0.0): drop hits below this cosine score.
+- `rag_attach_mode` ('summary'|'snippets', default 'summary'):
+  - `summary`: a single consolidated, readable block with paths + previews.
+  - `snippets`: attach sliced text ranges directly as context under a character budget.
+- `rag_total_chars_budget` (int, default 20000): character budget for snippets.
+- `rag_group_by_file` (bool, default True): group hits by file before attaching.
+- `rag_merge_adjacent` (bool, default True): merge near-contiguous ranges in the same file.
+- `rag_merge_gap` (int, default 5): maximum line gap to merge adjacent ranges.
+
 ## Filesystem Model (Security)
 - Read-only traversal of configured roots; no writes into source trees.
 - Realpath validation blocks symlink escapes.
@@ -69,9 +84,8 @@ A small, self-contained retrieval system that indexes user-configured folders an
 ## Provider Integration
 - Providers can implement `embed(texts: list[str], model?: str) -> list[list[float]]`.
 - Implemented: OpenAIProvider, OpenAIResponsesProvider, LlamaCpp.
-- Privacy-safe default: RAG does not fallback to network embeddings unless you explicitly opt-in.
+- Embeddings require explicit configuration: RAG never falls back to other providers.
   - Configure both `[TOOLS].embedding_provider` and `[TOOLS].embedding_model`.
-  - To allow fallbacks (e.g., try local then remote), set `[TOOLS].embedding_provider_strict = false`.
  - Mixed providers are supported: when `[TOOLS].embedding_provider` differs from the active chat provider,
    RAG instantiates the embedding provider with its own config section (API key, base_url, etc.).
    This avoids coupling embeddings to the chat provider’s settings.
@@ -81,7 +95,7 @@ A small, self-contained retrieval system that indexes user-configured folders an
 - Configure:
   - `[TOOLS].embedding_provider = LlamaCpp`
   - `[TOOLS].embedding_model = /path/to/model.gguf`
-  - Optional: `[TOOLS].embedding_provider_strict = false` to allow fallback to other providers.
+  - No fallbacks: if the provider/model is unavailable, actions will emit a clear error.
 - Notes:
   - The provider creates a dedicated embedding instance (`embedding=True`) and pools token-level outputs when needed.
   - For robustness, embeddings are computed per-item to avoid batch decode edge cases.

@@ -341,7 +341,7 @@ class WebApp:
 
         # Use TurnRunner and suppress stdout via WebOutput
         from web.output_sink import WebOutput
-        from turns import TurnRunner, TurnOptions
+        from core.turns import TurnRunner, TurnOptions
         utils = self.session.utils
         original_output = utils.output
         web_output = WebOutput()
@@ -597,7 +597,7 @@ class WebApp:
                 except Exception:
                     pass
             try:
-                from turns import TurnRunner, TurnOptions
+                from core.turns import TurnRunner, TurnOptions
                 from base_classes import InteractionNeeded
                 runner = TurnRunner(self.session)
                 try:
@@ -628,6 +628,44 @@ class WebApp:
                         cost = provider.get_cost()
                 except Exception:
                     pass
+
+                # Fallback: if no InteractionNeeded was thrown during TurnRunner, but
+                # the assistant text clearly requests a tool that needs input, try to
+                # detect it and emit a needs_interaction handoff once here.
+                try:
+                    ac = self.session.get_action('assistant_commands')
+                except Exception:
+                    ac = None
+                if ac and hasattr(ac, 'parse_commands') and callable(getattr(ac, 'parse_commands')):
+                    try:
+                        text_for_parse = result.last_text or ''
+                        cmds = ac.parse_commands(text_for_parse)
+                    except Exception:
+                        cmds = []
+                    if cmds:
+                        try:
+                            ac.run(text_for_parse)
+                        except Exception as need_exc:
+                            try:
+                                from base_classes import InteractionNeeded
+                                if isinstance(need_exc, InteractionNeeded):
+                                    spec = dict(getattr(need_exc, 'spec', {}) or {})
+                                    action_name = spec.pop('__action__', None) or 'assistant_file_tool'
+                                    args_for_action = spec.pop('__args__', None)
+                                    content_for_action = spec.pop('__content__', None)
+                                    token = self._issue_token(action_name, 1, need_exc.kind, {"args": args_for_action, "content": content_for_action})
+                                    spec['state_token'] = token
+                                    loop.call_soon_threadsafe(queue.put_nowait, {
+                                        "type": "done",
+                                        "text": str(spec.get('prompt') or spec.get('message') or ''),
+                                        "needs_interaction": {"kind": need_exc.kind, "spec": spec},
+                                        "state_token": token,
+                                        "handled": True,
+                                        "updates": emitted,
+                                    })
+                                    return
+                            except Exception:
+                                pass
 
                 loop.call_soon_threadsafe(queue.put_nowait, {
                     "type": "done",
