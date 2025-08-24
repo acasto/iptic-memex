@@ -9,7 +9,7 @@ class RegisterAssistantCommandsAction(InteractionAction):
     def run(args=None):
         # Return a dict of custom commands. These shallow-merge into core commands.
         return {
-            "ASK_AI": {
+            "ask_ai": {
                 "args": ["model", "question"],
                 "function": {"type": "action", "name": "ask_ai_tool"},
                 "description": "Ask a secondary AI model a question. Provide 'question'; optional 'model' selects which backend.",
@@ -21,7 +21,7 @@ class RegisterAssistantCommandsAction(InteractionAction):
                     }
                 }
             },
-            "RELOAD": {
+            "reload": {
                 "args": ["target", "targets"],
                 'auto_submit': True,
                 "function": {"type": "action", "name": "assistant_reload_tool"},
@@ -35,4 +35,3 @@ class RegisterAssistantCommandsAction(InteractionAction):
                 }
             },
         }
-

@@ -88,6 +88,33 @@ class AssistantWebsearchToolAction(InteractionAction):
         initial_model = self.session.get_tools().get('search_model', "sonar")
         self._search_model = self.validate_search_model(initial_model)
 
+    # ---- Dynamic tool registry metadata ----
+    @classmethod
+    def tool_name(cls) -> str:
+        return 'websearch'
+
+    @classmethod
+    def tool_aliases(cls) -> list[str]:
+        return []
+
+    @classmethod
+    def tool_spec(cls, session) -> dict:
+        return {
+            'args': ['query', 'recency', 'domains', 'mode'],
+            'description': "Search the web. Provide 'query'. Optional 'mode' can be 'basic' or 'advanced'.",
+            'required': ['query'],
+            'schema': {
+                'properties': {
+                    'query': {"type": "string", "description": "Search query text."},
+                    'recency': {"type": "string", "description": "Recency filter (e.g., 'day', 'week', 'month')."},
+                    'domains': {"type": "string", "description": "Comma-separated domain filter list (e.g., 'example.com,another.com')."},
+                    'mode': {"type": "string", "enum": ["basic", "advanced"], "description": "Search mode: 'basic' for simple queries or 'advanced' for deeper analysis."},
+                    'content': {"type": "string", "description": "Additional terms appended to the query."}
+                }
+            },
+            'auto_submit': True,
+        }
+
     def run(self, args: dict, content: str = ""):
         # Check if a mode is specified
         mode = get_str(args, 'mode')

@@ -38,6 +38,36 @@ class AssistantMemoryToolAction(InteractionAction):
         )
         self.session.utils.storage.register_schema(schema)
 
+    # ---- Dynamic tool registry metadata ----
+    @classmethod
+    def tool_name(cls) -> str:
+        return 'memory'
+
+    @classmethod
+    def tool_aliases(cls) -> list[str]:
+        return []
+
+    @classmethod
+    def tool_spec(cls, session) -> dict:
+        return {
+            'args': ['action', 'memory', 'project', 'id'],
+            'description': (
+                "Save, read, or clear short memories in a local store. Use action=save|read|clear with optional "
+                "'project' scope and 'id' for specific records."
+            ),
+            'required': ['action'],
+            'schema': {
+                'properties': {
+                    'action': {"type": "string", "enum": ["save", "read", "clear"], "description": "Operation to perform."},
+                    'memory': {"type": "string", "description": "Memory text to save (or use 'content')."},
+                    'project': {"type": "string", "description": "Project scope (use 'all' with action=read|clear)."},
+                    'id': {"type": "string", "description": "Specific memory ID for read/clear."},
+                    'content': {"type": "string", "description": "Memory text fallback when 'memory' is not set."}
+                }
+            },
+            'auto_submit': True,
+        }
+
     def run(self, args: dict, content: str = ""):
         """
         Execute memory operations based on provided arguments.

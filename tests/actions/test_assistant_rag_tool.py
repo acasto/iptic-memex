@@ -39,7 +39,7 @@ class FakeSession:
 
 def test_rag_tool_attaches_summary_and_threshold(monkeypatch, tmp_path):
     # Monkeypatch config loader used inside the tool
-    import actions.assistant_rag_tool_action as rtool
+    import actions.assistant_ragsearch_tool_action as rtool
     idxdir = tmp_path / 'db'
     monkeypatch.setattr(rtool, 'load_rag_config', lambda session: ({'notes': str(tmp_path)}, ['notes'], str(idxdir), 'M'))
 
@@ -68,10 +68,10 @@ def test_rag_tool_attaches_summary_and_threshold(monkeypatch, tmp_path):
     (tmp_path / 'a.md').write_text('aaa')
     (tmp_path / 'b.md').write_text('bbb')
 
-    from actions.assistant_rag_tool_action import AssistantRagToolAction
+    from actions.assistant_ragsearch_tool_action import AssistantRagsearchToolAction
 
     sess = FakeSession({'embedding_provider': 'X', 'embedding_model': 'M'})
-    AssistantRagToolAction(sess).run({'query': 'test', 'threshold': 0.5}, '')
+    AssistantRagsearchToolAction(sess).run({'query': 'test', 'threshold': 0.5}, '')
 
     # Should add a rag context and assistant feedback; filtered out low-score entry
     kinds = [k for k, _ in sess._contexts]
@@ -83,14 +83,14 @@ def test_rag_tool_attaches_summary_and_threshold(monkeypatch, tmp_path):
 
 
 def test_rag_tool_handles_missing_embedding_config(monkeypatch, tmp_path):
-    import actions.assistant_rag_tool_action as rtool
+    import actions.assistant_ragsearch_tool_action as rtool
     idxdir = tmp_path / 'db'
     monkeypatch.setattr(rtool, 'load_rag_config', lambda session: ({'notes': str(tmp_path)}, ['notes'], str(idxdir), 'M'))
 
-    from actions.assistant_rag_tool_action import AssistantRagToolAction
+    from actions.assistant_ragsearch_tool_action import AssistantRagsearchToolAction
     # Missing embedding provider/model triggers rag_error context
     sess = FakeSession({})
-    AssistantRagToolAction(sess).run({'query': 'q'}, '')
+    AssistantRagsearchToolAction(sess).run({'query': 'q'}, '')
     kinds = [k for k, _ in sess._contexts]
     assert 'assistant' in kinds
     msg = ' '.join((v.get('content') or '') for k, v in sess._contexts if k == 'assistant')
@@ -100,7 +100,7 @@ def test_rag_tool_handles_missing_embedding_config(monkeypatch, tmp_path):
 def test_rag_tool_defaults_to_all_when_indexes_arg_empty(monkeypatch, tmp_path):
     # When neither index nor indexes are set (or are empty strings),
     # the tool should search active/all indexes rather than error out.
-    import actions.assistant_rag_tool_action as rtool
+    import actions.assistant_ragsearch_tool_action as rtool
 
     # Provide two known indexes and no active list (so it should use all)
     idxdir = tmp_path / 'db'
@@ -127,11 +127,11 @@ def test_rag_tool_defaults_to_all_when_indexes_arg_empty(monkeypatch, tmp_path):
 
     monkeypatch.setattr(rtool, 'search', lambda **kw: fake_search(**kw))
 
-    from actions.assistant_rag_tool_action import AssistantRagToolAction
+    from actions.assistant_ragsearch_tool_action import AssistantRagsearchToolAction
     sess = FakeSession({'embedding_provider': 'X', 'embedding_model': 'M'})
 
     # Provide an explicit empty 'indexes' arg to simulate strict provider behavior
-    AssistantRagToolAction(sess).run({'query': 'q', 'indexes': ''}, '')
+    AssistantRagsearchToolAction(sess).run({'query': 'q', 'indexes': ''}, '')
 
     # Should have searched all configured indexes (both keys in paths)
     assert set(captured.get('names') or []) == set(paths.keys())

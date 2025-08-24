@@ -24,6 +24,33 @@ class AssistantReloadToolAction(InteractionAction):
     def __init__(self, session):
         self.session = session
 
+    # ---- Dynamic tool registry metadata (optional for user tools) ----
+    @classmethod
+    def tool_name(cls) -> str:
+        return 'reload'
+
+    @classmethod
+    def tool_aliases(cls) -> list[str]:
+        return []
+
+    @classmethod
+    def tool_spec(cls, session) -> dict:
+        return {
+            'args': ['target', 'targets'],
+            'description': (
+                "Reload one or more action modules by name. Accepts newline-separated names in content or 'target(s)' args."
+            ),
+            'required': [],
+            'schema': {
+                'properties': {
+                    'target': {"type": "string", "description": "Single action to reload (e.g., 'assistant_file_tool')."},
+                    'targets': {"type": "string", "description": "Comma-separated list of actions to reload."},
+                    'content': {"type": "string", "description": "Optional newline-separated action names; supports 'all' to clear cache."}
+                }
+            },
+            'auto_submit': True,
+        }
+
     @staticmethod
     def _normalize_target(target: str) -> str:
         name = (target or "").strip()

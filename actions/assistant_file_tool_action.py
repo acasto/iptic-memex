@@ -20,6 +20,39 @@ class AssistantFileToolAction(StepwiseAction):
         self.token_counter = session.get_action('count_tokens')
         # Legacy subprocess runner (memex) no longer required; internal runs preferred
 
+    # ---- Dynamic tool registry metadata ----
+    @classmethod
+    def tool_name(cls) -> str:
+        return 'file'
+
+    @classmethod
+    def tool_aliases(cls) -> list[str]:
+        return []
+
+    @classmethod
+    def tool_spec(cls, session) -> dict:
+        return {
+            'args': ['mode', 'file', 'new_name', 'recursive', 'block'],
+            'description': (
+                "Read or modify files in the workspace. Modes: read, write, append, edit, summarize, delete, "
+                "rename, copy. Use 'content' for write/append/edit."
+            ),
+            'required': ['mode', 'file'],
+            'schema': {
+                'properties': {
+                    'mode': {"type": "string", "enum": [
+                        'read', 'write', 'append', 'edit', 'summarize', 'delete', 'rename', 'copy'
+                    ], "description": "Operation to perform."},
+                    'file': {"type": "string", "description": "Target file path (relative to workspace)."},
+                    'new_name': {"type": "string", "description": "New name/path for rename or copy."},
+                    'recursive': {"type": "boolean", "description": "When deleting, remove directories recursively if true."},
+                    'block': {"type": "string", "description": "Identifier of a %BLOCK:...% to append to 'content'."},
+                    'content': {"type": "string", "description": "Content to write/append or edit instructions (for edit mode)."}
+                }
+            },
+            'auto_submit': True,
+        }
+
 
     # ---- Stepwise protocol -------------------------------------------------
     def start(self, args: Dict, content: str = "") -> Completed:

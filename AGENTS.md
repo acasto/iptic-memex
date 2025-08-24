@@ -154,7 +154,17 @@ Gating and CLI‑only flows
 - Prefer converting multi‑step/confirm flows to Stepwise so they work uniformly across Chat, Agent, Web, and TUI.
 - Assistant commands are parsed from assistant output by `assistant_commands_action.py` using blocks:
   `%%CMD%% command="echo" arguments="hello"\n...optional content...\n%%END%%`. Reference content blocks with `%%BLOCK:note%% ... %%END%%` and `block="note"`.
-- Command mapping: `{ "CMD": { "args": ["command","arguments"], "auto_submit": true, "function": {"type":"action","name":"assistant_cmd_tool"}}}` resolves to `actions/assistant_cmd_tool_action.py` → `AssistantCmdToolAction.run(args, content)`.
+- Dynamic tool registry: tools are discovered from action files ending with `_tool_action.py` that implement:
+  - `tool_name()` → canonical lowercase name (e.g., `cmd`, `file`, `websearch`, `ragsearch`).
+  - `tool_spec(session)` → `{args, description, required, schema:{properties}, auto_submit}`.
+  - Optional `tool_aliases()` and `can_run(session)` for gating.
+  The canonical registry is built at runtime and used by providers for official tool calling.
+- Config:
+  - `[TOOLS].active_tools` / `[TOOLS].inactive_tools` control exposure (agent variants supported).
+  - Handler override per tool: `[TOOLS].<tool>_tool = action_name`.
+  - `cmd` selection stays `[TOOLS].cmd_tool = assistant_cmd_tool | assistant_docker_tool`.
+  - Web search override uses `[TOOLS].websearch_tool` (legacy `search_tool` removed).
+- Pseudo-tool blocks remain supported and are now case-insensitive; names are normalized to lowercase.
 - Register new assistant commands by returning a dict from `actions/register_assistant_commands_action.py` (or user override in `examples/user_actions/`): `{ "MY_TOOL": { "args": ["foo"], "function": {"type":"action","name":"my_tool"}}}`.
 - User commands are matched in `user_commands_action.py` and invoke actions with positional args or call a specific class method via `{"method": "set_search_model"}`. Provide concise descriptions and keep names short (e.g., `load file`, `save chat`).
 - Gating: expose `@classmethod can_run(cls, session)` on an action to hide commands when prerequisites (APIs, tools) are missing.
@@ -251,7 +261,7 @@ Gating and CLI‑only flows
   - To reduce tokens while chaining, enable `chain_minimize_input = true` to send only the latest window (last user message, or `function_call` + `function_call_output`).
 
 - Tool schema (function tools):
-  - Built from the canonical registry in `assistant_commands_action.py`.
+  - Built from the runtime registry assembled from tool actions (see above).
   - Responses requires: `parameters.additionalProperties = false` and `parameters.required` includes every key in `parameters.properties`.
   - Provider enforces `strict: true` and normalizes schemas accordingly.
 
@@ -279,7 +289,7 @@ Gating and CLI‑only flows
   - `store = False` (default in repo; set to `True` to enable server‑side chaining)
   - `use_previous_response = False` (set `True` to pass `previous_response_id` when available)
   - `chain_minimize_input = True` (send only the latest user/tool window when chaining)
-  - `tool_mode = official` (uses canonical tool registry)
+  - `tool_mode = official` (uses the dynamic canonical tool registry)
   - Optional: `enable_builtin_tools = web_search_preview,file_search`
 
 - Example model (models.ini):

@@ -8,35 +8,41 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from actions.assistant_commands_action import AssistantCommandsAction
+from config_manager import ConfigManager
+from component_registry import ComponentRegistry
+from session import Session
 
 
-class FakeSession:
-    def __init__(self, opts: dict | None = None, agent: bool = False):
-        self._opts = {('TOOLS', k): v for k, v in (opts or {}).items()}
-        self._agent = agent
-    def get_option(self, section, option, fallback=None):
-        return self._opts.get((section, option), fallback)
-    def get_action(self, name):
-        # No user overrides
-        return None
-    def in_agent_mode(self):
-        return bool(self._agent)
+def _make_session(opts: dict | None = None, agent: bool = False) -> Session:
+    cfg = ConfigManager()
+    sc = cfg.create_session_config()
+    # Apply overrides for tool gating directly into session overrides
+    # Start from a clean slate so user config doesn't leak into tests
+    sc.set_option('active_tools', '')
+    sc.set_option('inactive_tools', '')
+    for k, v in (opts or {}).items():
+        sc.set_option(k, v)
+    reg = ComponentRegistry(sc)
+    sess = Session(sc, reg)
+    if agent:
+        sess.enter_agent_mode('deny')
+    return sess
 
 
-def _spec_names(sess: FakeSession) -> list[str]:
+def _spec_names(sess: Session) -> list[str]:
     act = AssistantCommandsAction(sess)
     specs = act.get_tool_specs()
     return sorted([s['name'] for s in specs])
 
 
 def test_allowlist_limits_tools():
-    sess = FakeSession({'active_tools': 'CMD,RAGSEARCH'})
+    sess = _make_session({'active_tools': 'CMD,RAGSEARCH'})
     names = _spec_names(sess)
     assert names == ['cmd', 'ragsearch']
 
 
 def test_denylist_excludes_when_no_allowlist():
-    sess = FakeSession({'inactive_tools': 'FILE,WEBSEARCH'})
+    sess = _make_session({'inactive_tools': 'FILE,WEBSEARCH'})
     names = _spec_names(sess)
     assert 'file' not in names and 'websearch' not in names
     # A couple of expected defaults remain
@@ -44,7 +50,6 @@ def test_denylist_excludes_when_no_allowlist():
 
 
 def test_agent_overrides():
-    sess = FakeSession({'active_tools_agent': 'CMD,MEMORY'}, agent=True)
+    sess = _make_session({'active_tools_agent': 'CMD,MEMORY'}, agent=True)
     names = _spec_names(sess)
     assert names == ['cmd', 'memory']
-

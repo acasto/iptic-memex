@@ -8,7 +8,7 @@ from core.provider_factory import ProviderFactory
 from rag.search import search
 
 
-class AssistantRagToolAction(InteractionAction):
+class AssistantRagsearchToolAction(InteractionAction):
     """
     Assistant tool: run a semantic search over configured RAG indexes and attach
     a readable summary block to the 'rag' context for the next assistant turn.
@@ -16,7 +16,7 @@ class AssistantRagToolAction(InteractionAction):
     Inputs (args):
       - query (str, required): search query text (falls back to content)
       - index (str, optional): single index name
-      - indexes (str, optional): comma-separated index names
+      - indexes (str|list, optional): comma-separated or list of index names
       - k (int, optional): top-K results (default from [TOOLS].rag_top_k)
       - preview_lines (int, optional): lines per hit (default from [TOOLS].rag_preview_lines)
       - per_index_cap (int, optional): cap per index
@@ -26,6 +26,41 @@ class AssistantRagToolAction(InteractionAction):
       - Requires [TOOLS].embedding_provider and [TOOLS].embedding_model.
       - Attaches a single consolidated summary under the 'rag' context.
     """
+
+    # ---- Dynamic tool registry metadata ----
+    @classmethod
+    def tool_name(cls) -> str:
+        return 'ragsearch'
+
+    @classmethod
+    def tool_aliases(cls) -> list[str]:
+        return ['rag']
+
+    @classmethod
+    def tool_spec(cls, session) -> dict:
+        return {
+            'args': [
+                'query', 'index', 'indexes', 'k', 'preview_lines', 'per_index_cap', 'threshold'
+            ],
+            'description': (
+                "Search local RAG indexes and attach a consolidated results block to context. "
+                "Configure [RAG] and run 'rag update' first."
+            ),
+            'required': ['query'],
+            'schema': {
+                'properties': {
+                    'query': {"type": "string", "description": "Semantic search query."},
+                    'index': {"type": "string", "description": "Single index name to search."},
+                    'indexes': {"type": "string", "description": "Comma-separated list of index names."},
+                    'k': {"type": "integer", "description": "Top-K results to return."},
+                    'preview_lines': {"type": "integer", "description": "Preview lines per hit in the summary."},
+                    'per_index_cap': {"type": "integer", "description": "Cap results per index."},
+                    'threshold': {"type": "number", "description": "Minimum cosine similarity threshold (0.0–1.0)."},
+                    'content': {"type": "string", "description": "Fallback for 'query' when omitted."}
+                }
+            },
+            'auto_submit': True,
+        }
 
     def __init__(self, session):
         self.session = session
@@ -250,3 +285,4 @@ class AssistantRagToolAction(InteractionAction):
             })
         except Exception:
             pass
+

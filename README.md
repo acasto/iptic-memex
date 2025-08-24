@@ -45,6 +45,54 @@ envisioned a device that would compress and store all of their knowledge. https:
   - **Memory (%%MEMORY%%)**: Store and recall facts or context across sessions in SQLite with support for project-specific memory.
   - **RAG**: Build local indexes with embeddings and query them to load relevant snippets into chat context.
 
+---
+
+## Assistant Tools: Dynamic Registry
+
+Tools are now discovered dynamically from action files and exposed to providers for official tool calling.
+
+- Discovery: any action ending with `_tool_action.py` that defines the class methods below is auto-registered.
+  - `@classmethod tool_name() -> str`: canonical lowercase name (e.g., `file`, `cmd`, `websearch`, `ragsearch`).
+  - `@classmethod tool_aliases() -> list[str]`: optional aliases (e.g., `['rag']`).
+  - `@classmethod tool_spec(session) -> dict`: returns `{args, description, required, schema:{properties}, auto_submit}`.
+- Gating: control exposed tools without code changes via config.
+  - `[TOOLS].active_tools = cmd,file,websearch,ragsearch,youtrack` (allowlist wins if set)
+  - `[TOOLS].inactive_tools = math` (denylist used only when no allowlist)
+  - Agent overrides: `[TOOLS].active_tools_agent` / `[TOOLS].inactive_tools_agent`.
+- Implementation overrides:
+  - Per tool: `[TOOLS].<tool>_tool = action_name` selects the handler class to run.
+  - Shell: keep `[TOOLS].cmd_tool = assistant_cmd_tool | assistant_docker_tool` to choose local vs Docker.
+  - Web search: use `[TOOLS].websearch_tool = assistant_websearch_tool` (legacy `search_tool` removed).
+- Pseudo-tools: command blocks like `%%CMD%% ... %%END%%` are case-insensitive; lookups normalize to lowercase.
+
+Minimal user tool (example)
+
+```python
+from base_classes import InteractionAction
+
+class AssistantMytoolToolAction(InteractionAction):
+    @classmethod
+    def tool_name(cls):
+        return 'mytool'
+    @classmethod
+    def tool_spec(cls, session):
+        return {
+            'args': ['foo'],
+            'description': 'Do something with foo',
+            'required': ['foo'],
+            'schema': {'properties': {'foo': {'type': 'string'}, 'content': {'type': 'string'}}},
+            'auto_submit': True,
+        }
+    def __init__(self, session):
+        self.session = session
+    def run(self, args, content=''):
+        # implement the tool
+        self.session.add_context('assistant', {'name': 'mytool', 'content': 'ok'})
+```
+
+Place it under your user actions dir (see `DEFAULT.user_actions` in `config.ini`). Optionally set
+`[TOOLS].mytool_tool = assistant_mytool_tool` and list `mytool` in `[TOOLS].active_tools`.
+
 - **Enhanced User Experience**
   - Real-time response streaming with syntax highlighting in code blocks.
   - Intelligent tab completion for file paths, commands, and settings.

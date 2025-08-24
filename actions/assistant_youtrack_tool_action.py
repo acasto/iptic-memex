@@ -46,6 +46,48 @@ class AssistantYoutrackToolAction(InteractionAction):
             'Accept': 'application/json',
         }
 
+    # ---- Dynamic tool registry metadata ----
+    @classmethod
+    def tool_name(cls) -> str:
+        return 'youtrack'
+
+    @classmethod
+    def tool_aliases(cls) -> list[str]:
+        return []
+
+    @classmethod
+    def tool_spec(cls, session) -> dict:
+        return {
+            'args': [
+                'mode', 'project_id', 'issue_id', 'block', 'summary', 'query', 'assignee', 'state', 'priority', 'type'
+            ],
+            'description': (
+                "Interact with YouTrack: list projects/issues, fetch details, create and update issues, or add comments. "
+                "Configure base_url and api_key in settings."
+            ),
+            'required': ['mode'],
+            'schema': {
+                'properties': {
+                    'mode': {"type": "string", "enum": [
+                        "get_projects", "get_issues", "get_issue_details", "create_issue",
+                        "update_summary", "update_description", "assign_issue", "update_state",
+                        "update_priority", "update_type", "add_comment"
+                    ], "description": "Operation to perform."},
+                    'project_id': {"type": "string", "description": "Project short name (e.g., 'PROJ')."},
+                    'issue_id': {"type": "string", "description": "Issue idReadable (e.g., 'PROJ-123')."},
+                    'summary': {"type": "string", "description": "Issue summary for create/update."},
+                    'query': {"type": "string", "description": "Additional query/filter terms."},
+                    'assignee': {"type": "string", "description": "Assignee username/display name for assignment."},
+                    'state': {"type": "string", "description": "New issue state/status."},
+                    'priority': {"type": "string", "description": "New priority value."},
+                    'type': {"type": "string", "description": "New type value."},
+                    'block': {"type": "string", "description": "Identifier of a %BLOCK:...% to append to 'content'."},
+                    'content': {"type": "string", "description": "Optional freeform content (e.g., description/comment text)."},
+                }
+            },
+            'auto_submit': True,
+        }
+
     def _construct_url(self, endpoint, **kwargs):
         """Constructs the full URL for the API request."""
         return f'{self.base_url}/api/{endpoint.format(**kwargs)}'

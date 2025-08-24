@@ -23,6 +23,36 @@ class AssistantDockerToolAction(InteractionAction):
         # Initialize environment settings
         self._refresh_environment_config()
 
+    # ---- Dynamic tool registry metadata ----
+    @classmethod
+    def tool_name(cls) -> str:
+        # Shares the 'cmd' tool name; selection is controlled by [TOOLS].cmd_tool
+        return 'cmd'
+
+    @classmethod
+    def tool_aliases(cls) -> list[str]:
+        return []
+
+    @classmethod
+    def tool_spec(cls, session) -> dict:
+        # Command schema is the same as the local CMD tool
+        return {
+            'args': ['command', 'arguments'],
+            'description': (
+                "Execute a shell command inside Docker (ephemeral or persistent). Provide the program in 'command' "
+                "and optional 'arguments'. Controlled via [TOOLS].docker_env."
+            ),
+            'required': ['command'],
+            'schema': {
+                'properties': {
+                    'command': {"type": "string", "description": "Program to execute (e.g., 'echo', 'grep')."},
+                    'arguments': {"type": "string", "description": "Space-delimited arguments string (quoted as needed)."},
+                    'content': {"type": "string", "description": "Optional command string (alternative to args)."}
+                }
+            },
+            'auto_submit': True,
+        }
+
     def _refresh_environment_config(self) -> None:
         """Refresh Docker environment configuration from current session settings"""
         # Get Docker environment configuration

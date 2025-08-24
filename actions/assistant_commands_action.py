@@ -31,179 +31,23 @@ class AssistantCommandsAction(InteractionAction):
     """
     def __init__(self, session):
         self.session = session
+        # Build dynamic registry from tool action classes
+        self.commands = self._build_commands_dynamic()
 
-        cmd_tool = session.get_option('TOOLS', 'cmd_tool', fallback='assistant_cmd_tool')
-        search_tool = session.get_option('TOOLS', 'search_tool', fallback='assistant_websearch_tool')
-
-        self.commands = {
-            "CMD": {
-                "args": ["command", "arguments"],
-                "description": "Execute a local shell command. Provide the program in 'command' and an optional space-delimited string in 'arguments'.",
-                "required": ["command"],
-                "schema": {
-                    "properties": {
-                        "command": {"type": "string", "description": "Program to execute (e.g., 'echo', 'grep')."},
-                        "arguments": {"type": "string", "description": "Space-delimited arguments string (quoted as needed)."},
-                        "content": {"type": "string", "description": "Unused for CMD; include arguments in 'arguments'."}
-                    }
-                },
-                'auto_submit': True,
-                "function": {"type": "action", "name": cmd_tool}
-            },
-            "MATH": {
-                "args": ["bc_flags", "expression"],
-                "description": "Evaluate arithmetic with the 'bc' calculator. Provide the expression; optional 'bc_flags' like '-l' enable math library or scale.",
-                "required": ["expression"],
-                "schema": {
-                    "properties": {
-                        "bc_flags": {"type": "string", "description": "Flags for bc (e.g., '-l' for math library)."},
-                        "expression": {"type": "string", "description": "Expression to evaluate; if omitted, 'content' is used."},
-                        "content": {"type": "string", "description": "Expression fallback when 'expression' is not set."}
-                    }
-                },
-                'auto_submit': True,
-                "function": {"type": "action", "name": "assistant_math_tool"}
-            },
-            "OPENLINK": {
-                "args": ["url", "urls"],
-                "description": "Open one or more HTTP/HTTPS links in the user's default browser. Provide a single 'url', a comma-separated 'urls', or list URLs on separate lines in content.",
-                "required": [],
-                "schema": {
-                    "properties": {
-                        "url": {"type": "string", "description": "Single URL to open; protocol auto-added if missing."},
-                        "urls": {"type": "string", "description": "Comma-separated list of URLs to open."},
-                        "content": {"type": "string", "description": "Optional newline-separated URLs to open; lines starting with # are ignored."}
-                    }
-                },
-                'auto_submit': True,
-                "function": {"type": "action", "name": "assistant_openlink_tool"}
-            },
-            "MEMORY": {
-                "args": ["action", "memory", "project", "id"],
-                "description": "Save, read, or clear short memories in a local store. Use action=save|read|clear with optional 'project' scope and 'id' for specific records.",
-                "required": ["action"],
-                "schema": {
-                    "properties": {
-                        "action": {"type": "string", "enum": ["save", "read", "clear"], "description": "Operation to perform."},
-                        "memory": {"type": "string", "description": "Memory text to save (or use 'content')."},
-                        "project": {"type": "string", "description": "Project scope (use 'all' with action=read|clear)."},
-                        "id": {"type": "string", "description": "Specific memory ID for read/clear."},
-                        "content": {"type": "string", "description": "Memory text fallback when 'memory' is not set."}
-                    }
-                },
-                'auto_submit': True,
-                "function": {"type": "action", "name": "assistant_memory_tool"}
-            },
-            "FILE": {
-                "args": ["mode", "file", "new_name", "recursive", "block"],
-                "description": "Read or modify files in the workspace. Modes: read, write, append, edit, summarize, delete, rename, copy. Use 'content' for write/append/edit.",
-                "required": ["mode", "file"],
-                "schema": {
-                    "properties": {
-                        "mode": {"type": "string", "enum": ["read", "write", "append", "edit", "summarize", "delete", "rename", "copy"], "description": "Operation to perform."},
-                        "file": {"type": "string", "description": "Target file path (relative to workspace)."},
-                        "new_name": {"type": "string", "description": "New name/path for rename or copy."},
-                        "recursive": {"type": "boolean", "description": "When deleting, remove directories recursively if true."},
-                        "block": {"type": "string", "description": "Identifier of a %%BLOCK:...%% to append to 'content'."},
-                        "content": {"type": "string", "description": "Content to write/append or edit instructions (for edit mode)."}
-                    }
-                },
-                'auto_submit': True,
-                "function": {"type": "action", "name": "assistant_file_tool"}
-            },
-            "WEBSEARCH": {
-                "args": ["query", "recency", "domains", "mode"],
-                "description": "Search the web. Provide 'query'. Optional 'mode' can be 'basic' or 'advanced'.",
-                "required": ["query"],
-                "schema": {
-                    "properties": {
-                        "query": {"type": "string", "description": "Search query text."},
-                        "recency": {"type": "string", "description": "Recency filter (e.g., 'day', 'week', 'month')."},
-                        "domains": {"type": "string", "description": "Comma-separated domain filter list (e.g., 'example.com,another.com')."},
-                        "mode": {"type": "string", "enum": ["basic", "advanced"], "description": "Search mode: 'basic' for simple queries or 'advanced' for deeper analysis."},
-                        "content": {"type": "string", "description": "Additional terms appended to the query."}
-                    }
-                },
-                'auto_submit': True,
-                "function": {"type": "action", "name": search_tool}
-            },
-            "RAGSEARCH": {
-                "args": ["query", "index", "indexes", "k", "preview_lines", "per_index_cap", "threshold"],
-                "description": "Search local RAG indexes and attach a consolidated results block to context. Configure [RAG] and run 'rag update' first.",
-                "required": ["query"],
-                "schema": {
-                    "properties": {
-                        "query": {"type": "string", "description": "Semantic search query."},
-                        "index": {"type": "string", "description": "Single index name to search."},
-                        "indexes": {"type": "string", "description": "Comma-separated list of index names."},
-                        "k": {"type": "integer", "description": "Top-K results to return."},
-                        "preview_lines": {"type": "integer", "description": "Preview lines per hit in the summary."},
-                        "per_index_cap": {"type": "integer", "description": "Cap results per index."},
-                        "threshold": {"type": "number", "description": "Minimum cosine similarity threshold (0.0–1.0)."},
-                        "content": {"type": "string", "description": "Fallback for 'query' when omitted."}
-                    }
-                },
-                'auto_submit': True,
-                "function": {"type": "action", "name": "assistant_rag_tool"}
-            },
-            "YOUTRACK": {
-                "args": ["mode", "project_id", "issue_id", "block", "summary", "query", "assignee", "state", "priority", "type"],
-                "description": "Interact with YouTrack: list projects/issues, fetch details, create and update issues, or add comments. Configure base_url and api_key in settings.",
-                "required": ["mode"],
-                "schema": {
-                    "properties": {
-                        "mode": {"type": "string", "enum": ["get_projects", "get_issues", "get_issue_details", "create_issue", "update_summary", "update_description", "assign_issue", "update_state", "update_priority", "update_type", "add_comment"], "description": "Operation to perform."},
-                        "project_id": {"type": "string", "description": "Project short name (e.g., 'PROJ')."},
-                        "issue_id": {"type": "string", "description": "Issue idReadable (e.g., 'PROJ-123')."},
-                        "summary": {"type": "string", "description": "Issue summary for create/update."},
-                        "query": {"type": "string", "description": "Additional query/filter terms."},
-                        "assignee": {"type": "string", "description": "Assignee username/display name for assignment."},
-                        "state": {"type": "string", "description": "New issue state/status."},
-                        "priority": {"type": "string", "description": "New issue priority."},
-                        "type": {"type": "string", "description": "Issue type (e.g., Bug, Task)."},
-                        "block": {"type": "string", "description": "Identifier of a %%BLOCK:...%% to append to 'content'."},
-                        "content": {"type": "string", "description": "Longer text for description or comment where applicable."}
-                    }
-                },
-                'auto_submit': True,
-                "function": {"type": "action", "name": "assistant_youtrack_tool"}
-            }
-        }
-        # Check for and load user commands
-        user_commands = self.session.get_action('register_assistant_commands')
-        if user_commands:
-            new_commands = user_commands.run()
-            if isinstance(new_commands, dict) and new_commands:
-                # Shallow per-command merge: allow users to override only selected fields
-                for name, cfg in new_commands.items():
-                    if name in self.commands and isinstance(self.commands[name], dict) and isinstance(cfg, dict):
-                        merged = dict(self.commands[name])
-                        merged.update(cfg)
-                        self.commands[name] = merged
-                    else:
-                        self.commands[name] = cfg
-
-        # --- Optional tool gating via config.ini ----------------------
-        # Users can control exposed tools without editing code:
-        # [TOOLS]
-        #   active_tools = CMD,FILE,MEMORY
-        #   inactive_tools = WEBSEARCH
-        # Agent-only overrides (applied when in_agent_mode() is True):
-        #   active_tools_agent = CMD,MEMORY
-        #   inactive_tools_agent = FILE
+    # ---- Dynamic registry construction ------------------------------------
+    def _build_commands_dynamic(self) -> dict:
+        # Helper: parse comma lists to lowercase tool names
         def _parse_list(val: str | None) -> list[str]:
             if not val:
                 return []
             try:
-                return [x.strip().upper() for x in str(val).split(',') if x.strip()]
+                return [x.strip().lower() for x in str(val).split(',') if x.strip()]
             except Exception:
                 return []
 
-        # Read global lists
+        # Resolve allow/deny lists
         active = _parse_list(self.session.get_option('TOOLS', 'active_tools', fallback=None))
         inactive = _parse_list(self.session.get_option('TOOLS', 'inactive_tools', fallback=None))
-
-        # Agent overrides when applicable
         if getattr(self.session, 'in_agent_mode', lambda: False)():
             a_active = _parse_list(self.session.get_option('TOOLS', 'active_tools_agent', fallback=None))
             a_inactive = _parse_list(self.session.get_option('TOOLS', 'inactive_tools_agent', fallback=None))
@@ -213,13 +57,94 @@ class AssistantCommandsAction(InteractionAction):
             elif a_inactive:
                 inactive = a_inactive
 
-        # Apply allowlist (preferred) or denylist fallback
-        if active:
-            # Keep only explicitly listed tools that exist
-            self.commands = {k: v for k, v in self.commands.items() if k.upper() in set(active)}
-        elif inactive:
-            deny = set(inactive)
-            self.commands = {k: v for k, v in self.commands.items() if k.upper() not in deny}
+        # Discover all available assistant tool action classes
+        try:
+            registry = getattr(self.session, '_registry', None)
+            available = registry.list_available_actions() if registry else []
+        except Exception:
+            available = []
+
+        # Filter to actions that look like tools (allow user actions too)
+        action_names = [a for a in available if a.endswith('_tool')]
+
+        # Map discovered classes to their tool names/specs
+        tools: dict[str, dict] = {}
+        for action_name in action_names:
+            try:
+                cls = registry.get_action_class(action_name) if registry else None
+                if not cls:
+                    continue
+                # Require tool metadata contract
+                if not hasattr(cls, 'tool_name') or not hasattr(cls, 'tool_spec'):
+                    continue
+                name = str(cls.tool_name()).strip().lower()
+                if not name:
+                    continue
+                # Apply can_run gating if provided
+                can = True
+                try:
+                    cr = getattr(cls, 'can_run', None)
+                    if callable(cr):
+                        can = bool(cr(self.session))
+                except Exception:
+                    can = True
+                if not can:
+                    continue
+
+                # Respect allow/deny filters
+                if active and name not in active:
+                    continue
+                if not active and inactive and name in set(inactive):
+                    continue
+
+                # Compute handler override: [TOOLS].<tool>_tool
+                handler = self.session.get_option('TOOLS', f"{name}_tool", fallback=action_name)
+
+                spec = dict(cls.tool_spec(self.session) or {})
+                # Inject function mapping
+                spec['function'] = {"type": "action", "name": handler}
+                tools.setdefault(name, spec)
+
+                # Register aliases when provided (map to same spec)
+                try:
+                    aliases = getattr(cls, 'tool_aliases', lambda: [])()
+                    for alias in (aliases or []):
+                        alias_key = str(alias).strip().lower()
+                        if not alias_key:
+                            continue
+                        if active and alias_key not in active:
+                            continue
+                        if not active and inactive and alias_key in set(inactive):
+                            continue
+                        tools.setdefault(alias_key, spec)
+                except Exception:
+                    pass
+            except Exception:
+                continue
+
+        # Merge user-defined/overridden commands if present
+        try:
+            user_commands = self.session.get_action('register_assistant_commands')
+            if user_commands:
+                new_commands = user_commands.run()
+                if isinstance(new_commands, dict) and new_commands:
+                    for name, cfg in new_commands.items():
+                        key = str(name).strip().lower()
+                        # Apply gating to user-provided tools as well
+                        if active and key not in active:
+                            continue
+                        if not active and inactive and key in set(inactive):
+                            continue
+                        if key in tools and isinstance(tools[key], dict) and isinstance(cfg, dict):
+                            merged = dict(tools[key])
+                            merged.update(cfg)
+                            tools[key] = merged
+                        else:
+                            tools[key] = cfg
+        except Exception:
+            pass
+
+        return tools
 
     # ---- Canonical tool specs for providers ----
     def _auto_description(self, cmd_key: str, handler_name: str) -> str:
@@ -286,7 +211,7 @@ class AssistantCommandsAction(InteractionAction):
         # Process commands
         auto_submit = None  # Track if we should auto-submit after all commands
         for cmd in parsed_commands:
-            command_name = cmd['command']
+            command_name = (cmd['command'] or '').lower()
             if command_name in self.commands:
                 # Check if command references a block and handle substitution
                 if 'block' in cmd['args']:
@@ -489,13 +414,13 @@ class AssistantCommandsAction(InteractionAction):
         command_stack = []
 
         # Get the list of known, valid command names to look for
-        known_command_names = self.commands.keys()
+        known_command_names = list(self.commands.keys())
         if not known_command_names:
             return []  # No commands are registered, so nothing to parse.
 
         # Create a specific regex for just the command start tags
-        command_group = '|'.join(known_command_names)
-        command_start_pattern = re.compile(rf'^[ \t]*%%({command_group})%%[ \t]*$')
+        command_group = '|'.join([re.escape(k) for k in known_command_names])
+        command_start_pattern = re.compile(rf'^[ \t]*%%({command_group})%%[ \t]*$', re.IGNORECASE)
 
         # Create a simple regex for the end tag
         end_pattern = re.compile(r'^[ \t]*%%END%%[ \t]*$')
@@ -525,7 +450,7 @@ class AssistantCommandsAction(InteractionAction):
                     if end_pattern.match(lines[j]):
                         # Found the end of the block.
                         # Get command info and known args
-                        command_info = self.commands.get(command_name, {})
+                        command_info = self.commands.get((command_name or '').lower(), {})
                         known_args = command_info.get("args", [])
 
                         # Extract args and content from the captured lines

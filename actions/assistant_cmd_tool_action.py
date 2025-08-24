@@ -53,6 +53,34 @@ class AssistantCmdToolAction(InteractionAction):
             'tar': {'args': ['file'], 'exclude_opts': []}
         }
 
+    # ---- Dynamic tool registry metadata ----
+    @classmethod
+    def tool_name(cls) -> str:
+        return 'cmd'
+
+    @classmethod
+    def tool_aliases(cls) -> list[str]:
+        return []
+
+    @classmethod
+    def tool_spec(cls, session) -> dict:
+        return {
+            'args': ['command', 'arguments'],
+            'description': (
+                "Execute a local shell command. Provide the program in 'command' and an "
+                "optional space-delimited string in 'arguments'."
+            ),
+            'required': ['command'],
+            'schema': {
+                'properties': {
+                    'command': {"type": "string", "description": "Program to execute (e.g., 'echo', 'grep')."},
+                    'arguments': {"type": "string", "description": "Space-delimited arguments string (quoted as needed)."},
+                    'content': {"type": "string", "description": "Unused for CMD; include arguments in 'arguments'."}
+                }
+            },
+            'auto_submit': True,
+        }
+
     @staticmethod
     def parse_pipeline(cmd_string):
         """Parse a command pipeline into individual commands"""

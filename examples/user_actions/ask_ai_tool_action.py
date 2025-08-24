@@ -8,6 +8,33 @@ class AskAiToolAction(InteractionAction):
         self.session = session
         self.temp_file_runner = session.get_action('assistant_cmd_handler')
 
+    # ---- Dynamic tool registry metadata (optional for user tools) ----
+    @classmethod
+    def tool_name(cls) -> str:
+        return 'ask_ai'
+
+    @classmethod
+    def tool_aliases(cls) -> list[str]:
+        return []
+
+    @classmethod
+    def tool_spec(cls, session) -> dict:
+        return {
+            'args': ['model', 'question'],
+            'description': (
+                "Ask a secondary AI model a question. Provide 'question'; optional 'model' selects which backend."
+            ),
+            'required': [],
+            'schema': {
+                'properties': {
+                    'model': {"type": "string", "description": "Model alias (e.g., 'claude')."},
+                    'question': {"type": "string", "description": "Question text; 'content' is appended if provided."},
+                    'content': {"type": "string", "description": "Optional extra text appended to the question."}
+                }
+            },
+            'auto_submit': True,
+        }
+
     def run(self, args, content=""):
         model = args.get('model', 'claude')
         question = args.get('question', '')

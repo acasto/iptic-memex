@@ -49,6 +49,34 @@ class AssistantOpenlinkToolAction(InteractionAction):
     def __init__(self, session):
         self.session = session
 
+    # ---- Dynamic tool registry metadata ----
+    @classmethod
+    def tool_name(cls) -> str:
+        return 'openlink'
+
+    @classmethod
+    def tool_aliases(cls) -> list[str]:
+        return []
+
+    @classmethod
+    def tool_spec(cls, session) -> dict:
+        return {
+            'args': ['url', 'urls'],
+            'description': (
+                "Open one or more HTTP/HTTPS links in the user's default browser. Provide a single 'url', "
+                "a comma-separated 'urls', or list URLs on separate lines in content."
+            ),
+            'required': [],
+            'schema': {
+                'properties': {
+                    'url': {"type": "string", "description": "Single URL to open; protocol auto-added if missing."},
+                    'urls': {"type": "string", "description": "Comma-separated list of URLs to open."},
+                    'content': {"type": "string", "description": "Optional newline-separated URLs to open; lines starting with # are ignored."}
+                }
+            },
+            'auto_submit': True,
+        }
+
     def _get_system_open_command(self):
         """Get the appropriate system command for opening URLs"""
         system = platform.system().lower()
