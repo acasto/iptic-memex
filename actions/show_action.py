@@ -49,6 +49,35 @@ class ShowAction(InteractionAction):
                 for ln in lines:
                     print(ln)
 
+        if args[0] == 'tools':
+            """Show currently active assistant tools (after config gating)."""
+            try:
+                cmd = self.session.get_action('assistant_commands')
+                names = sorted(list((cmd.commands or {}).keys())) if cmd else []
+                mode = 'agent' if getattr(self.session, 'in_agent_mode', lambda: False)() else 'chat'
+                header = f"Active tools ({mode}):"
+                lines = [header, "---------------------------------"]
+                if names:
+                    for n in names:
+                        lines.append(n)
+                else:
+                    lines.append('(none)')
+                lines.append("")
+                if not getattr(self.session.ui.capabilities, 'blocking', False):
+                    try:
+                        self.session.ui.emit('status', {'message': "\n".join(lines)})
+                    except Exception:
+                        pass
+                else:
+                    for ln in lines:
+                        print(ln)
+            except Exception as e:
+                if not getattr(self.session.ui.capabilities, 'blocking', False):
+                    try: self.session.ui.emit('error', {'message': f'Error showing tools: {e}'})
+                    except Exception: pass
+                else:
+                    print(f"Error showing tools: {e}")
+
         if args[0] == 'models':
             sections = list(self.session.list_models().keys())
             if not getattr(self.session.ui.capabilities, 'blocking', False):

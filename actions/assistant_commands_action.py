@@ -183,6 +183,44 @@ class AssistantCommandsAction(InteractionAction):
                     else:
                         self.commands[name] = cfg
 
+        # --- Optional tool gating via config.ini ----------------------
+        # Users can control exposed tools without editing code:
+        # [TOOLS]
+        #   active_tools = CMD,FILE,MEMORY
+        #   inactive_tools = WEBSEARCH
+        # Agent-only overrides (applied when in_agent_mode() is True):
+        #   active_tools_agent = CMD,MEMORY
+        #   inactive_tools_agent = FILE
+        def _parse_list(val: str | None) -> list[str]:
+            if not val:
+                return []
+            try:
+                return [x.strip().upper() for x in str(val).split(',') if x.strip()]
+            except Exception:
+                return []
+
+        # Read global lists
+        active = _parse_list(self.session.get_option('TOOLS', 'active_tools', fallback=None))
+        inactive = _parse_list(self.session.get_option('TOOLS', 'inactive_tools', fallback=None))
+
+        # Agent overrides when applicable
+        if getattr(self.session, 'in_agent_mode', lambda: False)():
+            a_active = _parse_list(self.session.get_option('TOOLS', 'active_tools_agent', fallback=None))
+            a_inactive = _parse_list(self.session.get_option('TOOLS', 'inactive_tools_agent', fallback=None))
+            if a_active:
+                active = a_active
+                inactive = []
+            elif a_inactive:
+                inactive = a_inactive
+
+        # Apply allowlist (preferred) or denylist fallback
+        if active:
+            # Keep only explicitly listed tools that exist
+            self.commands = {k: v for k, v in self.commands.items() if k.upper() in set(active)}
+        elif inactive:
+            deny = set(inactive)
+            self.commands = {k: v for k, v in self.commands.items() if k.upper() not in deny}
+
     # ---- Canonical tool specs for providers ----
     def _auto_description(self, cmd_key: str, handler_name: str) -> str:
         key = (cmd_key or '').strip()

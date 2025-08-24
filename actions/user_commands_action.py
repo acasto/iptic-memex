@@ -139,6 +139,10 @@ class UserCommandsAction(InteractionAction):
                 "description": "List all contexts",
                 "function": {"type": "action", "name": "show", "args": "contexts"},
             },
+            "show tools": {
+                "description": "List all tools",
+                "function": {"type": "action", "name": "show", "args": "tools"},
+            },
             "set option": {
                 "description": "Set an option",
                 "function": {"type": "action", "name": "set_option"},
