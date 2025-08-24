@@ -73,10 +73,15 @@ class LlamaCppProvider(APIProvider):
             'stream',
             'temperature',
             'top_p',
-            'tools',  # If using function calling / tools
-            'tool_choice',  # If using function calling / tools
+            # NOTE: llama.cpp provider in this project does not support
+            # official tool calling. We intentionally do NOT pass
+            # 'tools' / 'tool_choice' through to llama_cpp to avoid
+            # template errors in certain chat formats (e.g., Qwen),
+            # where the Jinja chat template expects an iterable.
+            # See: repo guidelines "Local Backends (llama.cpp)".
             'user'
         ]
+
 
         # Track usage similar to OpenAI
         self.turn_usage = None
@@ -108,6 +113,14 @@ class LlamaCppProvider(APIProvider):
                             api_parms[parameter] = True
                     else:
                         api_parms[parameter] = current_params[parameter]
+
+            # Drop OpenAI-style tools for llama.cpp (unsupported here).
+            # Passing a bare boolean (e.g., tools=True) causes some
+            # chat templates to iterate a bool and crash.
+            # current_params may carry global tool flags; ignore for llama.cpp
+            # Ensure these never leak into llama_cpp kwargs
+            api_parms.pop('tools', None)
+            api_parms.pop('tool_choice', None)
 
             # If streaming set stream_options - we could set this in the config, but since it's dependent
             # on stream and enables internal feature, we'll set it here
