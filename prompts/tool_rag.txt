@@ -4,12 +4,13 @@ Search local RAG indexes            %%RAGSEARCH%%
   + Arguments available are:
     - query="<search text>" (required; if omitted, use content body)
     - index="<single index name>" (optional)
-    - indexes="<comma,separated,names>" (optional)
+    - indexes="<comma,separated,names>" (optional; also accepts a JSON array)
     - k=<int> (optional; top results to keep)
     - preview_lines=<int> (optional; lines per hit in the summary)
     - per_index_cap=<int> (optional; limit results contributed by each index)
     - threshold=<float 0.0–1.0> (optional; drop matches below this score)
   + Tips:
+    - Default scope: If neither 'index' nor 'indexes' is provided (or they are blank), the tool searches active indexes; if none are marked active, it searches all configured indexes.
     - Prefer specific queries that mention filenames, topics, or identifiers when relevant.
     - If results look sparse, increase `k` or lower `threshold`. If they’re too noisy, raise `threshold`.
     - If you need full files, ask the user to load them
@@ -32,4 +33,3 @@ query="API authentication flow for mobile"
 threshold=0.25
 per_index_cap=6
 %%END%%
-

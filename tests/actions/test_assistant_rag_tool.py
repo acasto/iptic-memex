@@ -96,3 +96,44 @@ def test_rag_tool_handles_missing_embedding_config(monkeypatch, tmp_path):
     msg = ' '.join((v.get('content') or '') for k, v in sess._contexts if k == 'assistant')
     assert 'RAGSEARCH' in msg and ('embedding' in msg or 'set' in msg)
 
+
+def test_rag_tool_defaults_to_all_when_indexes_arg_empty(monkeypatch, tmp_path):
+    # When neither index nor indexes are set (or are empty strings),
+    # the tool should search active/all indexes rather than error out.
+    import actions.assistant_rag_tool_action as rtool
+
+    # Provide two known indexes and no active list (so it should use all)
+    idxdir = tmp_path / 'db'
+    paths = {'notes': str(tmp_path / 'notes'), 'docs': str(tmp_path / 'docs')}
+    for p in paths.values():
+        (tmp_path / 'db').mkdir(exist_ok=True)
+    monkeypatch.setattr(rtool, 'load_rag_config', lambda session: (paths, [], str(idxdir), 'M'))
+
+    # Provider factory stub
+    class Prov:
+        def __init__(self, s):
+            pass
+        def embed(self, texts, model=None):
+            return [[1, 0] for _ in texts]
+
+    import core.provider_factory as pf
+    monkeypatch.setattr(pf.ProviderFactory, 'instantiate_by_name', lambda *a, **k: Prov(None))
+
+    # Capture names passed to search and return an empty result set
+    captured = {}
+    def fake_search(**kwargs):
+        captured['names'] = list(kwargs.get('names') or [])
+        return {'results': [], 'stats': {'total_items': 0}}
+
+    monkeypatch.setattr(rtool, 'search', lambda **kw: fake_search(**kw))
+
+    from actions.assistant_rag_tool_action import AssistantRagToolAction
+    sess = FakeSession({'embedding_provider': 'X', 'embedding_model': 'M'})
+
+    # Provide an explicit empty 'indexes' arg to simulate strict provider behavior
+    AssistantRagToolAction(sess).run({'query': 'q', 'indexes': ''}, '')
+
+    # Should have searched all configured indexes (both keys in paths)
+    assert set(captured.get('names') or []) == set(paths.keys())
+    # And should have attached a rag context (even with no results it creates a header)
+    assert any(k == 'rag' for k, _ in sess._contexts)

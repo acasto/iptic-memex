@@ -56,20 +56,42 @@ class AssistantRagToolAction(InteractionAction):
             return
 
         index_names: List[str]
-        chosen = (args.get('index') or '').strip()
-        chosen_multi = (args.get('indexes') or '').strip()
-        if chosen_multi:
-            cand = [x.strip() for x in chosen_multi.split(',') if x.strip()]
-            index_names = [n for n in cand if n in indexes]
+        # Normalize incoming args which may be present (due to strict schemas) but empty
+        chosen = ''
+        try:
+            chosen = str(args.get('index') or '').strip()
+        except Exception:
+            chosen = ''
+
+        # Support either comma-separated string or list for 'indexes'
+        cand_list: List[str] = []
+        try:
+            raw_multi = args.get('indexes')
+            if isinstance(raw_multi, list):
+                cand_list = [str(x).strip() for x in raw_multi if str(x).strip()]
+            else:
+                raw_multi_str = str(raw_multi or '').strip()
+                if raw_multi_str:
+                    cand_list = [x.strip() for x in raw_multi_str.split(',') if x.strip()]
+        except Exception:
+            cand_list = []
+
+        # Resolve final names with graceful fallback when nothing explicit provided
+        if cand_list:
+            index_names = [n for n in cand_list if n in indexes]
         elif chosen:
             index_names = [chosen] if chosen in indexes else []
         else:
             index_names = active if active else list(indexes.keys())
 
-        if not index_names:
+        # If an explicit list/name was provided but none matched, surface a clearer error;
+        # otherwise (no explicit input), we already defaulted to active/all above.
+        explicit_provided = bool(cand_list) or bool(chosen)
+        if not index_names and explicit_provided:
+            known = ", ".join(sorted(indexes.keys()))
             self.session.add_context('assistant', {
                 'name': 'rag_error',
-                'content': 'RAGSEARCH: no valid index names selected.'
+                'content': f"RAGSEARCH: unknown index selection. Known indexes: {known}"
             })
             return
 
@@ -123,6 +145,8 @@ class AssistantRagToolAction(InteractionAction):
         preview_default = _int(_tool_opt('rag_preview_lines', 3) or 3, 3)
         preview_lines = _int(args.get('preview_lines', None), preview_default)
         pic_raw = args.get('per_index_cap', None)
+        if pic_raw is None:
+            pic_raw = _tool_opt('rag_per_index_cap', None)
         per_index_cap = None if pic_raw is None else _int(pic_raw, None)
         threshold = _float(args.get('threshold', None), _float(_tool_opt('rag_similarity_threshold', 0.0) or 0.0, 0.0))
 
@@ -226,4 +250,3 @@ class AssistantRagToolAction(InteractionAction):
             })
         except Exception:
             pass
-
