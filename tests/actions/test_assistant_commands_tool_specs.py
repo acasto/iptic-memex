@@ -81,3 +81,21 @@ def test_overrides_description_required_and_schema_properties():
     # content still present
     assert 'content' in props
 
+
+def test_ragsearch_spec_present_and_required_query():
+    sess = FakeSession()
+    act = AssistantCommandsAction(sess)
+    specs = _index_specs(act.get_tool_specs())
+    assert 'ragsearch' in specs
+    rag = specs['ragsearch']
+    # Description exists
+    assert isinstance(rag.get('description'), str) and rag['description']
+    params = rag.get('parameters') or {}
+    assert params.get('type') == 'object'
+    props = params.get('properties') or {}
+    # Expected properties present
+    for k in ('query', 'index', 'indexes', 'k', 'preview_lines', 'per_index_cap', 'threshold', 'content'):
+        assert k in props
+    # query is required
+    required = params.get('required') or []
+    assert 'query' in required

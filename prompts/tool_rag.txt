@@ -1,0 +1,35 @@
+Search local RAG indexes            %%RAGSEARCH%%
+  + Runs a semantic search over configured local indexes and attaches a consolidated results block to the `rag` context.
+  + The next assistant turn will receive the results; wait for the results before drafting your final answer.
+  + Arguments available are:
+    - query="<search text>" (required; if omitted, use content body)
+    - index="<single index name>" (optional)
+    - indexes="<comma,separated,names>" (optional)
+    - k=<int> (optional; top results to keep)
+    - preview_lines=<int> (optional; lines per hit in the summary)
+    - per_index_cap=<int> (optional; limit results contributed by each index)
+    - threshold=<float 0.0–1.0> (optional; drop matches below this score)
+  + Tips:
+    - Prefer specific queries that mention filenames, topics, or identifiers when relevant.
+    - If results look sparse, increase `k` or lower `threshold`. If they’re too noisy, raise `threshold`.
+    - If you need full files, ask the user to load them
+  + Examples:
+    - Basic query across active indexes:
+%%RAGSEARCH%%
+query="Vector databases for note-taking"
+%%END%%
+    - Target a specific index with more results and previews:
+%%RAGSEARCH%%
+index="notes"
+query="setup instructions for the project"
+k=12
+preview_lines=5
+%%END%%
+    - Search multiple indexes and filter low-confidence hits:
+%%RAGSEARCH%%
+indexes="notes,docs"
+query="API authentication flow for mobile"
+threshold=0.25
+per_index_cap=6
+%%END%%
+

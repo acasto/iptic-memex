@@ -127,6 +127,25 @@ class AssistantCommandsAction(InteractionAction):
                 'auto_submit': True,
                 "function": {"type": "action", "name": search_tool}
             },
+            "RAGSEARCH": {
+                "args": ["query", "index", "indexes", "k", "preview_lines", "per_index_cap", "threshold"],
+                "description": "Search local RAG indexes and attach a consolidated results block to context. Configure [RAG] and run 'rag update' first.",
+                "required": ["query"],
+                "schema": {
+                    "properties": {
+                        "query": {"type": "string", "description": "Semantic search query."},
+                        "index": {"type": "string", "description": "Single index name to search."},
+                        "indexes": {"type": "string", "description": "Comma-separated list of index names."},
+                        "k": {"type": "integer", "description": "Top-K results to return."},
+                        "preview_lines": {"type": "integer", "description": "Preview lines per hit in the summary."},
+                        "per_index_cap": {"type": "integer", "description": "Cap results per index."},
+                        "threshold": {"type": "number", "description": "Minimum cosine similarity threshold (0.0–1.0)."},
+                        "content": {"type": "string", "description": "Fallback for 'query' when omitted."}
+                    }
+                },
+                'auto_submit': True,
+                "function": {"type": "action", "name": "assistant_rag_tool"}
+            },
             "YOUTRACK": {
                 "args": ["mode", "project_id", "issue_id", "block", "summary", "query", "assignee", "state", "priority", "type"],
                 "description": "Interact with YouTrack: list projects/issues, fetch details, create and update issues, or add comments. Configure base_url and api_key in settings.",
