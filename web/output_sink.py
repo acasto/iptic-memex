@@ -18,6 +18,7 @@ class WebOutput:
         self._buffer: List[str] = []
         self._loop: Optional[asyncio.AbstractEventLoop] = loop
         self._queue: Optional[asyncio.Queue] = queue
+        self._emitted: bool = False
 
     def set_async(self, loop: asyncio.AbstractEventLoop, queue: asyncio.Queue) -> None:
         self._loop = loop
@@ -28,6 +29,7 @@ class WebOutput:
             return
         try:
             self._loop.call_soon_threadsafe(self._queue.put_nowait, {"type": "token", "text": text})
+            self._emitted = True
         except Exception:
             pass
 

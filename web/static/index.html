@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Iptic Memex - Web</title>
+    <link rel="stylesheet" href="/static/css/main.css" />
+
+  </head>
+  <body>
+    <h1>Iptic Memex - Web</h1>
+    <div id="status">Loading status...</div>
+    <div id="log">
+      <button id="jumpLatest" title="Jump to latest">↓ New</button>
+    </div>
+    <div id="panel" style="margin:0.75rem 0;"></div>
+    <div style="margin-top:1rem;">
+      <div class="toolbar">
+        <button id="newchat" title="New chat" style="padding:.25rem .5rem;">＋ New</button>
+        <button id="attach" title="Load file" style="padding:.25rem .5rem;">📎 Attach</button>
+        <button id="options" title="Set option" style="padding:.25rem .5rem;">⚙️ Options</button>
+        <label><input id="stream" type="checkbox" /> Stream</label>
+        <span class="spacer"></span>
+        <label title="Toggle dark mode"><input id="darkmode" type="checkbox" /> Dark</label>
+      </div>
+      <textarea id="msg" placeholder="Type a message..."></textarea>
+      <div><button id="send">Send</button></div>
+    </div>
+
+    <script type="module" src="/static/js/main.js"></script>
+  </body>
+  </html>
