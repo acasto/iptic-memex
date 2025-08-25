@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Callable
+from contextlib import asynccontextmanager
 import os
 
 from starlette.applications import Starlette
@@ -104,7 +105,24 @@ def create_app(session, webstate: WebState | None = None) -> Starlette:
         Route('/api/upload', __import__('web.routes.upload', fromlist=['api_upload']).api_upload, methods=['POST']),
     ]
 
-    app = Starlette(routes=routes)
+    @asynccontextmanager
+    async def lifespan(app: Starlette):
+        # Startup: optionally open a browser if the launcher requested it.
+        try:
+            url = getattr(app.state, 'open_browser_url', None)
+            already_opened = getattr(app.state, 'browser_opened', False)
+            if url and not already_opened:
+                # Set guard to avoid opening multiple tabs (e.g., on reload)
+                app.state.browser_opened = True
+                # Delay slightly to ensure the server socket is bound and accepting.
+                import threading, webbrowser
+                threading.Timer(0.5, lambda: webbrowser.open(url)).start()
+        except Exception:
+            pass
+        yield
+        # Shutdown: nothing special
+
+    app = Starlette(routes=routes, lifespan=lifespan)
     # Mount static dir
     static_dir = os.path.join(os.path.dirname(__file__), 'static')
     os.makedirs(static_dir, exist_ok=True)
@@ -114,4 +132,3 @@ def create_app(session, webstate: WebState | None = None) -> Starlette:
     app.state.session = session
     app.state.webstate = webstate
     return app
-

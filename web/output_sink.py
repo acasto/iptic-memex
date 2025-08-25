@@ -44,6 +44,19 @@ class WebOutput:
             flush: bool = False,
             spacing: Optional[Union[int, list[int]]] = None
     ) -> None:
+        """Capture output for web streaming, suppressing DEBUG-level messages."""
+        # Suppress explicit DEBUG-level writes
+        try:
+            if level is not None:
+                # Accept either an Enum with .name or a string-like value
+                name = getattr(level, 'name', None)
+                name = name if isinstance(name, str) else str(level)
+                if name and 'DEBUG' in name.upper():
+                    return
+        except Exception:
+            # If anything goes wrong determining level, fall through and write
+            pass
+
         text = str(message)
         if prefix:
             text = f"{prefix}: {text}"
@@ -55,7 +68,8 @@ class WebOutput:
 
     # level helpers
     def debug(self, message: Any, **kwargs) -> None:
-        self.write(message, **kwargs)
+        """Do not surface DEBUG messages in web output."""
+        return
 
     def info(self, message: Any, **kwargs) -> None:
         self.write(message, **kwargs)
