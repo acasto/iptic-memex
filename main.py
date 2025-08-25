@@ -17,8 +17,9 @@ from session import SessionBuilder
 @click.option('--agent-writes', type=click.Choice(['deny', 'dry-run', 'allow']), default=None, help='Agent write policy for file tools')
 @click.option('--no-agent-status-tags', is_flag=True, default=False, help='Disable per-turn <status> tag injection')
 @click.option('--agent-output', type=click.Choice(['final', 'full', 'none']), default=None, help='Agent output mode: final (default), full, or none')
+@click.option('--tools', default=None, help='Agent tools allowlist (CSV). Use "None" to disable all tools.')
 @click.pass_context
-def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw, file, steps, agent_writes, no_agent_status_tags, agent_output):
+def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw, file, steps, agent_writes, no_agent_status_tags, agent_output, tools):
     """
     the main entry point for the CLI click interface
     """
@@ -60,6 +61,14 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw,
         options['no_agent_status_tags'] = True
     if agent_output:
         options['agent_output'] = agent_output
+    # Agent tools allowlist: CSV, or literal 'None' to disable all tools
+    if tools is not None:
+        tval = str(tools).strip()
+        if tval.lower() == 'none':
+            # Sentinel that will not match any real tool name; parsed as allowlist
+            options['active_tools_agent'] = '__none__'
+        elif tval:
+            options['active_tools_agent'] = tval
     
     # Validate model early if provided (fail fast on invalid model)
     if 'model' in options and options['model']:
@@ -113,6 +122,16 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw,
                 use_status_tags=not options.get('no_agent_status_tags', False),
                 output_mode=options.get('agent_output'),
             )
+            # When verbose, print the effective agent tools before starting
+            if options.get('agent_debug', False):
+                try:
+                    act = session.get_action('assistant_commands')
+                    names = sorted(list((act.commands or {}).keys())) if act and hasattr(act, 'commands') else []
+                    header = 'Agent tools:'
+                    line = f"{header} " + (", ".join(names) if names else "(none)")
+                    session.utils.output.write(line)
+                except Exception:
+                    pass
         else:
             from modes.completion_mode import CompletionMode
             mode = CompletionMode(session)
