@@ -211,6 +211,23 @@ Gating and CLI‑only flows
   - Settings like `use_old_system_role` can still be set per model/provider.
   - Ensure `[LlamaCpp].tool_mode = pseudo` when working with llama.cpp.
 
+##### LlamaCppServer (managed server)
+- Purpose:
+  - Auto-manage `llama-server` (OpenAI-compatible API) and reuse the existing `OpenAIProvider` client. Keeps users away from ports/URLs.
+- How it works:
+  - Spawns `llama-server` with `-m <model.gguf>`, binds to a free port in `[LlamaCppServer].port_range` on `127.0.0.1`, and waits for `/health` (fallback `/v1/models`).
+  - Generates an API key by default and configures the client to use `Authorization: Bearer ...`.
+  - Streaming is supported (normal `stream=True`). We default `stream_options=False` unless explicitly set.
+  - Session-local prompt caching is enabled by forcing `extra_body.cache_prompt = true` on requests. No slot persistence.
+- Tools mode:
+  - Defaults to pseudo-tools (`tool_mode = pseudo`). If upstream adds official function tools, switch via config to `official`.
+- Config (config.ini):
+  - `[LlamaCppServer]` requires `binary = /abs/path/to/llama-server`.
+  - Optional: `host`, `port_range`, `startup_timeout`, `use_api_key`, logging (`log_path` or `log_dir`), and pass-through `extra_flags`.
+- Model (models.ini):
+  - `provider = LlamaCppServer`, `model_path = /abs/path/model.gguf`, `stream = true`, `tools = false`.
+  - Advanced: `extra_flags_append = --jinja` for templates or other switches.
+
 ##### RAG embeddings with llama.cpp
 - The `LlamaCpp` provider implements `embed(texts, model?)` for local embeddings with a lightweight, lazy embedding handle.
 - Privacy-safe default (strict): RAG does not fallback to network embeddings unless you opt in.
