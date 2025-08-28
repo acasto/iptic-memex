@@ -31,13 +31,7 @@ class SessionBuilder:
 
         session.current_model = options.get('model')
 
-        model = options.get('model')
-        provider_name = session_config.get_params(model).get('provider')
-        if provider_name:
-            provider_class = registry.load_provider_class(provider_name)
-            if provider_class:
-                session.provider = provider_class(session)
-
+        # Initialize UI first so we can present status/spinners during provider startup
         ui_mode = (mode or 'chat').lower()
         try:
             if ui_mode in ('web',):
@@ -59,6 +53,41 @@ class SessionBuilder:
                 session.ui = CLIUI(session)
             except Exception:
                 session.ui = None
+
+        # Provider instantiation (with UX for long startups in chat-like modes)
+        model = options.get('model')
+        provider_name = session_config.get_params(model).get('provider')
+        if provider_name:
+            provider_class = registry.load_provider_class(provider_name)
+            if provider_class:
+                # Let providers signal slow startup by exposing a class attribute
+                # 'startup_wait_message' (str). If present, show an indicator while
+                # instantiating the provider in chat-like UIs.
+                show_loading = ui_mode in ('chat', 'web', 'tui') and bool(getattr(provider_class, 'startup_wait_message', None))
+                if show_loading:
+                    msg = getattr(provider_class, 'startup_wait_message', 'Loading...')
+                    ready_msg = getattr(provider_class, 'startup_ready_message', None)
+                    try:
+                        # CLI: spinner; Web/TUI: status events
+                        blocking = bool(getattr(session.ui, 'capabilities', None) and session.ui.capabilities.blocking)
+                    except Exception:
+                        blocking = True
+                    if blocking:
+                        with session.utils.output.spinner(str(msg)):
+                            session.provider = provider_class(session)
+                    else:
+                        try:
+                            session.ui.emit('status', {'message': str(msg)})
+                        except Exception:
+                            pass
+                        session.provider = provider_class(session)
+                        try:
+                            if ready_msg:
+                                session.ui.emit('status', {'message': str(ready_msg)})
+                        except Exception:
+                            pass
+                else:
+                    session.provider = provider_class(session)
 
         try:
             if mode != 'completion' or 'prompt' in options:
@@ -94,4 +123,3 @@ class SessionBuilder:
 
         if old_usage and hasattr(session.provider, 'set_usage'):
             session.provider.set_usage(old_usage)
-

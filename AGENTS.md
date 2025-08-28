@@ -210,12 +210,18 @@ Gating and CLI‑only flows
 - Notes:
   - Settings like `use_old_system_role` can still be set per model/provider.
   - Ensure `[LlamaCpp].tool_mode = pseudo` when working with llama.cpp.
+  - Tuning llama-cpp-python (LlamaCpp provider): set native kwargs via `llamacpp_init` at the provider and/or model level. Model settings override provider defaults.
+    - Example provider (config.ini): `[LlamaCpp] llamacpp_init = { flash_attn:true, n_threads:8 }`
+    - Example model (models.ini): `llamacpp_init = { n_threads:6, use_mlock:true }`
+    - All keys use the llama_cpp.Llama __init__ signature (e.g., `flash_attn`, `use_mmap`, `use_mlock`, `n_threads`, etc.).
+    - Unknown keys are ignored with a warning to avoid runtime errors (easy to update the allowlist in code).
 
 ##### LlamaCppServer (managed server)
 - Purpose:
   - Auto-manage `llama-server` (OpenAI-compatible API) and reuse the existing `OpenAIProvider` client. Keeps users away from ports/URLs.
 - How it works:
   - Spawns `llama-server` with `-m <model.gguf>`, binds to a free port in `[LlamaCppServer].port_range` on `127.0.0.1`, and waits for `/health` (fallback `/v1/models`).
+  - Disables the Web UI by default via `--no-webui` to keep the managed server headless.
   - Generates an API key by default and configures the client to use `Authorization: Bearer ...`.
   - Streaming is supported (normal `stream=True`). We default `stream_options=False` unless explicitly set.
   - Session-local prompt caching is enabled by forcing `extra_body.cache_prompt = true` on requests. No slot persistence.
@@ -227,6 +233,13 @@ Gating and CLI‑only flows
 - Model (models.ini):
   - `provider = LlamaCppServer`, `model_path = /abs/path/model.gguf`, `stream = true`, `tools = false`.
   - Advanced: `extra_flags_append = --jinja` for templates or other switches.
+  - Optional: `draft_model_path = /abs/path/draft-model.gguf` to enable speculative decoding via `-md`.
+
+#### Provider UX Hooks
+- Providers can advertise slow initialization by defining a class attribute `startup_wait_message`.
+  - Core shows a spinner in CLI chat and status updates in Web/TUI while the provider initializes.
+  - A matching `startup_ready_message` can be defined for a completion notice in non-blocking UIs.
+  - Agent and Completion modes do not display these indicators.
 
 ##### RAG embeddings with llama.cpp
 - The `LlamaCpp` provider implements `embed(texts, model?)` for local embeddings with a lightweight, lazy embedding handle.

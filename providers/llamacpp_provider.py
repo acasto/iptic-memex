@@ -16,6 +16,26 @@ class LlamaCppProvider(APIProvider):
     llama.cpp Python bindings provider
     """
 
+    # Recognized llama_cpp.Llama __init__ kwargs for light validation.
+    # Easy to update as upstream evolves.
+    KNOWN_LLAMA_KWARGS = {
+        # sizing / threading
+        'n_ctx', 'n_batch', 'n_ubatch', 'n_threads', 'n_threads_batch',
+        # GPU / split
+        'n_gpu_layers', 'split_mode', 'main_gpu', 'tensor_split',
+        # memory / loading
+        'vocab_only', 'use_mmap', 'use_mlock', 'kv_overrides', 'seed',
+        # rope / yarn
+        'rope_scaling_type', 'pooling_type', 'rope_freq_base', 'rope_freq_scale',
+        'yarn_ext_factor', 'yarn_attn_factor', 'yarn_beta_fast', 'yarn_beta_slow', 'yarn_orig_ctx',
+        # modes / features
+        'logits_all', 'embedding', 'offload_kqv', 'flash_attn', 'op_offload', 'swa_full', 'no_perf',
+        # lora
+        'last_n_tokens_size', 'lora_base', 'lora_scale', 'lora_path',
+        # system
+        'numa', 'chat_format', 'chat_handler', 'tokenizer', 'type_k', 'type_v', 'spm_infill', 'verbose',
+    }
+
     def __init__(self, session):
         self.session = session
         self.last_api_param = None
@@ -239,18 +259,14 @@ class LlamaCppProvider(APIProvider):
         model_path = params.get('model_path')
         if not model_path or not os.path.exists(os.path.expanduser(model_path)):
             raise RuntimeError(f"Model path does not exist: {model_path}")
+        # Build init kwargs from provider/model config with sensible defaults
+        init_kwargs = self._collect_llama_init_kwargs(for_embeddings=False)
         f = io.StringIO()
         with redirect_stderr(f):
             self.llm = Llama(
                 model_path=model_path,
-                n_ctx=self._n_ctx,
-                embedding=False,
-                n_gpu_layers=self._n_gpu_layers,
                 draft_model=self.draft_model,
-                logits_all=self._logits_all,
-                use_mlock=False,
-                flash_attn=True,
-                verbose=self._verbose,
+                **init_kwargs,
             )
         self._chat_model_path = model_path
         return self.llm
@@ -278,15 +294,11 @@ class LlamaCppProvider(APIProvider):
         verbose = params.get('verbose', False)
 
         f = io.StringIO()
+        init_kwargs = self._collect_llama_init_kwargs(for_embeddings=True)
         with redirect_stderr(f):
             self._embed_llm = Llama(
                 model_path=path,
-                n_ctx=n_ctx,
-                embedding=True,
-                n_gpu_layers=n_gpu_layers,
-                use_mlock=False,
-                flash_attn=True,
-                verbose=verbose,
+                **init_kwargs,
             )
         self._embed_model_path = path
         return self._embed_llm
@@ -437,3 +449,75 @@ class LlamaCppProvider(APIProvider):
             'total': 0.0,
             'turn': 0.0
         }
+
+    # --- Internal helpers --------------------------------------------
+    def _collect_llama_init_kwargs(self, for_embeddings: bool) -> dict:
+        """Collect kwargs for llama_cpp.Llama from provider/model config.
+
+        Merge order (later overrides earlier): defaults -> provider.llamacpp_init -> model.llamacpp_init.
+        Only native llama-cpp-python argument names should be used in the config.
+        """
+        params = self.session.get_params()
+        provider_name = params.get('provider')
+        model_name = params.get('model')
+
+        # Sensible defaults, preserving previous behavior
+        defaults = {
+            'n_ctx': self._n_ctx,
+            'n_gpu_layers': self._n_gpu_layers,
+            'logits_all': self._logits_all,
+            'embedding': bool(for_embeddings),
+            'verbose': self._verbose,
+        }
+
+        # Provider-level dict
+        prov_init = {}
+        try:
+            prov_cfg = self.session.get_all_options_from_provider(provider_name) or {}
+            val = prov_cfg.get('llamacpp_init')
+            if isinstance(val, dict):
+                prov_init = val
+        except Exception:
+            prov_init = {}
+
+        # Model-level dict (overrides provider-level)
+        model_init = {}
+        try:
+            mdl_cfg = self.session.get_all_options_from_model(model_name) or {}
+            val = mdl_cfg.get('llamacpp_init')
+            if isinstance(val, dict):
+                model_init = val
+        except Exception:
+            model_init = {}
+
+        # Merge
+        init_kwargs = dict(defaults)
+        try:
+            init_kwargs.update(prov_init)
+        except Exception:
+            pass
+        try:
+            init_kwargs.update(model_init)
+        except Exception:
+            pass
+
+        # Final authority on embedding flag: enforce based on call site
+        init_kwargs['embedding'] = bool(for_embeddings)
+        # Draft model is wired explicitly in __init__ call; ensure config cannot override it here
+        init_kwargs.pop('draft_model', None)
+        # Model path is passed positionally/explicitly elsewhere
+        init_kwargs.pop('model_path', None)
+
+        # Light validation: warn and drop unknown keys to avoid TypeError
+        unknown = [k for k in init_kwargs.keys() if k not in self.KNOWN_LLAMA_KWARGS]
+        if unknown:
+            try:
+                self.session.utils.output.warning(
+                    f"Ignoring unknown llamacpp_init keys: {', '.join(sorted(unknown))}"
+                )
+            except Exception:
+                print(f"Warning: Ignoring unknown llamacpp_init keys: {', '.join(sorted(unknown))}")
+            for k in unknown:
+                init_kwargs.pop(k, None)
+
+        return init_kwargs

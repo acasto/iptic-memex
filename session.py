@@ -198,7 +198,33 @@ class Session:
                     print(f"Could not load provider '{new_provider_name}'.")
                 return False
 
-            self.provider = provider_class(self)
+            # Generic indicator: providers can expose 'startup_wait_message' to request a spinner/status during init
+            msg = getattr(provider_class, 'startup_wait_message', None)
+            if msg:
+                try:
+                    blocking = bool(getattr(self.ui, 'capabilities', None) and self.ui.capabilities.blocking)
+                except Exception:
+                    blocking = True
+                if blocking and not self.in_agent_mode():
+                    with self.utils.output.spinner(str(msg)):
+                        self.provider = provider_class(self)
+                else:
+                    # For non-blocking UIs, emit status begin/end only when not in Agent mode
+                    if not self.in_agent_mode():
+                        try:
+                            self.ui.emit('status', {'message': str(msg)})
+                        except Exception:
+                            pass
+                    self.provider = provider_class(self)
+                    if not self.in_agent_mode():
+                        ready_msg = getattr(provider_class, 'startup_ready_message', None)
+                        if ready_msg:
+                            try:
+                                self.ui.emit('status', {'message': str(ready_msg)})
+                            except Exception:
+                                pass
+            else:
+                self.provider = provider_class(self)
 
             if old_usage and hasattr(self.provider, 'set_usage'):
                 try:

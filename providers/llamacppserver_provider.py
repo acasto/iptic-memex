@@ -1,4 +1,5 @@
 import os
+import json
 import shlex
 import socket
 import subprocess
@@ -15,10 +16,18 @@ class LlamaCppServerProvider(OpenAIProvider):
     Managed llama.cpp OpenAI-compatible server provider.
 
     - Spawns `llama-server` with the configured GGUF model.
+    - Disables the built-in Web UI via `--no-webui` by default.
     - Waits for readiness, then talks to it via the inherited OpenAI client.
     - Injects session-local prompt caching (cache_prompt=true) and disables
       official tool calling by default (pseudo tools only).
+    - Supports speculative decoding by passing `-md <path>` when the model
+      sets `draft_model_path = /abs/path/to/draft.gguf`.
     """
+
+    # Signal to core that provider initialization may take noticeable time and
+    # a user-facing indicator should be shown in chat-like UIs
+    startup_wait_message = "Loading local model..."
+    startup_ready_message = "Local model ready."
 
     def __init__(self, session):
         # Wrap the session with a view that injects our per-provider params
@@ -59,8 +68,10 @@ class LlamaCppServerProvider(OpenAIProvider):
         # Build command line
         cmd: List[str] = [binary, '-m', model_path, '--host', host, '--port', str(port)]
 
-        # Note: Older docs referenced a '--no-webui' flag; current llama-server builds do not expose it.
-        # We do not pass any web UI flags here. Users may add explicit flags via 'extra_flags'.
+        # Disable the Web UI by default
+        # Verified from current llama-server help: `--no-webui` is supported and disables the UI.
+        # This keeps the managed server headless and reduces noise / port conflicts.
+        cmd.append('--no-webui')
 
         # Optional tuning from params
         ctx_size = params.get('context_size') or params.get('ctx_size')
@@ -85,6 +96,15 @@ class LlamaCppServerProvider(OpenAIProvider):
         chat_template = params.get('chat_template')
         if chat_template:
             cmd.extend(['--chat-template', str(chat_template)])
+
+        # Speculative decoding (draft model)
+        # If a model-level setting 'draft_model_path' is provided, pass it via '-md <path>'
+        draft_model_path = params.get('draft_model_path')
+        if isinstance(draft_model_path, str) and draft_model_path.strip():
+            dmp = os.path.expanduser(draft_model_path.strip())
+            if not os.path.exists(dmp):
+                raise RuntimeError(f"draft_model_path does not exist: {dmp}")
+            cmd.extend(['-md', dmp])
 
         # API key handling
         use_api_key = params.get('use_api_key', True)
@@ -228,9 +248,14 @@ class LlamaCppServerProvider(OpenAIProvider):
         return None
 
     def _wait_until_ready(self, host: str, port: int, timeout_s: float) -> None:
-        """Poll /health or /v1/models until the server accepts requests."""
+        """Poll readiness endpoints until the server can serve completions.
+
+        Stage 1: wait for HTTP service (/health or /v1/models) to be up.
+        Stage 2: probe /v1/chat/completions to avoid 503 "Loading model" races.
+        """
         import http.client
         start = time.time()
+        # ---- Stage 1: server process ready ----
         while True:
             if self._proc and (self._proc.poll() is not None):
                 raise RuntimeError(
@@ -247,7 +272,7 @@ class LlamaCppServerProvider(OpenAIProvider):
                         resp.read()
                     except Exception:
                         pass
-                    return
+                    break
             except Exception:
                 pass
 
@@ -261,7 +286,7 @@ class LlamaCppServerProvider(OpenAIProvider):
                         resp.read()
                     except Exception:
                         pass
-                    return
+                    break
             except Exception:
                 pass
 
@@ -271,6 +296,75 @@ class LlamaCppServerProvider(OpenAIProvider):
                     f"See log: {self._log_path}"
                 )
             time.sleep(0.25)
+
+        # ---- Stage 2: model loaded (avoid 503 Loading model) ----
+        # Try to discover a model id for the request
+        model_id = None
+        try:
+            conn = http.client.HTTPConnection(host, port, timeout=2.0)
+            conn.request('GET', '/v1/models')
+            resp = conn.getresponse()
+            if 200 <= resp.status < 300:
+                raw = resp.read()
+                try:
+                    data = json.loads(raw.decode('utf-8')) if raw else {}
+                    arr = data.get('data') if isinstance(data, dict) else None
+                    if isinstance(arr, list) and arr:
+                        first = arr[0]
+                        if isinstance(first, dict):
+                            model_id = first.get('id') or first.get('name')
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # Poll chat completions with a minimal request until it succeeds (or timeout)
+        while True:
+            if self._proc and (self._proc.poll() is not None):
+                raise RuntimeError(
+                    f"llama-server exited early with code {self._proc.returncode}. "
+                    f"Check logs at {self._log_path}"
+                )
+            try:
+                payload = {
+                    'model': model_id or 'llama',
+                    'messages': [{'role': 'user', 'content': '.'}],
+                    'max_tokens': 1,
+                    'stream': False,
+                }
+                body = json.dumps(payload)
+                headers = {'Content-Type': 'application/json'}
+                if self._api_key:
+                    headers['Authorization'] = f'Bearer {self._api_key}'
+                conn = http.client.HTTPConnection(host, port, timeout=5.0)
+                conn.request('POST', '/v1/chat/completions', body=body, headers=headers)
+                resp = conn.getresponse()
+                status = resp.status
+                # Drain/close
+                try:
+                    resp.read()
+                except Exception:
+                    pass
+                # 200 means model ready to serve
+                if status == 200:
+                    return
+                # 503 while model loads -> keep waiting
+                if status == 503:
+                    # continue polling
+                    pass
+                else:
+                    # Any other status: assume ready enough to proceed
+                    return
+            except Exception:
+                # Ignore and retry until timeout
+                pass
+
+            if time.time() - start > timeout_s:
+                raise TimeoutError(
+                    f"Timed out waiting for model load on {host}:{port}. "
+                    f"See log: {self._log_path}"
+                )
+            time.sleep(0.4)
 
     # ---- Cleanup ------------------------------------------------------
     def cleanup(self):
