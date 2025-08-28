@@ -31,6 +31,9 @@ envisioned a device that would compress and store all of their knowledge. https:
   - Easily add any OpenAI-compatible provider through configuration—no code changes required.
   - Define and switch between different models and settings on the fly.
   - Session usage stats and cost tracking with configurable session budget notification.
+  - Local llama.cpp options:
+    - `LlamaCpp` uses in-process Python bindings (GGUF path only).
+    - `LlamaCppServer` auto-starts `llama-server` (OpenAI-compatible) and connects via our OpenAI client; no ports/URLs needed.
 
 - **Smart Conversation Handling**
   - Save, load, and export entire chats in human-readable formats (Markdown, plain text, PDF).
