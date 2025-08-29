@@ -46,17 +46,26 @@ class OutputFilterToolCallAction(InteractionAction):
         self.tool_placeholder = opts.get('tool_placeholder', self.tool_placeholder)
 
     def on_complete(self):  # noqa: D401
-        """Finalize state; do not surface partial markers.
+        """Finalize state and flush any visible tail.
 
-        Returns an empty string to avoid leaking incomplete markers as visible text.
+        Prior behavior dropped any pending carry, which could erase the entire
+        response when the model never emitted a newline (common for Harmony
+        `gpt-oss` outputs). We now emit the carry if we're not inside a tool
+        block. If a block opener was seen without a closing token, we still
+        suppress the hidden content to avoid leaking tool payloads.
         """
-        # Never emit carry: it represents partial markers (either opener or close tail)
+        tail = ""
+        # If not currently inside a hidden block, any remaining carry is
+        # normal visible content and should be flushed.
+        if self._carry and not self.in_block:
+            tail = self._carry
+
         # Reset state
         self.in_block = False
         self.current_label = None
         self._emitted_placeholder = False
         self._carry = ""
-        return ""
+        return tail
 
     def _emit_placeholder(self) -> str:
         """Emit the configured placeholder, or blank if unset.
