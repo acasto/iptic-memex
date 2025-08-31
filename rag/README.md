@@ -21,6 +21,9 @@ A small, self-contained retrieval system that indexes user-configured folders an
   - `load_rag_config(session) -> (indexes, active, vector_db, embedding_model)`
   - Safe traversal (`iter_index_files`), UTF-8 read, overlap-aware `chunk_text`.
   - Enforces read-only allowlist and symlink-escape protection.
+- `extractors.py`
+  - Basic text extraction for PDFs (PyPDF2), DOCX (python-docx), and XLSX (openpyxl).
+  - Reports minimal metadata and a version signature used for visibility in the manifest.
 - `indexer.py`
   - `update_index(index_name, root_path, vector_db, embed_fn, embedding_model, batch_size)`
   - Full rebuild MVP: discovers files, chunks text, batches embeddings, writes artifacts.
@@ -53,6 +56,7 @@ A small, self-contained retrieval system that indexes user-configured folders an
     - `notes_include = **/*.md, **/*.txt` (include-only; if set, files must match at least one)
     - `notes_exclude = **/node_modules/**, **/*.png` (exclude list)
   - Extensions: base allowlist is `.md,.mdx,.txt,.rst`. To include PDFs/DOCX/XLSX, set `[TOOLS] rag_included_exts = .md,.mdx,.txt,.rst,.pdf,.docx,.xlsx`.
+  - Glob nuance: a leading `**/` is treated as optional for includes, so `**/*.md` also matches files at the index root.
 - `[DEFAULT]`
   - `vector_db=~/.codex/vector_store` (or your preferred path, e.g., `~/.config/iptic-memex/vector_store`)
 - `[TOOLS]`
