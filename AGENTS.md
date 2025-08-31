@@ -263,8 +263,10 @@ Gating and CLI‑only flows
   - `load rag` (action: `actions/load_rag_action.py`): interactive query and summary; loads top matches into chat context.
 - Config:
   - `[RAG]`: list indexes as `name = /path/to/folder`.
+  - Optional per-index filters: `name_include = <globs>`, `name_exclude = <globs>` (globs are matched relative to the index root; includes run first, then excludes prune).
   - `[TOOLS].embedding_model`: choose an embedding model (e.g., `text-embedding-3-small`).
   - Optional `[TOOLS].embedding_provider` to override which provider performs embeddings.
+  - Optional `[TOOLS]` defaults for discovery: `rag_default_include = <globs>` and `rag_default_exclude = <globs>`.
 - Internals:
   - `rag/vector_store.py`: `NaiveStore` layout – `manifest.json`, `chunks.jsonl`, `embeddings.json`.
   - `rag/indexer.py`: chunks text, batches embeddings, writes artifacts.

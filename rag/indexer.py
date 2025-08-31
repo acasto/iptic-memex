@@ -22,13 +22,15 @@ def update_index(
     embedding_model: str,
     batch_size: int = 128,
     embedding_signature: Optional[Dict[str, Any]] = None,
+    include_globs: Optional[List[str]] = None,
+    exclude_globs: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Build or refresh the index for a single named root.
 
     Incremental: reuse embeddings for unchanged chunks (by content hash) when
     the embedding signature matches the existing manifest. Returns stats dict.
     """
-    files = list(iter_index_files(root_path))
+    files = list(iter_index_files(root_path, include_globs=include_globs, exclude_globs=exclude_globs))
     new_chunks: List[Dict[str, Any]] = []
     new_texts: List[str] = []
     for path in files:

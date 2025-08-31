@@ -2,11 +2,44 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, Tuple
+from typing import Dict, Iterable, Iterator, Tuple, List, Optional
+import fnmatch
 
 
 DEFAULT_EXTS = {".md", ".mdx", ".txt", ".rst"}
 DEFAULT_EXCLUDES = {".git", ".hg", ".svn", "node_modules", ".venv", "__pycache__"}
+
+# Config helpers
+try:
+    from utils.tool_args import get_list
+except Exception:  # very early import paths or tests
+    def get_list(args, key, default=None, sep=",", strip_items=True):  # type: ignore
+        try:
+            val = args.get(key)
+        except Exception:
+            val = None
+        if val is None:
+            return default
+        if isinstance(val, (list, tuple)):
+            out = []
+            for it in val:
+                try:
+                    s = str(it)
+                    if strip_items:
+                        s = s.strip()
+                    if s:
+                        out.append(s)
+                except Exception:
+                    continue
+            return out
+        try:
+            s = str(val).strip()
+        except Exception:
+            return default
+        if s == "":
+            return default
+        parts = [p.strip() if strip_items else p for p in s.split(sep)]
+        return [p for p in parts if p]
 
 
 def _normalize_path(p: str) -> str:
@@ -57,8 +90,36 @@ def load_rag_config(session) -> Tuple[Dict[str, str], list[str], str, str]:
     return indexes, active, vector_db, embedding_model
 
 
-def iter_index_files(root: str, *, exts: set[str] | None = None, excludes: set[str] | None = None,
-                     max_bytes: int = 10 * 1024 * 1024) -> Iterator[str]:
+def _matches_any(posix_path: str, patterns: Optional[List[str]]) -> bool:
+    if not patterns:
+        return False
+    for pat in patterns:
+        try:
+            if fnmatch.fnmatchcase(posix_path, pat):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _rel_posix(base: Path, p: Path) -> Optional[str]:
+    try:
+        rel = p.resolve().relative_to(base)
+        s = rel.as_posix()
+        return s if s != "." else ""
+    except Exception:
+        return None
+
+
+def iter_index_files(
+    root: str,
+    *,
+    exts: set[str] | None = None,
+    excludes: set[str] | None = None,
+    include_globs: Optional[List[str]] = None,
+    exclude_globs: Optional[List[str]] = None,
+    max_bytes: int = 10 * 1024 * 1024,
+) -> Iterator[str]:
     """Yield absolute file paths under root that match filters.
 
     - Only returns files whose real path remains within root (symlink escape protection).
@@ -69,8 +130,19 @@ def iter_index_files(root: str, *, exts: set[str] | None = None, excludes: set[s
     excludes = excludes or DEFAULT_EXCLUDES
 
     for dirpath, dirnames, filenames in os.walk(root):
-        # Prune excluded directories in-place
-        dirnames[:] = [d for d in dirnames if d not in excludes]
+        # Prune excluded directories in-place (by name and glob)
+        cur_rel = _rel_posix(base, Path(dirpath)) or ""
+        pruned: List[str] = []
+        for d in list(dirnames):
+            if d in excludes:
+                pruned.append(d)
+                continue
+            child_rel = f"{cur_rel}/{d}" if cur_rel else d
+            if _matches_any(child_rel, exclude_globs) or _matches_any(child_rel + "/", exclude_globs):
+                pruned.append(d)
+                continue
+        if pruned:
+            dirnames[:] = [d for d in dirnames if d not in pruned]
         for name in filenames:
             p = Path(dirpath) / name
             try:
@@ -84,6 +156,15 @@ def iter_index_files(root: str, *, exts: set[str] | None = None, excludes: set[s
                         continue
                 # Filter by extension
                 if rp.suffix.lower() not in exts:
+                    continue
+                # Glob includes (relative to root)
+                rel = _rel_posix(base, rp)
+                if rel is None:
+                    continue
+                if include_globs and not _matches_any(rel, include_globs):
+                    continue
+                # Glob excludes
+                if _matches_any(rel, exclude_globs):
                     continue
                 # Size cap
                 try:
@@ -116,3 +197,49 @@ def chunk_text(text: str, *, size: int = 3000, overlap: int = 300) -> Iterable[t
         if j >= n:
             break
         i = max(0, j - overlap)
+
+
+def load_rag_filters(session) -> Dict[str, Dict[str, List[str] | None]]:
+    """Load per-index include/exclude glob patterns.
+
+    Returns mapping: { index: { 'include': [patterns]|None, 'exclude': [patterns]|None } }
+    - Per-index keys read from [RAG]: <index>_include, <index>_exclude
+    - Defaults from [TOOLS]: rag_default_include, rag_default_exclude
+    """
+    tools = session.get_tools() or {}
+    # Accept both the requested key and a correctly spelled alias for safety
+    default_include = get_list(tools, 'rag_default_include') or []
+    default_exclude = get_list(tools, 'rag_default_exclude') or []
+
+    cfg = session.config.base_config
+    sec = getattr(cfg, '_sections', {}).get('RAG', {}) or {}
+
+    # Build index roots
+    indexes: Dict[str, str] = {}
+    out: Dict[str, Dict[str, List[str] | None]] = {}
+    try:
+        for key, value in sec.items():
+            if key in ('active', '__name__') or key.endswith('_include') or key.endswith('_exclude'):
+                continue
+            abspath = _normalize_path(value)
+            if os.path.isdir(abspath):
+                indexes[key] = abspath
+    except Exception:
+        pass
+
+    for name in indexes.keys():
+        inc = get_list(sec, f'{name}_include')  # type: ignore[arg-type]
+        exc = get_list(sec, f'{name}_exclude')  # type: ignore[arg-type]
+        eff_inc = inc if (inc and len(inc) > 0) else (default_include if default_include else None)
+        # Merge default + per-index for excludes
+        merged_exc: List[str] = []
+        if default_exclude:
+            merged_exc.extend(default_exclude)
+        if exc:
+            for p in exc:
+                if p not in merged_exc:
+                    merged_exc.append(p)
+        eff_exc = merged_exc if merged_exc else None
+        out[name] = {'include': eff_inc, 'exclude': eff_exc}
+
+    return out

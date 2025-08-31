@@ -49,11 +49,17 @@ A small, self-contained retrieval system that indexes user-configured folders an
 - `[RAG]`
   - Flat map of indexes: `notes=/abs/path/to/notes`, `docs=/abs/path/to/docs`
   - Optional: `active=notes,docs` (defaults to all keys if omitted)
+  - Optional per-index filters (glob patterns, matched relative to each index root):
+    - `notes_include = **/*.md, **/*.txt` (include-only; if set, files must match at least one)
+    - `notes_exclude = **/node_modules/**, **/*.png` (exclude list)
 - `[DEFAULT]`
   - `vector_db=~/.codex/vector_store` (or your preferred path, e.g., `~/.config/iptic-memex/vector_store`)
 - `[TOOLS]`
   - `embedding_model=text-embedding-3-small` (or your choice)
   - Optional: `embedding_provider=openai|openairesponses|…` to override embedding provider only.
+  - Optional defaults for filters (applied to all indexes unless overridden):
+    - `rag_default_include =` (empty means include everything)
+    - `rag_default_exclude = .git, node_modules, __pycache__, .venv, **/*.png, **/*.jpg`
 
 ### RAG tuning (in `[TOOLS]`)
 RAG exposes a few focused knobs under `[TOOLS]` to balance relevance vs context size:
@@ -73,7 +79,7 @@ RAG exposes a few focused knobs under `[TOOLS]` to balance relevance vs context 
 ## Filesystem Model (Security)
 - Read-only traversal of configured roots; no writes into source trees.
 - Realpath validation blocks symlink escapes.
-- Filters: include `.md|.mdx|.txt|.rst`; exclude `.git`, `node_modules`, `.venv`, `__pycache__`, etc.
+- Filters: include `.md|.mdx|.txt|.rst` by default; optional per-index `*_include`/`*_exclude` glob patterns, plus `[TOOLS]` defaults.
 - Size caps to avoid runaway memory/latency.
 
 ## Data Layout
