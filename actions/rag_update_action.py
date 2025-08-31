@@ -3,7 +3,7 @@ from __future__ import annotations
 from base_classes import InteractionAction
 from typing import List
 
-from rag.fs_utils import load_rag_config, load_rag_filters
+from rag.fs_utils import load_rag_config, load_rag_filters, load_rag_exts, load_rag_max_bytes
 from core.provider_factory import ProviderFactory
 from rag.indexer import update_index
 from typing import Optional
@@ -49,6 +49,8 @@ class RagUpdateAction(InteractionAction):
         target = args[0] if args else None
         indexes, active, vector_db, embedding_model = load_rag_config(self.session)
         filters = load_rag_filters(self.session)
+        exts = load_rag_exts(self.session)
+        max_bytes = load_rag_max_bytes(self.session)
 
         if not indexes:
             try:
@@ -95,7 +97,10 @@ class RagUpdateAction(InteractionAction):
                 if exc:
                     info_bits.append(f"exclude={len(exc)}")
                 suffix = f" (" + ", ".join(info_bits) + ")" if info_bits else ""
-                self.session.ui.emit('status', {'message': f"Indexing {name}: {root}{suffix}"})
+                ext_suffix = f", exts={len(exts)}" if exts else ""
+                size_mb = max_bytes // (1024 * 1024)
+                size_suffix = f", max_file_mb={size_mb}"
+                self.session.ui.emit('status', {'message': f"Indexing {name}: {root}{suffix}{ext_suffix}{size_suffix}"})
             except Exception:
                 pass
             # Build an embedding signature to avoid mixing vector backends/dims
@@ -112,6 +117,8 @@ class RagUpdateAction(InteractionAction):
                 embedding_signature=sig,
                 include_globs=(filters.get(name, {}).get('include') if filters else None),
                 exclude_globs=(filters.get(name, {}).get('exclude') if filters else None),
+                exts=exts,
+                max_bytes=max_bytes,
             )
             try:
                 skipped = stats.get('skipped')

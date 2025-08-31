@@ -145,11 +145,12 @@ def search(
     top = scored[:k]
     out: List[Dict[str, Any]] = []
     for s, name, ch in top:
-        path = ch.get('path')
-        ls, le, snippet = _char_to_line_range(path, int(ch.get('start', 0)), int(ch.get('end', 0)), preview_lines)
+        preview_path = ch.get('path')
+        display_path = ch.get('source_path', preview_path)
+        ls, le, snippet = _char_to_line_range(preview_path, int(ch.get('start', 0)), int(ch.get('end', 0)), preview_lines)
         out.append({
             'score': round(float(s), 4),
-            'path': path,
+            'path': display_path,
             'line_start': ls,
             'line_end': le,
             'index': name,

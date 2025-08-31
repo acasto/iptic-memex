@@ -52,6 +52,7 @@ A small, self-contained retrieval system that indexes user-configured folders an
   - Optional per-index filters (glob patterns, matched relative to each index root):
     - `notes_include = **/*.md, **/*.txt` (include-only; if set, files must match at least one)
     - `notes_exclude = **/node_modules/**, **/*.png` (exclude list)
+  - Extensions: base allowlist is `.md,.mdx,.txt,.rst`. To include PDFs/DOCX/XLSX, set `[TOOLS] rag_included_exts = .md,.mdx,.txt,.rst,.pdf,.docx,.xlsx`.
 - `[DEFAULT]`
   - `vector_db=~/.codex/vector_store` (or your preferred path, e.g., `~/.config/iptic-memex/vector_store`)
 - `[TOOLS]`
@@ -75,11 +76,12 @@ RAG exposes a few focused knobs under `[TOOLS]` to balance relevance vs context 
 - `rag_group_by_file` (bool, default True): group hits by file before attaching.
 - `rag_merge_adjacent` (bool, default True): merge near-contiguous ranges in the same file.
 - `rag_merge_gap` (int, default 5): maximum line gap to merge adjacent ranges.
+- `rag_max_file_mb` (int, default 10): maximum file size considered during discovery.
 
 ## Filesystem Model (Security)
 - Read-only traversal of configured roots; no writes into source trees.
 - Realpath validation blocks symlink escapes.
-- Filters: include `.md|.mdx|.txt|.rst` by default; optional per-index `*_include`/`*_exclude` glob patterns, plus `[TOOLS]` defaults.
+- Filters: include `.md|.mdx|.txt|.rst` by default; optional per-index `*_include`/`*_exclude` glob patterns, plus `[TOOLS]` defaults. Extend the allowlist via `[TOOLS].rag_included_exts`.
 - Size caps to avoid runaway memory/latency.
 
 ## Data Layout
@@ -136,7 +138,7 @@ RAG exposes a few focused knobs under `[TOOLS]` to balance relevance vs context 
 
 ## Extension Points
 - Backends: add a new store implementing the same write/read contract; switch via a future `[RAG] backend=naive|faiss|sqlite-vec`.
-- Extractors: plug file-type parsers prior to chunking (PDF, DOCX, code-aware chunkers).
+- Extractors: plug file-type parsers prior to chunking (PDF, DOCX, XLSX, code-aware chunkers). RAG includes basic PDF/DOCX/XLSX text extraction and caches extracted text under `vector_db/<index>/extracted/`.
 - Scoring: swap similarity function or add MMR/diversity selection.
 - Filters: extend include/exclude patterns and `.gitignore`-style support.
 
@@ -146,7 +148,7 @@ Near-term improvements
 - Per-index file locks: simple `.lock` in `vector_db/<index>/` to avoid concurrent writers.
 - Knobs: `[TOOLS] rag_top_k` (default 8), `rag_per_index_cap`, `rag_preview_lines_default`.
 - `rag status` JSON output option for scripting and integrations.
-- Configurable include extensions for discovery (beyond .md/.mdx/.txt/.rst) via a future `[RAG] include_exts` key.
+- More discovery knobs as needed (rag_included_exts is supported).
 - UX: dedupe near-identical results; group hits by file with consolidated previews; ANSI highlighting for preview matches (optional).
 - Assistant tool (later): `RAGSEARCH` official tool returning structured citations; assistant requests user to load files as needed.
 
@@ -156,7 +158,7 @@ Backends
 - Document how to select backend once the `[RAG] backend` setting is introduced.
 
 Extractors & Chunking
-- Add PDF/DOCX extractors; detect and skip binaries reliably; optional `chardet`/`cchardet` fallback.
+- Expand PDF/DOCX/XLSX handling (OCR for scanned PDFs as opt-in; tables/headers in DOCX); optional `chardet`/`cchardet` fallback.
 - Smarter chunking: header-aware splits for Markdown; overlap tuning; code-aware strategies.
 
 Performance & Safety

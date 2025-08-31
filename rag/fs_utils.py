@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, Tuple, List, Optional
+from typing import Dict, Iterable, Iterator, Tuple, List, Optional, Set
 import fnmatch
 
 
@@ -11,7 +11,7 @@ DEFAULT_EXCLUDES = {".git", ".hg", ".svn", "node_modules", ".venv", "__pycache__
 
 # Config helpers
 try:
-    from utils.tool_args import get_list
+    from utils.tool_args import get_list, get_int
 except Exception:  # very early import paths or tests
     def get_list(args, key, default=None, sep=",", strip_items=True):  # type: ignore
         try:
@@ -40,6 +40,17 @@ except Exception:  # very early import paths or tests
             return default
         parts = [p.strip() if strip_items else p for p in s.split(sep)]
         return [p for p in parts if p]
+    def get_int(args, key, default=None):  # type: ignore
+        try:
+            val = args.get(key)
+        except Exception:
+            return default
+        if val is None:
+            return default
+        try:
+            return int(val)
+        except Exception:
+            return default
 
 
 def _normalize_path(p: str) -> str:
@@ -95,7 +106,11 @@ def _matches_any(posix_path: str, patterns: Optional[List[str]]) -> bool:
         return False
     for pat in patterns:
         try:
+            # Treat leading '**/' as optional so patterns like '**/*.pdf'
+            # also match files at the root level (e.g., 'a.pdf').
             if fnmatch.fnmatchcase(posix_path, pat):
+                return True
+            if pat.startswith('**/') and fnmatch.fnmatchcase(posix_path, pat[3:]):
                 return True
         except Exception:
             continue
@@ -243,3 +258,38 @@ def load_rag_filters(session) -> Dict[str, Dict[str, List[str] | None]]:
         out[name] = {'include': eff_inc, 'exclude': eff_exc}
 
     return out
+
+
+def load_rag_exts(session) -> Set[str]:
+    """Return effective extension allowlist for discovery.
+
+    Defaults to DEFAULT_EXTS. If `[TOOLS].rag_included_exts` is set, it extends
+    the defaults (merge) for safety.
+    """
+    tools = session.get_tools() or {}
+    raw = get_list(tools, 'rag_included_exts')
+    exts: Set[str] = set(DEFAULT_EXTS)
+    if raw:
+        for itm in raw:
+            s = str(itm).strip().lower()
+            if not s:
+                continue
+            if not s.startswith('.'):
+                if s.startswith('*'):
+                    # allow forms like *.md
+                    s = s[1:]
+                s = '.' + s
+            exts.add(s)
+    return exts
+
+
+def load_rag_max_bytes(session) -> int:
+    """Return max file size in bytes for discovery.
+
+    Reads `[TOOLS].rag_max_file_mb`; defaults to 10 MB when unset/invalid.
+    """
+    tools = session.get_tools() or {}
+    mb = get_int(tools, 'rag_max_file_mb')
+    if not isinstance(mb, int) or mb <= 0:
+        return 10 * 1024 * 1024
+    return mb * 1024 * 1024

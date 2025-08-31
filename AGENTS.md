@@ -264,6 +264,7 @@ Gating and CLI‑only flows
 - Config:
   - `[RAG]`: list indexes as `name = /path/to/folder`.
   - Optional per-index filters: `name_include = <globs>`, `name_exclude = <globs>` (globs are matched relative to the index root; includes run first, then excludes prune).
+  - Optional extension allowlist: `[TOOLS] rag_included_exts = .md,.mdx,.txt,.rst,.pdf,.docx,.xlsx` to enable PDF/DOCX/XLSX extraction.
   - `[TOOLS].embedding_model`: choose an embedding model (e.g., `text-embedding-3-small`).
   - Optional `[TOOLS].embedding_provider` to override which provider performs embeddings.
   - Optional `[TOOLS]` defaults for discovery: `rag_default_include = <globs>` and `rag_default_exclude = <globs>`.
@@ -273,6 +274,7 @@ Gating and CLI‑only flows
   - `rag/search.py`: loads artifacts, embeds query, cosine similarity, maps to line-range previews.
   - `rag/fs_utils.py`: pulls `[RAG]` config, active index, paths, and embedding model/provider.
   - See `rag/README.md` for details and roadmaps (incremental updates, locks, backends).
+  - Size cap: `[TOOLS].rag_max_file_mb` (default 10) controls the maximum file size considered during discovery.
 
 ## Stepwise Actions & UI Adapters (Core)
 ## OpenAI Responses API

@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 import os
 from datetime import datetime
-from typing import List, Dict, Any, Callable, Optional
+from pathlib import Path
+from typing import List, Dict, Any, Callable, Optional, Set
 
 from .fs_utils import iter_index_files, read_text, chunk_text
+from .extractors import extract_text_for_file, get_supported_exts, get_versions
 from .vector_store import NaiveStore
 
 
@@ -24,27 +26,68 @@ def update_index(
     embedding_signature: Optional[Dict[str, Any]] = None,
     include_globs: Optional[List[str]] = None,
     exclude_globs: Optional[List[str]] = None,
+    exts: Optional[Set[str]] = None,
+    max_bytes: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Build or refresh the index for a single named root.
 
     Incremental: reuse embeddings for unchanged chunks (by content hash) when
     the embedding signature matches the existing manifest. Returns stats dict.
     """
-    files = list(iter_index_files(root_path, include_globs=include_globs, exclude_globs=exclude_globs))
+    # Effective ext allowlist
+    effective_exts: Set[str] = set(exts) if exts else set()
+    files = list(
+        iter_index_files(
+            root_path,
+            include_globs=include_globs,
+            exclude_globs=exclude_globs,
+            exts=(effective_exts if effective_exts else None),
+            max_bytes=(max_bytes if isinstance(max_bytes, int) and max_bytes > 0 else 10 * 1024 * 1024),
+        )
+    )
     new_chunks: List[Dict[str, Any]] = []
     new_texts: List[str] = []
+    # Prepare extraction cache dir for this index
+    index_extract_dir = os.path.join(os.path.abspath(vector_db), index_name, 'extracted')
     for path in files:
-        text = read_text(path) or ''
+        ext = Path(path).suffix.lower()
+        text = ''
+        src_path = path
+        preview_path = path
+        if ext in get_supported_exts():
+            t, meta = extract_text_for_file(path)
+            if not t:
+                continue  # skip unsupported/empty
+            text = t
+            # Write extraction cache to preview file (.txt)
+            try:
+                # relpath under root_path
+                abs_root = Path(root_path).resolve()
+                rel = Path(path).resolve().relative_to(abs_root)
+                rel_txt = rel.as_posix() + '.txt'
+                dest = Path(index_extract_dir) / rel_txt
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                with open(dest, 'w', encoding='utf-8') as f:
+                    f.write(text)
+                preview_path = str(dest)
+            except Exception:
+                # If cache write fails, fall back to in-memory text and mark preview to source
+                preview_path = path
+        else:
+            text = read_text(path) or ''
         if not text:
             continue
         for start, end, ch in chunk_text(text):
             h = _hash_text(ch)
-            new_chunks.append({
-                'path': path,
+            entry: Dict[str, Any] = {
+                'path': preview_path,
                 'start': start,
                 'end': end,
                 'hash': h,
-            })
+            }
+            if preview_path != src_path:
+                entry['source_path'] = src_path
+            new_chunks.append(entry)
             new_texts.append(ch)
 
     store = NaiveStore(vector_db, index_name)
@@ -109,6 +152,9 @@ def update_index(
 
     # Persist
     now = datetime.utcnow().isoformat() + 'Z'
+    # Extraction signature for visibility only (does not affect reuse logic)
+    extraction_sig = get_versions()
+
     manifest = {
         'name': index_name,
         'root_path': os.path.abspath(root_path),
@@ -116,6 +162,7 @@ def update_index(
         'updated': now,
         'embedding_model': embedding_model,  # for backward compat
         'embedding_signature': sig,
+        'extraction_signature': extraction_sig,
         'vector_dim': (len(embeddings[0]) if embeddings else (prev_manifest.get('vector_dim') if prev_manifest else None)),
         'backend': 'naive',
         'counts': {
