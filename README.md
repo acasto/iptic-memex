@@ -48,6 +48,23 @@ envisioned a device that would compress and store all of their knowledge. https:
   - **Memory (%%MEMORY%%)**: Store and recall facts or context across sessions in SQLite with support for project-specific memory.
   - **RAG**: Build local indexes with embeddings and query them to load relevant snippets into chat context.
 
+### Filesystem Sandbox and --base-dir
+
+- Tools that touch the filesystem (file and cmd) operate inside a sandbox rooted at `[TOOLS].base_directory`.
+- Default `base_directory = working` resolves to the shell directory where you launch Memex.
+- You can override the sandbox root per run with `--base-dir PATH`.
+  - Local CMD: runs with `cwd` set to the sandbox root, so `pwd` shows the base dir and `ls` lists it.
+  - Docker CMD: mounts the base dir at `/workspace` and runs with `-w /workspace`.
+  - File Tool: relative paths resolve against the base dir; absolute paths must be inside it.
+- Explicit attachments (`-f/--file`) are user-selected and not sandboxed by `base_directory`.
+
+Examples
+
+- Chat in another repo without `cd`:
+  - `python main.py chat --base-dir ~/Projects/other-repo`
+- Run an agent over a codebase with writes denied:
+  - `echo "scan the repo and summarize" | python main.py --steps 4 --agent-writes deny --base-dir /path/to/repo -f -`
+
 ---
 
 ## Assistant Tools: Dynamic Registry
@@ -212,6 +229,10 @@ See [INSTALL.md](INSTALL.md) for details on how to adjust requirements.txt as ne
   - Deny writes; require diffs:
     ```bash
     python main.py --steps 3 --agent-writes deny -f project.md
+    ```
+  - Point the agent at a different workspace root:
+    ```bash
+    python main.py --steps 3 --base-dir ~/Projects/that-repo
     ```
   - Stdin as your message (not a file context):
     - When passing `-f -`, the stdin text becomes the actual user message for the turn (it won’t appear wrapped in file tags). This keeps instructions clean and avoids the model echoing `<|results:stdin|>`.

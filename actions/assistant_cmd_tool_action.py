@@ -157,7 +157,8 @@ class AssistantCmdToolAction(InteractionAction):
                     stdin=stdin,
                     stdout=stdout,
                     stderr=subprocess.PIPE,
-                    text=True
+                    text=True,
+                    cwd=self.base_dir  # Ensure pipeline runs relative to the configured base directory
                 )
 
                 processes.append(process)

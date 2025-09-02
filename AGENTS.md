@@ -46,6 +46,17 @@
 - Keep `config.ini`/`models.ini` minimal in repo; override in user config for local tweaks.
 - When adding providers, document required keys and safe defaults; avoid enabling risky shell/file operations by default.
 
+### Filesystem Sandbox
+- The assistant’s file- and cmd-related actions are restricted to a sandbox root controlled by `[TOOLS].base_directory`.
+  - `working` or `.` uses the current shell directory at process start.
+  - Absolute paths are allowed only if they reside inside the sandbox root.
+  - Relative paths resolve against the sandbox root (not the process CWD).
+- CLI override: `--base-dir PATH` sets the sandbox root for a single run and is respected by all tools.
+  - Local CMD runs with `cwd = base_dir` so `pwd`/`ls` operate within the sandbox.
+  - Docker CMD mounts the sandbox root at `/workspace` and sets `-w /workspace`.
+  - File tool reads/writes are validated and confirmed per `[TOOLS]` policy and agent write policy.
+- Attachments passed via `-f/--file` are explicit user inputs and not subject to the sandbox.
+
 ## Actions & Commands
 - Actions live in `actions/<snake>_action.py`.
 - New actions should subclass `StepwiseAction` and implement `start(args, content)` and `resume(state_token, response)`.

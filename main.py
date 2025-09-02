@@ -18,8 +18,9 @@ from session import SessionBuilder
 @click.option('--no-agent-status-tags', is_flag=True, default=False, help='Disable per-turn <status> tag injection')
 @click.option('--agent-output', type=click.Choice(['final', 'full', 'none']), default=None, help='Agent output mode: final (default), full, or none')
 @click.option('--tools', default=None, help='Agent tools allowlist (CSV). Use "None" to disable all tools.')
+@click.option('--base-dir', default=None, help='Override [TOOLS].base_directory (workspace root) for file/cmd tools')
 @click.pass_context
-def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw, file, steps, agent_writes, no_agent_status_tags, agent_output, tools):
+def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw, file, steps, agent_writes, no_agent_status_tags, agent_output, tools, base_dir):
     """
     the main entry point for the CLI click interface
     """
@@ -69,6 +70,9 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw,
             options['active_tools_agent'] = '__none__'
         elif tval:
             options['active_tools_agent'] = tval
+    # Filesystem base dir override for tools (maps to [TOOLS].base_directory)
+    if base_dir:
+        options['base_directory'] = base_dir
     
     # Validate model early if provided (fail fast on invalid model)
     if 'model' in options and options['model']:

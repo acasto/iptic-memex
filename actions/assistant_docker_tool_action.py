@@ -16,8 +16,8 @@ class AssistantDockerToolAction(InteractionAction):
         self.fs_handler = session.get_action('assistant_fs_handler')
         self._default_timeout = float(session.get_tools().get('timeout', 15))
 
-        # Get base directory configuration
-        base_dir = session.get_tools().get('base_directory', 'working')
+        # Get base directory configuration (honor CLI override)
+        base_dir = session.get_option('TOOLS', 'base_directory', fallback='working')
         self.base_dir = os.getcwd() if base_dir in ('working', '.') else os.path.expanduser(base_dir)
 
         # Initialize environment settings

@@ -14,8 +14,8 @@ class AssistantFsHandlerAction(InteractionAction):
         self.session = session
         self.fs = session.utils.fs
 
-        # Get base directory configuration
-        base_dir = session.get_tools().get('base_directory', 'working')
+        # Get base directory configuration (allow CLI override via session.get_option)
+        base_dir = session.get_option('TOOLS', 'base_directory', fallback='working')
         if base_dir == 'working' or base_dir == '.':
             self._base_dir = os.getcwd()
         else:
@@ -30,7 +30,16 @@ class AssistantFsHandlerAction(InteractionAction):
             if not file_path:
                 return None
 
-            resolved_path = os.path.abspath(os.path.expanduser(file_path))
+            # Expand user and make relative paths resolve against the configured base dir,
+            # not the current working directory. This keeps tool behavior consistent when
+            # --base-dir points outside the process CWD.
+            expanded = os.path.expanduser(file_path)
+            if not os.path.isabs(expanded):
+                candidate = os.path.join(self._base_dir, expanded)
+            else:
+                candidate = expanded
+
+            resolved_path = os.path.abspath(candidate)
             if not self.is_path_in_base(self._base_dir, resolved_path):
                 self.session.add_context('assistant', {
                     'name': 'fs_error',
