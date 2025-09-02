@@ -57,6 +57,10 @@
   - File tool reads/writes are validated and confirmed per `[TOOLS]` policy and agent write policy.
 - Attachments passed via `-f/--file` are explicit user inputs and not subject to the sandbox.
 
+### Docker CMD in Agent Mode
+- To avoid cross-run contention, agents default to ephemeral Docker runs (each command in a fresh `docker run --rm ...`).
+- Controlled by `[AGENT].docker_always_ephemeral` (default `True`). If you set it to `False`, a persistent environment defined by `[TOOLS].docker_env` may be reused, which can couple the agent to the first container’s mount/options.
+
 ## Actions & Commands
 - Actions live in `actions/<snake>_action.py`.
 - New actions should subclass `StepwiseAction` and implement `start(args, content)` and `resume(state_token, response)`.

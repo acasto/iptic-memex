@@ -54,9 +54,13 @@ envisioned a device that would compress and store all of their knowledge. https:
 - Default `base_directory = working` resolves to the shell directory where you launch Memex.
 - You can override the sandbox root per run with `--base-dir PATH`.
   - Local CMD: runs with `cwd` set to the sandbox root, so `pwd` shows the base dir and `ls` lists it.
-  - Docker CMD: mounts the base dir at `/workspace` and runs with `-w /workspace`.
+- Docker CMD: mounts the base dir at `/workspace` and runs with `-w /workspace`.
   - File Tool: relative paths resolve against the base dir; absolute paths must be inside it.
 - Explicit attachments (`-f/--file`) are user-selected and not sandboxed by `base_directory`.
+
+Docker and Agents
+- By default, agents force the Docker CMD tool to use ephemeral containers to avoid contention across parallel runs.
+- Control via `[AGENT].docker_always_ephemeral` (defaults to `True`). Set to `False` only if you intentionally share a persistent container and understand the implications.
 
 Examples
 

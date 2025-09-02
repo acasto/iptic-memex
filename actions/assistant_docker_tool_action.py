@@ -56,7 +56,15 @@ class AssistantDockerToolAction(InteractionAction):
     def _refresh_environment_config(self) -> None:
         """Refresh Docker environment configuration from current session settings"""
         # Get Docker environment configuration
-        self.docker_env = self.session.get_tools().get('docker_env', 'ephemeral')
+        desired_env = self.session.get_tools().get('docker_env', 'ephemeral')
+        # In Agent Mode, optionally force ephemeral to avoid contention
+        try:
+            force_ephemeral = bool(self.session.in_agent_mode()) and bool(
+                self.session.get_option('AGENT', 'docker_always_ephemeral', True)
+            )
+        except Exception:
+            force_ephemeral = False
+        self.docker_env = 'ephemeral' if force_ephemeral else desired_env
         env_section = self.docker_env.upper()
         # Load persistence setting from the environment's config
         self.is_persistent = self.session.get_option(env_section, 'persistent', False)
