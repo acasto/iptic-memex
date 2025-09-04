@@ -1,0 +1,36 @@
+Tool: persona_review
+
+Purpose:
+- Review provided marketing copy from one or more persona perspectives and return concise, structured feedback.
+- Optionally synthesize a panel summary across personas.
+
+Inputs:
+- content (string): the copy to review.
+- personas (list or comma-separated string): e.g., CFO, VP Engineering, Marketing Director.
+- goal (string, optional): objective (e.g., improve landing page conversion).
+- rubric (string, optional): evaluation criteria (clarity, trust, benefits, objections, CTA).
+- panel (boolean, optional): include a consensus summary across personas.
+- tone (string, optional): style guidance (e.g., B2B, concise, no jargon).
+- constraints (string, optional): guardrails/limits.
+- model (string, optional): model override; otherwise [AGENT].default_model is used.
+- files (list or comma-separated, optional): supplemental documents (text/markdown) with guidelines: brand voice, target audience,
+  persona profiles, channel/stage notes, etc. The tool appends their text as a [Guidelines] block for each persona and the panel.
+
+Behavior:
+- Runs an internal completion per persona using the prompt `personas/review` and a compact persona message.
+- If panel=true, runs a synthesis pass using `personas/panel` over the persona outputs.
+- If `files` are provided, their combined text is attached under [Guidelines] in each message.
+- Adds results to the assistant context in a concise format; do not write files.
+
+Output format per persona:
+- Rating (1–5)
+- What works (2–3 bullets)
+- Gaps/concerns (3–5 bullets)
+- Objections + counterpoints (2–3)
+- CTA feedback (suggest 1–2 improved CTAs)
+- Rewrite snippet (≤3 lines)
+
+Guidance:
+- Keep bullets short and concrete. Avoid fluff.
+- Respect large-input limits; if content is too long, the tool will disable auto-submit for user review.
+ - Use `files` to pass broader context (brand guide, ICPs, audience notes). For quick/small tasks, using arguments may suffice.
