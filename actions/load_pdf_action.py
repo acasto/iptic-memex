@@ -2,7 +2,13 @@ import os
 import glob
 from typing import List
 from base_classes import StepwiseAction, Completed
-from PyPDF2 import PdfReader
+try:
+    from pypdf import PdfReader  # preferred, maintained successor to PyPDF2
+except Exception:
+    import warnings
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=DeprecationWarning, module="PyPDF2")
+        from PyPDF2 import PdfReader  # type: ignore
 from utils.tool_args import get_str
 
 

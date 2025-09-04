@@ -4,6 +4,7 @@ import os
 from io import StringIO
 from pathlib import Path
 from typing import Tuple, Dict, Any, Optional
+import warnings
 
 
 def _safe_import(name: str):
@@ -19,7 +20,12 @@ def get_supported_exts() -> set[str]:
 
 def get_versions() -> Dict[str, str | None]:
     out: Dict[str, str | None] = {}
-    PyPDF2 = _safe_import('PyPDF2')
+    # Prefer pypdf; include PyPDF2 only if present (suppress deprecation warnings)
+    pypdf = _safe_import('pypdf')
+    out['pypdf'] = getattr(pypdf, '__version__', None) if pypdf else None
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', category=DeprecationWarning, module='PyPDF2')
+        PyPDF2 = _safe_import('PyPDF2')
     out['PyPDF2'] = getattr(PyPDF2, '__version__', None) if PyPDF2 else None
     docx = _safe_import('docx')
     out['python-docx'] = getattr(docx, '__version__', None) if docx else None
@@ -45,10 +51,19 @@ def extract_text_for_file(path: str) -> Tuple[str | None, Dict[str, Any]]:
 
 def _extract_pdf(path: str) -> Tuple[str | None, Dict[str, Any]]:
     meta: Dict[str, Any] = {'kind': 'pdf'}
+    # Prefer pypdf; fall back to PyPDF2 with deprecation suppressed
+    PdfReader = None
     try:
-        from PyPDF2 import PdfReader  # type: ignore
+        from pypdf import PdfReader as _PdfReader  # type: ignore
+        PdfReader = _PdfReader
     except Exception:
-        return None, {**meta, 'error': 'PyPDF2 not available'}
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore', category=DeprecationWarning, module='PyPDF2')
+                from PyPDF2 import PdfReader as _PdfReader  # type: ignore
+            PdfReader = _PdfReader
+        except Exception:
+            return None, {**meta, 'error': 'pypdf/PyPDF2 not available'}
     try:
         pdf = PdfReader(path)
         if getattr(pdf, 'is_encrypted', False):
@@ -113,4 +128,3 @@ def _extract_xlsx(path: str) -> Tuple[str | None, Dict[str, Any]]:
         return (text if text else None), meta
     except Exception as e:
         return None, {**meta, 'error': str(e)}
-

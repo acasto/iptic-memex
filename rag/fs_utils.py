@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, Tuple, List, Optional, Set
 import fnmatch
+import configparser
 
 
 DEFAULT_EXTS = {".md", ".mdx", ".txt", ".rst"}
@@ -71,7 +72,8 @@ def load_rag_config(session) -> Tuple[Dict[str, str], list[str], str, str]:
 
     # Indexes from [RAG] as flat key=path (ONLY keys explicitly in [RAG])
     indexes: Dict[str, str] = {}
-    cfg = session.config.base_config
+    # Be robust in tests or minimal sessions without a config
+    cfg = getattr(getattr(session, 'config', None), 'base_config', None) or configparser.ConfigParser()
     sec = getattr(cfg, '_sections', {}).get('RAG', {}) or {}
     try:
         for key, value in sec.items():
@@ -226,7 +228,8 @@ def load_rag_filters(session) -> Dict[str, Dict[str, List[str] | None]]:
     default_include = get_list(tools, 'rag_default_include') or []
     default_exclude = get_list(tools, 'rag_default_exclude') or []
 
-    cfg = session.config.base_config
+    # Be robust in tests or minimal sessions without a config
+    cfg = getattr(getattr(session, 'config', None), 'base_config', None) or configparser.ConfigParser()
     sec = getattr(cfg, '_sections', {}).get('RAG', {}) or {}
 
     # Build index roots

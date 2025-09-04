@@ -22,7 +22,7 @@ A small, self-contained retrieval system that indexes user-configured folders an
   - Safe traversal (`iter_index_files`), UTF-8 read, overlap-aware `chunk_text`.
   - Enforces read-only allowlist and symlink-escape protection.
 - `extractors.py`
-  - Basic text extraction for PDFs (PyPDF2), DOCX (python-docx), and XLSX (openpyxl).
+- Basic text extraction for PDFs (pypdf), DOCX (python-docx), and XLSX (openpyxl).
   - Reports minimal metadata and a version signature used for visibility in the manifest.
 - `indexer.py`
   - `update_index(index_name, root_path, vector_db, embed_fn, embedding_model, batch_size)`

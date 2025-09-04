@@ -23,7 +23,7 @@ beautifulsoup4
 tiktoken
 reportlab
 trafilatura
-PyPDF2
+pypdf
 python-docx
 openpyxl
 pytz
@@ -83,7 +83,7 @@ tiktoken
 reportlab
 trafilatura
 cohere
-PyPDF2
+pypdf
 python-docx
 openpyxl
 pytz
@@ -100,7 +100,7 @@ beautifulsoup4
 tiktoken
 reportlab
 trafilatura
-PyPDF2
+pypdf
 python-docx
 openpyxl
 pytz
