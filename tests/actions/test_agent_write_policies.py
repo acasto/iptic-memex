@@ -71,7 +71,6 @@ class FakeSession:
         self._actions = {
             'assistant_fs_handler': FakeFsHandler(),
             'count_tokens': FakeTokenCounter(),
-            'memex_runner': types.SimpleNamespace(run=lambda *a, **k: types.SimpleNamespace(stdout="", returncode=0, stderr="")),
         }
         self._tools = {'large_input_limit': 4000, 'confirm_large_input': True}
         self._contexts = []
@@ -132,4 +131,3 @@ def test_write_policy_allow_performs_write_without_confirmation():
     # Assistant context confirms write
     msgs = _get_ctx_msgs(sess, 'file_tool_result')
     assert any('written successfully' in (m.get('content') or '').lower() for m in msgs)
-

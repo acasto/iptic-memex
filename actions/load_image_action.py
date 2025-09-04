@@ -1,5 +1,4 @@
 import os
-import subprocess
 from base_classes import StepwiseAction, Completed
 from core.mode_runner import run_completion
 from utils.tool_args import get_str, get_bool
@@ -78,37 +77,20 @@ class LoadImageAction(StepwiseAction):
                     pass
                 return
 
-            # Prefer internal ModeRunner when available; fallback to memex subprocess
-            summary = None
-            try:
-                builder = getattr(self.session, '_builder', None)
-                if builder is not None:
-                    result = run_completion(
-                        builder=builder,
-                        overrides={'model': vision_model, 'prompt': vision_prompt},
-                        contexts=[('image', image_path)],
-                        message='',
-                        capture='text',
-                    )
-                    summary = result.last_text
-            except Exception:
-                summary = None
+            # Use internal ModeRunner for vision summarization
+            builder = getattr(self.session, '_builder', None)
+            if builder is None:
+                self.session.add_context('assistant', {'name': 'file_tool_error', 'content': 'Internal builder unavailable for vision summary'})
+                return
 
-            if not summary:
-                try:
-                    runner = self.session.get_action('memex_runner')
-                    if runner:
-                        res = runner.run('-m', vision_model, '-p', vision_prompt, '-f', image_path, check=False)
-                        if res and hasattr(res, 'stdout'):
-                            summary = res.stdout
-                        elif res and hasattr(res, 'returncode') and res.returncode != 0 and hasattr(res, 'stderr'):
-                            summary = f"Error: {res.stderr}"
-                except Exception:
-                    try:
-                        result = subprocess.run(['memex', '-m', vision_model, '-p', vision_prompt, '-f', image_path], capture_output=True, text=True)
-                        summary = result.stdout if result.returncode == 0 else f"Error: {result.stderr}"
-                    except Exception as e2:
-                        summary = f"Error: {e2}"
+            result = run_completion(
+                builder=builder,
+                overrides={'model': vision_model, 'prompt': vision_prompt},
+                contexts=[('image', image_path)],
+                message='',
+                capture='text',
+            )
+            summary = result.last_text or ''
 
             # Add the summary as raw text context
             self.session.add_context('multiline_input', {
@@ -116,8 +98,8 @@ class LoadImageAction(StepwiseAction):
                 'content': summary
             })
 
-        except subprocess.SubprocessError as e:
-            self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Failed to get file summary: {str(e)}'})
+        except Exception as e:
+            self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Failed to get image summary: {str(e)}'})
 
     @staticmethod
     def can_run(session) -> bool:
