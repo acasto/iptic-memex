@@ -47,6 +47,7 @@ envisioned a device that would compress and store all of their knowledge. https:
   - **Math Calculator (%%MATH%%)**: Tackle complex calculations using bc behind the scenes
   - **Memory (%%MEMORY%%)**: Store and recall facts or context across sessions in SQLite with support for project-specific memory.
   - **RAG**: Build local indexes with embeddings and query them to load relevant snippets into chat context.
+  - **Persona Review (%%PERSONA_REVIEW%%)**: Review provided copy from one or more persona perspectives and optionally synthesize a panel summary. Accepts `files` (list or CSV) for supplemental guidelines (brand voice, audience notes, persona profiles). Prompts: `personas/review` and `personas/panel`.
 
 ### Filesystem Sandbox and --base-dir
 
@@ -238,6 +239,17 @@ See [INSTALL.md](INSTALL.md) for details on how to adjust requirements.txt as ne
     ```bash
     python main.py --steps 3 --base-dir ~/Projects/that-repo
     ```
+
+Persona Review quickstart
+- Enable the tool by listing `persona_review` in `[TOOLS].active_tools` in `config.ini`.
+- Args: `content` and `personas` are required; optional `goal`, `rubric`, `panel`, `tone`, `constraints`, `model`, and `files` (CSV/list of supplemental docs like brand/audience/persona notes).
+- Prompts: resolved as `prompts/personas/review.md` and `prompts/personas/panel.md`.
+- Example (pseudo-tools):
+  ```
+  %%PERSONA_REVIEW%% personas="CFO, VP Engineering" panel=true files="brand_guide.md,audience.md"
+  <copy to review>
+  %%END%%
+  ```
   - Stdin as your message (not a file context):
     - When passing `-f -`, the stdin text becomes the actual user message for the turn (it won’t appear wrapped in file tags). This keeps instructions clean and avoids the model echoing `<|results:stdin|>`.
     ```bash

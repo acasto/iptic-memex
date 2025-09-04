@@ -185,6 +185,14 @@ Gating and CLI‑only flows
 - Gating: expose `@classmethod can_run(cls, session)` on an action to hide commands when prerequisites (APIs, tools) are missing.
 - Auto-submit: if a command sets `auto_submit: true` and `TOOLS.allow_auto_submit` is enabled, the next prompt is skipped after execution.
 
+#### Built-in Tool: persona_review
+- Action: `assistant_persona_review_tool` (tool name: `persona_review`).
+- Purpose: review provided copy from one or more persona perspectives and optionally synthesize a panel summary.
+- Required: `content`, `personas` (CSV or list).
+- Optional: `goal`, `rubric`, `panel`, `tone`, `constraints`, `model`, `files` (CSV/list of supplemental docs like brand guides, audience and persona notes). Supplemental files are read as plain text and attached under a `[Guidelines]` section for each internal run.
+- Prompts: `prompts/personas/review.md` and `prompts/personas/panel.md` are resolved via the standard prompt resolver (supports `.txt` and `.md`).
+- Enable by listing `persona_review` in `[TOOLS].active_tools`. In Agent Mode, `[TOOLS].active_tools_agent` overrides if set.
+
 ### Official Tool Calling (OpenAI-compatible)
 - Settings:
   - `[DEFAULT].enable_tools = true|false` to globally enable/disable tools.
