@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from core.turns import TurnRunner, TurnOptions
+from core.input_limits import compute_context_tokens, count_text_tokens, check_noninteractive_gate
 from core.null_ui import NullUI
 
 
@@ -66,6 +67,43 @@ def run_completion(
     if not sess.get_context('chat'):
         sess.add_context('chat')
 
+    # Central non-interactive input gate (contexts + message)
+    try:
+        proc = sess.get_action('process_contexts')
+        ctxs = proc.get_contexts(sess) if proc else []
+    except Exception:
+        ctxs = []
+    total_tokens = compute_context_tokens(sess, ctxs) + count_text_tokens(sess, message or '')
+    gate = check_noninteractive_gate(sess, total_tokens)
+    if not gate.get('ok', True):
+        limit = gate.get('limit')
+        tokens = gate.get('tokens')
+        # Emit a structured error event for callers
+        try:
+            sess.ui.emit('error', {
+                'code': 'large_input_limit_exceeded',
+                'tokens': tokens,
+                'limit': limit,
+                'mode': 'completion',
+            })
+        except Exception:
+            pass
+        # Add assistant context for visibility
+        try:
+            sess.add_context('assistant', {
+                'name': 'large_input_limit_exceeded',
+                'content': f'Input size ({tokens} tokens) exceeds non-interactive limit ({limit}). Aborting run.'
+            })
+        except Exception:
+            pass
+        # Build result with collected events
+        events = []
+        try:
+            events = list(getattr(sess.ui, 'events', []) or [])
+        except Exception:
+            events = []
+        return ModeResult(last_text='Input exceeds configured limit', raw=None, turns=0, cost=None, usage=None, events=events)
+
     runner = TurnRunner(sess)
     res = runner.run_user_turn(message or "", options=TurnOptions(stream=False, suppress_context_print=True))
 
@@ -127,6 +165,42 @@ def run_agent(
             sess.set_option('agent_output_mode', output)
     except Exception:
         pass
+
+    # Central non-interactive input gate (contexts only for agent)
+    try:
+        proc = sess.get_action('process_contexts')
+        ctxs = proc.get_contexts(sess) if proc else []
+    except Exception:
+        ctxs = []
+    total_tokens = compute_context_tokens(sess, ctxs)
+    gate = check_noninteractive_gate(sess, total_tokens)
+    if not gate.get('ok', True):
+        limit = gate.get('limit')
+        tokens = gate.get('tokens')
+        # Emit a structured error event for callers
+        try:
+            sess.ui.emit('error', {
+                'code': 'large_input_limit_exceeded',
+                'tokens': tokens,
+                'limit': limit,
+                'mode': 'agent',
+            })
+        except Exception:
+            pass
+        # Add assistant context for visibility
+        try:
+            sess.add_context('assistant', {
+                'name': 'large_input_limit_exceeded',
+                'content': f'Input size ({tokens} tokens) exceeds non-interactive limit ({limit}). Aborting run.'
+            })
+        except Exception:
+            pass
+        events = []
+        try:
+            events = list(getattr(sess.ui, 'events', []) or [])
+        except Exception:
+            events = []
+        return ModeResult(last_text='Input exceeds configured limit', raw=None, turns=0, cost=None, usage=None, events=events)
 
     runner = TurnRunner(sess)
 

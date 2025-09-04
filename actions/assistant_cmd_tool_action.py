@@ -204,28 +204,10 @@ class AssistantCmdToolAction(InteractionAction):
         success, output = self.execute_pipeline(pipeline)
 
         if success:
-            # Check output size
-            token_count = self.token_counter.count_tiktoken(output)
-            limit = int(self.session.get_tools().get('large_input_limit', 4000))
-
-            if token_count > limit:
-                if self.session.get_tools().get('confirm_large_input', True):
-                    self.session.set_flag('auto_submit', False)
-                    self.session.utils.output.write(f"File exceeds token limit ({limit}) for assistant. Auto-submit disabled.")
-                    self.session.add_context('assistant', {
-                        'name': 'command_output',
-                        'content': output
-                    })
-                else:
-                    self.session.add_context('assistant', {
-                        'name': 'command_error',
-                        'content': f"Output size ({token_count} tokens) exceeds limit of {limit}."
-                    })
-            else:
-                self.session.add_context('assistant', {
-                    'name': 'command_output',
-                    'content': output
-                })
+            self.session.add_context('assistant', {
+                'name': 'command_output',
+                'content': output
+            })
         else:
             self.session.add_context('assistant', {
                 'name': 'command_error',

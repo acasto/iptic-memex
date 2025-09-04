@@ -413,7 +413,7 @@ max_completion_tokens = 4096
   - Tools set `session.auto_submit` (with `TOOLS.allow_auto_submit=True`).
   - The `TurnRunner` orchestrates the follow-up across all modes: reprocess contexts (silent when requested) → add a synthetic empty user turn → run the next assistant turn.
   - Chat, Agent, and Web (stream and non‑stream) all use the same logic; no mode‑specific drift.
-  - Large-input gate: During context processing for auto-submit, if combined context tokens exceed `TOOLS.large_input_limit` and `TOOLS.confirm_large_input=True`, auto-submit is cancelled so the user can review contexts before proceeding. Agent Mode ignores this gate and continues autonomously.
+  - Large-input gate: Interactive runs (Chat/TUI/Web) apply a centralized check during context processing. If combined context tokens exceed `TOOLS.large_input_limit` and `TOOLS.confirm_large_input=True`, auto-submit is cancelled so the user can review contexts before proceeding. Non-interactive runs (Completion/Agent/internal) use a separate `[AGENT].large_input_limit` and abort early with a structured error event when exceeded.
 
 ## Web/TUI Runner Notes
 - Endpoints: `/api/action/start|resume` for stepwise actions; `/api/chat` (non-stream) and `/api/stream` (SSE).

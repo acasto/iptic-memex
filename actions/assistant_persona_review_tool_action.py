@@ -80,23 +80,6 @@ class AssistantPersonaReviewToolAction(StepwiseAction):
             self.session.add_context('assistant', {'name': 'persona_review_error', 'content': 'No personas provided'})
             return Completed({'ok': False, 'error': 'no_personas'})
 
-        # Large input gating
-        try:
-            token_count = self.token_counter.count_tiktoken(raw_content)
-        except Exception:
-            token_count = 0
-        limit = int(self.session.get_tools().get('large_input_limit', 4000))
-        if token_count > limit:
-            if self.session.get_tools().get('confirm_large_input', True):
-                try:
-                    self.session.ui.emit('warning', {'message': f"Input exceeds token limit ({limit}). Auto-submit disabled for review."})
-                except Exception:
-                    pass
-                self.session.set_flag('auto_submit', False)
-            else:
-                self.session.add_context('assistant', {'name': 'persona_review_error', 'content': f'Input exceeds token limit ({limit}). Consider narrowing content.'})
-                return Completed({'ok': False, 'error': 'too_large'})
-
         # Load supplemental files text (guidelines, persona details, brand voice, etc.)
         guidelines_text = self._read_supplemental_files(files_arg)
 

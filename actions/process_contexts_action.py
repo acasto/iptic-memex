@@ -1,4 +1,5 @@
 from base_classes import InteractionAction
+from core.input_limits import enforce_interactive_gate
 
 
 class ProcessContextsAction(InteractionAction):
@@ -79,24 +80,24 @@ class ProcessContextsAction(InteractionAction):
                             output.write(text)
                         printed_any = True
 
-            # Check total tokens against large_input_limit if auto_submit is True
+            # Interactive large-input gate (centralized)
             if auto_submit and total_tokens > 0:
-                limit = int(self.session.get_tools().get('large_input_limit', 4000))
-                if total_tokens > limit:
-                    # In Agent Mode, do not interrupt the loop; allow autonomous progression
-                    try:
-                        in_agent = bool(getattr(self.session, 'in_agent_mode', lambda: False)())
-                    except Exception:
-                        in_agent = False
-                    if not in_agent:
-                        if self.session.get_tools().get('confirm_large_input', True):
-                            output.write(f"\nWarning: Total tokens ({total_tokens}) exceed limit ({limit}). Auto-submit disabled.")
-                            self.session.set_flag('auto_submit', False)
-                        else:
-                            self.session.add_context('assistant', {
-                                'name': 'assistant_feedback',
-                                'content': f"Warning: Input size ({total_tokens} tokens) exceeds recommended limit ({limit})."
-                            })
+                try:
+                    in_agent = bool(getattr(self.session, 'in_agent_mode', lambda: False)())
+                except Exception:
+                    in_agent = False
+                if not in_agent:
+                    decision = enforce_interactive_gate(self.session, total_tokens)
+                    action = decision.get('action')
+                    lim = decision.get('limit')
+                    if action == 'disable_auto':
+                        output.write(f"\nWarning: Total tokens ({total_tokens}) exceed limit ({lim}). Auto-submit disabled.")
+                        self.session.set_flag('auto_submit', False)
+                    elif action == 'feedback':
+                        self.session.add_context('assistant', {
+                            'name': 'assistant_feedback',
+                            'content': f"Warning: Input size ({total_tokens} tokens) exceeds recommended limit ({lim})."
+                        })
 
             # Only emit a trailing spacer in interactive mode
             if printed_any and (not auto_submit):

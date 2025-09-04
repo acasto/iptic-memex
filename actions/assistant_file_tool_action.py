@@ -133,22 +133,6 @@ class AssistantFileToolAction(StepwiseAction):
             self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Failed to read file: {filename}'})
             return
 
-        token_count = self.token_counter.count_tiktoken(content)
-        limit = int(self.session.get_tools().get('large_input_limit', 4000))
-        if token_count > limit:
-            if self.session.get_tools().get('confirm_large_input', True):
-                # Gate auto-submit and inform the user in the updates panel; do not prompt here.
-                try:
-                    self.session.ui.emit('warning', {'message': f"File exceeds token limit ({limit}). Auto-submit disabled for review."})
-                except Exception:
-                    pass
-                self.session.set_flag('auto_submit', False)
-                # Continue to add the file to context so the user can inspect/decide
-            else:
-                # Policy: do not allow oversized content without confirmation
-                self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'File exceeds token limit ({limit}). Consider using head/tail commands instead.'})
-                return
-
         self.session.add_context('file', filename)
         try:
             self.session.ui.emit('status', {'message': f'Loaded file: {filename}'})
@@ -235,14 +219,6 @@ class AssistantFileToolAction(StepwiseAction):
                 capture='text',
             )
             summary = res.last_text or ''
-            token_count = self.token_counter.count_tiktoken(summary)
-            limit = int(self.session.get_tools().get('large_input_limit', 4000))
-            if token_count > limit:
-                if self.session.get_tools().get('confirm_large_input', True):
-                    self.session.set_flag('auto_submit', False)
-                else:
-                    self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Summary exceeds token limit ({limit}). Try using a different summarization approach.'})
-                return
             self.session.add_context('assistant', {'name': f'Summary of: {filename}', 'content': summary})
         except Exception as e:
             self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Failed to get file summary: {str(e)}'})

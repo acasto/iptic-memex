@@ -32,5 +32,4 @@ Output format per persona:
 
 Guidance:
 - Keep bullets short and concrete. Avoid fluff.
-- Respect large-input limits; if content is too long, the tool will disable auto-submit for user review.
  - Use `files` to pass broader context (brand guide, ICPs, audience notes). For quick/small tasks, using arguments may suffice.
