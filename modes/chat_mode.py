@@ -82,7 +82,10 @@ class ChatMode(InteractionMode):
             # Skip when auto-submit is set; the runner will handle that path.
             if not self.session.get_flag('auto_submit'):
                 try:
-                    self.turn_runner.show_pre_prompt_updates()
+                    # Print context summaries/details once per prompt via the action
+                    pc = self.process_contexts or self.session.get_action('process_contexts')
+                    if pc and hasattr(pc, 'process_contexts_for_user'):
+                        pc.process_contexts_for_user(auto_submit=False)
                 except Exception:
                     pass
 
