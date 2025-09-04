@@ -55,8 +55,16 @@ class FakeBuilder:
         self.config_manager = types.SimpleNamespace(base_config=cfg)
         self.last_build_kwargs = None
     def build(self, mode='internal', **options):
+        # Simulate SessionBuilder default selection:
+        # internal (non-interactive) builds prefer [AGENT].default_model
+        eff = dict(options)
+        if mode in ('internal', 'completion') and 'model' not in eff:
+            if self.config_manager.base_config is not None:
+                agent_default = self.config_manager.base_config.get('AGENT', 'default_model', fallback=None)
+                if agent_default:
+                    eff['model'] = agent_default
         # capture effective overrides used by mode_runner
-        self.last_build_kwargs = options
+        self.last_build_kwargs = eff
         return FakeSession()
 
 
@@ -69,31 +77,42 @@ class FakeTurnRunner:
             self.turns_executed = 1
     def run_user_turn(self, message, options=None):
         return self._Res()
+    def run_agent_loop(self, steps, prepare_prompt=None, options=None):
+        return self._Res()
 
 
-def test_mode_runner_uses_agent_default_model_when_not_overridden(monkeypatch):
+def test_internal_completion_uses_agent_default_model(monkeypatch):
     import core.mode_runner as mr
     # Patch TurnRunner so we don't require a real provider
     monkeypatch.setattr(mr, 'TurnRunner', FakeTurnRunner)
 
     cfg = make_cfg(default_model='gpt-4o-mini')
     builder = FakeBuilder(cfg)
-    res = mr.run_completion(builder=builder, overrides=None, contexts=None, message='hi', capture='text')
-    # Effective model should be pulled from [AGENT].default_model
-    assert isinstance(res.last_text, str) and 'OK_FROM_RUNNER' in res.last_text
+
+    # Internal completion should use [AGENT].default_model when not overridden
+    res_c = mr.run_completion(builder=builder, overrides=None, contexts=None, message='hi', capture='text')
+    assert isinstance(res_c.last_text, str) and 'OK_FROM_RUNNER' in res_c.last_text
+    assert builder.last_build_kwargs is not None
+    assert builder.last_build_kwargs.get('model') == 'gpt-4o-mini'
+
+    # And internal agent should also use [AGENT].default_model
+    res_a = mr.run_agent(builder=builder, steps=3, overrides=None, contexts=None, output='final', verbose_dump=False)
+    assert isinstance(res_a.last_text, str) and 'OK_FROM_RUNNER' in res_a.last_text
     assert builder.last_build_kwargs is not None
     assert builder.last_build_kwargs.get('model') == 'gpt-4o-mini'
 
 
-def test_mode_runner_respects_explicit_model_override_over_agent_default(monkeypatch):
+def test_internal_runs_respect_explicit_model_override(monkeypatch):
     import core.mode_runner as mr
     monkeypatch.setattr(mr, 'TurnRunner', FakeTurnRunner)
 
     cfg = make_cfg(default_model='gpt-4o-mini')
     builder = FakeBuilder(cfg)
-    res = mr.run_completion(builder=builder, overrides={'model': 'haiku'}, contexts=None, message='hi', capture='text')
-    assert isinstance(res.last_text, str) and 'OK_FROM_RUNNER' in res.last_text
-    assert builder.last_build_kwargs is not None
-    # Explicit override should win
-    assert builder.last_build_kwargs.get('model') == 'haiku'
-
+    # Agent
+    res_a = mr.run_agent(builder=builder, steps=2, overrides={'model': 'haiku'}, contexts=None, output='final', verbose_dump=False)
+    assert isinstance(res_a.last_text, str) and 'OK_FROM_RUNNER' in res_a.last_text
+    assert builder.last_build_kwargs is not None and builder.last_build_kwargs.get('model') == 'haiku'
+    # Completion
+    res_c = mr.run_completion(builder=builder, overrides={'model': 'haiku'}, contexts=None, message='hi', capture='text')
+    assert isinstance(res_c.last_text, str) and 'OK_FROM_RUNNER' in res_c.last_text
+    assert builder.last_build_kwargs is not None and builder.last_build_kwargs.get('model') == 'haiku'

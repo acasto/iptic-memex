@@ -17,6 +17,12 @@ envisioned a device that would compress and store all of their knowledge. https:
   - **Completion Mode with Raw Response**: Get raw responses from an LLM provider, useful for debugging or when you need to access additional parts of the response object such as citations.
   - **Agent Mode (N-turn, non-interactive)**: Run up to N assistant turns with tool calls and configurable write policy; stream every turn or print only the final answer.
   - **Web/TUI (MVP)**: Stepwise interactions backed by a shared TurnRunner. Actions prompt via UI adapters (ask_*), and the server handles `needs_interaction` handoffs.
+
+- **Default Model Selection (by interaction style)**
+  - **Interactive (chat/tui/web)**: uses `[DEFAULT].default_model` unless you specify `-m/--model` or `set model`.
+  - **Non‑interactive (completion, internal runs, agent)**: uses `[AGENT].default_model` when no model is provided.
+  - **Explicit model always wins** in every mode.
+  - Internal actions that run headless completions inherit this behavior automatically (no per‑action overrides needed).
   
 - **Advanced Context Management**
   - Load content from text files, PDFs, DOCX, XLSX, and even images.
@@ -217,6 +223,7 @@ See [INSTALL.md](INSTALL.md) for details on how to adjust requirements.txt as ne
     ```bash
     echo "Summarize the following text:" | python main.py -f -
     ```
+  - Default model: completion uses `[AGENT].default_model` unless `-m` is passed.
 
 - **Agent Mode** (non-interactive):
   - Run multiple turns, stream everything:
@@ -235,6 +242,7 @@ See [INSTALL.md](INSTALL.md) for details on how to adjust requirements.txt as ne
     ```bash
     python main.py --steps 3 --agent-writes deny -f project.md
     ```
+  - Default model: Agent Mode uses `[AGENT].default_model` unless `-m` is passed.
   - Point the agent at a different workspace root:
     ```bash
     python main.py --steps 3 --base-dir ~/Projects/that-repo

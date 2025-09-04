@@ -89,19 +89,19 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw,
     # Store options for later use
     ctx.obj['OPTIONS'] = options
     
-    # Handle file mode (completion mode)
+    # Handle file mode (completion/agent based on steps)
     if len(file) > 0:
-        # Build session for completion mode
+        # Build session for completion mode first; we may switch to Agent below
         session = builder.build(mode='completion', **options)
         ctx.obj['SESSION'] = session
-        
+
         # Add file contexts
         for f in file:
             if is_image_file(f):
                 session.add_context('image', f)
             else:
                 session.add_context('file', f)
-        
+
         # Route based on steps: Agent Mode when >1, else Completion
         # Determine agent defaults from config when CLI flags are not provided
         cfg = ctx.obj['CONFIG_MANAGER'].base_config if ctx.obj.get('CONFIG_MANAGER') else None

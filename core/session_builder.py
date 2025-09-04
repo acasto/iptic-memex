@@ -21,7 +21,25 @@ class SessionBuilder:
         # Late import to avoid circular dependency at module load time
         from session import Session
 
-        session_config: SessionConfig = self.config_manager.create_session_config(options)
+        # Determine effective default model based on interaction style (mode)
+        # - Non-interactive runs ('completion', 'internal') prefer [AGENT].default_model when not explicitly set
+        # - Interactive runs ('chat', 'tui', 'web') keep using [DEFAULT].default_model
+        eff_options = dict(options or {})
+        try:
+            ui_mode = (mode or 'chat').lower()
+        except Exception:
+            ui_mode = 'chat'
+        if not eff_options.get('model') and ui_mode in ('completion', 'internal'):
+            try:
+                base_cfg = getattr(self.config_manager, 'base_config', None)
+                if base_cfg is not None:
+                    agent_default = base_cfg.get('AGENT', 'default_model', fallback=None)
+                    if agent_default:
+                        eff_options['model'] = agent_default
+            except Exception:
+                pass
+
+        session_config: SessionConfig = self.config_manager.create_session_config(eff_options)
         registry = ComponentRegistry(session_config)
         session = Session(session_config, registry)
         try:
@@ -29,7 +47,7 @@ class SessionBuilder:
         except Exception:
             pass
 
-        session.current_model = options.get('model')
+        session.current_model = eff_options.get('model')
 
         # Initialize UI first so we can present status/spinners during provider startup
         ui_mode = (mode or 'chat').lower()

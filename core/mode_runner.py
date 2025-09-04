@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from core.turns import TurnRunner, TurnOptions
-import configparser
 from core.null_ui import NullUI
 
 
@@ -28,18 +27,13 @@ def _attach_contexts(session, contexts: Optional[Iterable[Tuple[str, Any]]]) -> 
             continue
 
 
-def _build_subsession(builder, *, overrides: Optional[Dict[str, Any]] = None):
+def _build_subsession(
+    builder,
+    *,
+    overrides: Optional[Dict[str, Any]] = None,
+):
     # Respect [AGENT].default_model when model is not explicitly provided
     eff_overrides: Dict[str, Any] = dict(overrides or {})
-    try:
-        if 'model' not in eff_overrides:
-            cfg = getattr(getattr(builder, 'config_manager', None), 'base_config', None)
-            if isinstance(cfg, configparser.ConfigParser):
-                agent_default = cfg.get('AGENT', 'default_model', fallback=None)
-                if agent_default:
-                    eff_overrides['model'] = agent_default
-    except Exception:
-        pass
 
     # Build a fresh session with overrides; attach a NullUI to avoid stdout
     session = builder.build(mode='internal', **eff_overrides)

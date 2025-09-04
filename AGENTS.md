@@ -24,6 +24,11 @@
   - One-shot (completion) example: `echo "What is PI?" | python main.py -f -`
 - Convenience: `scripts/chat` (interactive) and `scripts/ask "your question"` wrappers.
 
+### Default Model Selection (Unified Rule)
+- Interactive modes (`chat`, `tui`, `web`) use `[DEFAULT].default_model` unless a model is explicitly provided (CLI `-m/--model` or `set model`).
+- Non‑interactive modes (`completion`, internal runs via `core.mode_runner`, and Agent Mode) use `[AGENT].default_model` when no explicit model is provided.
+- Explicit model always wins. This logic is centralized in `core/session_builder.SessionBuilder.build(mode=...)` to avoid per‑caller or per‑action duplication.
+
 ## Coding Style & Naming
 - Follow PEP 8; 4-space indentation; keep lines ~100 chars.
 - Naming: modules/functions `snake_case`, classes `PascalCase`, constants `UPPER_CASE`.
