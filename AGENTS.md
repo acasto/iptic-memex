@@ -192,9 +192,10 @@ Gating and CLI‑only flows
 
 #### Built-in Tool: persona_review
 - Action: `assistant_persona_review_tool` (tool name: `persona_review`).
-- Purpose: review provided copy from one or more persona perspectives and optionally synthesize a panel summary.
-- Required: `content`, `personas` (CSV or list).
-- Optional: `goal`, `rubric`, `panel`, `tone`, `constraints`, `model`, `files` (CSV/list of supplemental docs like brand guides, audience and persona notes). Supplemental files are read as plain text and attached under a `[Guidelines]` section for each internal run.
+- Purpose: review content, ideas, or features from one or more persona perspectives and optionally synthesize a panel summary.
+- Required: `content`, `personas` (CSV/list or a path to a Markdown personas file).
+- Optional: `goal`, `notes`, `artifact_type`, `panel`, `files`, `model`. Supplemental files are read as plain text and attached under a `[Guidelines]` section for each internal run.
+- Personas file formats supported: `## Personas` with `### <Name>` subsections; top-level headings (##/###); or a bulleted list `- Name: one-liner`.
 - Prompts: `prompts/personas/review.md` and `prompts/personas/panel.md` are resolved via the standard prompt resolver (supports `.txt` and `.md`).
 - Enable by listing `persona_review` in `[TOOLS].active_tools`. In Agent Mode, `[TOOLS].active_tools_agent` overrides if set.
 

@@ -1,35 +1,32 @@
 Tool: persona_review
 
 Purpose:
-- Review provided marketing copy from one or more persona perspectives and return concise, structured feedback.
+- Review content, ideas, or features from one or more persona perspectives and return concise, structured feedback.
 - Optionally synthesize a panel summary across personas.
 
 Inputs:
-- content (string): the copy to review.
-- personas (list or comma-separated string): e.g., CFO, VP Engineering, Marketing Director.
-- goal (string, optional): objective (e.g., improve landing page conversion).
-- rubric (string, optional): evaluation criteria (clarity, trust, benefits, objections, CTA).
+- content (string): the item to consider or a short reference to it.
+- personas (CSV/list or path): persona names (e.g., CFO, Head of Ops) or a path to a Markdown personas file.
+- goal (string, optional): objective (e.g., reduce friction, validate viability, improve clarity).
+- notes (string, optional): constraints, assumptions, references (e.g., "tone in Brand_Guide.md; 2 engs available").
+- artifact_type (string, optional): hint (copy|idea|feature|design|other).
 - panel (boolean, optional): include a consensus summary across personas.
-- tone (string, optional): style guidance (e.g., B2B, concise, no jargon).
-- constraints (string, optional): guardrails/limits.
+- files (CSV/list, optional): supplemental documents (text/markdown) such as brand guide, audience, product notes; appended as [Guidelines].
 - model (string, optional): model override; otherwise [AGENT].default_model is used.
-- files (list or comma-separated, optional): supplemental documents (text/markdown) with guidelines: brand voice, target audience,
-  persona profiles, channel/stage notes, etc. The tool appends their text as a [Guidelines] block for each persona and the panel.
 
 Behavior:
 - Runs an internal completion per persona using the prompt `personas/review` and a compact persona message.
 - If panel=true, runs a synthesis pass using `personas/panel` over the persona outputs.
 - If `files` are provided, their combined text is attached under [Guidelines] in each message.
-- Adds results to the assistant context in a concise format; do not write files.
+- Personas can be loaded from a Markdown file. Supported formats:
+  - "## Personas" section with "### <Name>" subsections (body = details)
+  - Top-level headings (##/###) as persona names (body = details)
+  - Bulleted list: `- Name: one-liner` or `- Name`
+- Adds results to the assistant context in a concise format; no files are written.
 
-Output format per persona:
-- Rating (1–5)
-- What works (2–3 bullets)
-- Gaps/concerns (3–5 bullets)
-- Objections + counterpoints (2–3)
-- CTA feedback (suggest 1–2 improved CTAs)
-- Rewrite snippet (≤3 lines)
+Output per persona:
+- Rating (1–5), Strengths (2–3 bullets), Risks/concerns (3–5), Questions (1–3), Recommendations (top 3).
 
 Guidance:
 - Keep bullets short and concrete. Avoid fluff.
- - Use `files` to pass broader context (brand guide, ICPs, audience notes). For quick/small tasks, using arguments may suffice.
+- Use `files` to pass broader context (brand guide, ICPs, audience, product notes). Use `notes` to point at sections.
