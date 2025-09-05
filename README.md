@@ -266,7 +266,7 @@ Persona Review quickstart
 
   - **Chat Mode Quick Reference**
   - **Context Loading**
-    - `load file`, `load pdf`, `load doc`, `load sheet`, `load code`, `load multiline`, `load image` Import content from various file types or multiline text.
+    - `load file`, `load code`, `load multiline` Import content from files (auto-detects pdf/docx/xlsx/images) or multiline text.
     - `load web`, `load soup`, `load search`  Add web content or perform a web search with summarized results.
     - `load raw` Load unformatted text into your conversation, useful for loading saved 'full' conversations to avoid double formatting.
     - `clear context` Clear the current turn context.
@@ -386,7 +386,7 @@ extra_body = { ... }  ; Optional, for model-specific settings
 - Added wildcard support to 'load file'
 - Added timeout setting for OpenAI provider
 - Added a 'load raw' context for unwrapped context
-- Added 'load sheet', 'load doc', and 'load pdf'
+- Unified loaders under 'load file' (auto-detects pdf/docx/xlsx/images)
 - Fixed minor bugs
 
 ### 2.0.3 (07/20/2024) Current

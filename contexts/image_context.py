@@ -25,7 +25,15 @@ class ImageContext(InteractionContext):
             'source_type': 'base64'
         }
         if image_path:
-            self.process_image(image_path)
+            # Accept either a path string or a preconstructed dict with base64 and metadata
+            if isinstance(image_path, dict):
+                name = image_path.get('name') or ''
+                content = image_path.get('content') or ''
+                mime = image_path.get('mime_type') or ''
+                source_type = image_path.get('source_type') or 'base64'
+                self.context.update({'name': name, 'content': content, 'mime_type': mime, 'source_type': source_type})
+            else:
+                self.process_image(image_path)
 
     def process_image(self, image_path):
         """Process image file into base64 and extract metadata"""

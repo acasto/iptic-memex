@@ -19,6 +19,19 @@ class LoadFileAction(StepwiseAction):
         self.tc.set_session(session)
         self.utils = session.utils
 
+    def _detect_kind(self, path: str) -> str:
+        p = path.lower()
+        if p.endswith('.pdf'):
+            return 'pdf'
+        if p.endswith('.docx'):
+            return 'docx'
+        if p.endswith('.xlsx'):
+            return 'xlsx'
+        if p.endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif')):
+            return 'image'
+        # csv treated as text/raw
+        return 'file'
+
     def _load_files(self, patterns: List[str]) -> List[str]:
         loaded: List[str] = []
         # Compute uploads dir (if present) to detect ephemeral uploaded files
@@ -32,27 +45,53 @@ class LoadFileAction(StepwiseAction):
             matches = glob.glob(pat)
             for path in matches:
                 if os.path.isfile(path):
-                    ctx = self.session.add_context('file', path)
-                    # If this came from a web upload, adjust metadata and remove temp file
-                    try:
-                        if uploads_dir_abs and os.path.abspath(path).startswith(uploads_dir_abs):
-                            original_name = os.path.basename(path)
-                            # Rewrite context display name and mark origin
-                            try:
-                                if hasattr(ctx, 'file') and isinstance(ctx.file, dict):
-                                    ctx.file['server_path'] = path
-                                    ctx.file['origin'] = 'upload'
-                                    # Prefer original filename for display
-                                    ctx.file['name'] = original_name
-                            except Exception:
-                                pass
-                            # Remove uploaded temp file now that content is in context
-                            try:
+                    kind = self._detect_kind(path)
+                    processed = False
+                    if kind == 'pdf':
+                        helper = self.session.get_action('read_pdf')
+                        if helper:
+                            processed = bool(helper.process(path))
+                    elif kind == 'docx':
+                        helper = self.session.get_action('read_docx')
+                        if helper:
+                            processed = bool(helper.process(path))
+                    elif kind == 'xlsx':
+                        helper = self.session.get_action('read_sheet')
+                        if helper:
+                            processed = bool(helper.process(path))
+                    elif kind == 'image':
+                        helper = self.session.get_action('read_image')
+                        if helper:
+                            processed = bool(helper.process(path))
+
+                    if not processed:
+                        # Default: add as plain text file (path-based, preserves prior behavior)
+                        ctx = self.session.add_context('file', path)
+                        # If this came from a web upload, adjust metadata and remove temp file
+                        try:
+                            if uploads_dir_abs and os.path.abspath(path).startswith(uploads_dir_abs):
+                                original_name = os.path.basename(path)
+                                try:
+                                    if hasattr(ctx, 'file') and isinstance(ctx.file, dict):
+                                        ctx.file['server_path'] = path
+                                        ctx.file['origin'] = 'upload'
+                                        ctx.file['name'] = original_name
+                                except Exception:
+                                    pass
+                                try:
+                                    _ = self.session.utils.fs.delete_file(path)
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                    else:
+                        # If processed and was a web upload, remove the temp file
+                        try:
+                            if uploads_dir_abs and os.path.abspath(path).startswith(uploads_dir_abs):
                                 _ = self.session.utils.fs.delete_file(path)
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
+                        except Exception:
+                            pass
+
                     loaded.append(path)
         return loaded
 
@@ -120,11 +159,7 @@ class LoadFileAction(StepwiseAction):
                 self.tc.run('chat')
                 return Completed({'ok': True, 'loaded': []})
 
-        loaded = []
-        for file in files:
-            if os.path.isfile(file):
-                self.session.add_context('file', file)
-                loaded.append(file)
+        loaded = self._load_files(files)
         self.tc.run('chat')
         return Completed({'ok': True, 'loaded': loaded})
 

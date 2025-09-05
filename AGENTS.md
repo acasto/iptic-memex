@@ -432,7 +432,7 @@ max_completion_tokens = 4096
 - Gating: if an action is inherently interactive/looping and not yet fully stateful for Web/TUI, gate it to CLI by checking `session.ui.capabilities.blocking` and emit a warning otherwise (e.g., `manage_chats`, `save_code`, `debug_storage`).
 
 ## Status: Actions Converted
-- Core actions now use the Stepwise model and UI adapters (ask_*/emit) where applicable: file loaders (`load_file`, `load_doc`, `load_pdf`, `load_image`, `load_sheet`, `load_raw`, `load_multiline`), tooling (`assistant_file_tool`, `assistant_fs_handler`, `set_option`, `set_model`, `run_command`, `run_code`, `fetch_code_snippet`, `fetch_from_web`, `clear_context`, `clear_chat`, `count_tokens`, `reprint_chat`, `show`).
+- Core actions now use the Stepwise model and UI adapters (ask_*/emit) where applicable: file loaders (`load_file`, `load_raw`, `load_multiline`), tooling (`assistant_file_tool`, `assistant_fs_handler`, `set_option`, `set_model`, `run_command`, `run_code`, `fetch_code_snippet`, `fetch_from_web`, `clear_context`, `clear_chat`, `count_tokens`, `reprint_chat`, `show`).
 - Project helper `load_project` is Stepwise: CLI loops via `ask_choice`; Web/TUI offers one selection and dispatches to sub-actions.
 - Example user actions under `examples/user_actions` updated: `brave_search`, `brave_summary`, `debug_reload` (emits), and `debug_storage` gated to CLI.
 - CLI-only (for now): `manage_chats`, `save_code`, and `debug_storage` retain richer CLI interactions; Web/TUI will emit a warning if invoked.

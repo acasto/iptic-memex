@@ -31,26 +31,7 @@ class UserCommandsAction(InteractionAction):
                 "description": "Load a file into the context",
                 "function": {"type": "action", "name": "load_file"},
             },
-            "load image": {
-                "description": "Load an image into the context",
-                "function": {"type": "action", "name": "load_image"},
-            },
-            "load image summary": {
-                "description": "Load an image summary into the context",
-                "function": {"type": "action", "name": "load_image", "args": ["summary"]},
-            },
-            "load pdf": {
-                "description": "Load a pdf into the context",
-                "function": {"type": "action", "name": "load_pdf"},
-            },
-            "load sheet": {
-                "description": "Load an xlsx file into the context",
-                "function": {"type": "action", "name": "load_sheet"},
-            },
-            "load doc": {
-                "description": "Load a docx fie into the context",
-                "function": {"type": "action", "name": "load_doc"},
-            },
+            # Unified under 'load file'
             "load raw": {
                 "description": "Load raw text into the context",
                 "function": {"type": "action", "name": "load_raw"},

@@ -20,6 +20,16 @@ class FileContext(InteractionContext):
         """
         Process input from either a filename/path, stdin marker '-', or a file-like object.
         """
+        # Accept pre-extracted dicts (name/content and optional metadata)
+        if isinstance(file, dict):
+            name = file.get('name') or 'Unnamed File'
+            content = file.get('content') or ''
+            out = {'name': name, 'content': content}
+            if 'metadata' in file:
+                out['metadata'] = file['metadata']
+            self.file = out
+            return
+
         if hasattr(file, 'read'):
             # file is a file-like object (e.g. from click.File('r'))
             self.file['name'] = getattr(file, 'name', 'stream')

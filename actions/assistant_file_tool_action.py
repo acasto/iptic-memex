@@ -128,16 +128,62 @@ class AssistantFileToolAction(StepwiseAction):
 
     # ---- Handlers ----------------------------------------------------------
     def _handle_read(self, filename: str) -> None:
-        content = self.fs_handler.read_file(filename)
-        if content is None:
-            self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Failed to read file: {filename}'})
+        resolved_path = self.fs_handler.resolve_path(filename)
+        if resolved_path is None:
             return
 
-        self.session.add_context('file', filename)
+        kind = self._detect_kind(resolved_path)
         try:
-            self.session.ui.emit('status', {'message': f'Loaded file: {filename}'})
+            if kind == 'pdf':
+                helper = self.session.get_action('read_pdf')
+                if helper:
+                    ok = bool(helper.process(resolved_path, fs_handler=self.fs_handler))
+                    if ok:
+                        return
+            elif kind == 'docx':
+                helper = self.session.get_action('read_docx')
+                if helper:
+                    ok = bool(helper.process(resolved_path, fs_handler=self.fs_handler))
+                    if ok:
+                        return
+            elif kind == 'xlsx':
+                helper = self.session.get_action('read_sheet')
+                if helper:
+                    ok = bool(helper.process(resolved_path, fs_handler=self.fs_handler))
+                    if ok:
+                        return
+            elif kind == 'image':
+                helper = self.session.get_action('read_image')
+                if helper:
+                    ok = bool(helper.process(resolved_path, fs_handler=self.fs_handler))
+                    if ok:
+                        return
+
+            # Default: treat as text and add as file context via dict to avoid unrestricted read
+            content = self.fs_handler.read_file(resolved_path, binary=False)
+            if content is None:
+                self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Failed to read file: {filename}'})
+                return
+            name = os.path.basename(resolved_path)
+            self.session.add_context('file', {'name': name, 'content': str(content)})
+            try:
+                self.session.ui.emit('status', {'message': f'Loaded file: {filename}'})
+            except Exception:
+                pass
         except Exception:
-            pass
+            self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Error loading file: {filename}'})
+
+    def _detect_kind(self, path: str) -> str:
+        p = path.lower()
+        if p.endswith('.pdf'):
+            return 'pdf'
+        if p.endswith('.docx'):
+            return 'docx'
+        if p.endswith('.xlsx'):
+            return 'xlsx'
+        if p.endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif')):
+            return 'image'
+        return 'file'
 
     def _handle_write(self, filename: str, content: str, force: bool = False) -> None:
         policy = self.session.get_agent_write_policy()
