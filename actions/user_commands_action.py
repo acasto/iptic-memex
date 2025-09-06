@@ -52,6 +52,10 @@ class UserCommandsAction(InteractionAction):
                 "description": "Load a web page into the context",
                 "function": {"type": "action", "name": "fetch_from_web"},
             },
+            "load mcp": {
+                "description": "Connect to an MCP server (http|stdio)",
+                "function": {"type": "action", "name": "mcp_connect"},
+            },
             "load search": {
                 "description": "Search the web",
                 "function": {"type": "action", "name": "brave_summary"},
@@ -159,6 +163,18 @@ class UserCommandsAction(InteractionAction):
             "list chats": {
                 "description": "List saved chats",
                 "function": {"type": "action", "name": "manage_chats", "args": "list"},
+            },
+            "list mcp": {
+                "description": "List MCP servers",
+                "function": {"type": "action", "name": "mcp_list"},
+            },
+            "list mcp tools": {
+                "description": "List MCP tools per server",
+                "function": {"type": "action", "name": "mcp_list", "args": "tools"},
+            },
+            "list mcp resources": {
+                "description": "List MCP resources per server",
+                "function": {"type": "action", "name": "mcp_list", "args": "resources"},
             },
             "export chat": {
                 "description": "Export the current chat",

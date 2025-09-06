@@ -603,8 +603,13 @@ class OpenAIResponsesProvider(APIProvider):
                 if enabled_builtin:
                     names = [s.strip() for s in str(enabled_builtin).split(',') if s.strip()]
                     for name in names:
-                        # Minimal inclusion without provider-managed resources
-                        out.append({'type': name})
+                        # Minimal inclusion for simple built-ins (e.g., file_search, web_search)
+                        if name != 'mcp':
+                            out.append({'type': name})
+                    # MCP servers: build full tool objects with server_label/server_url
+                    if 'mcp' in names:
+                        mcp_tools = self._build_mcp_tools()
+                        out.extend(mcp_tools)
             except Exception:
                 pass
             return out
@@ -617,6 +622,79 @@ class OpenAIResponsesProvider(APIProvider):
         chosen = model or self.session.get_tools().get('embedding_model') or 'text-embedding-3-small'
         resp = self._client.embeddings.create(model=chosen, input=texts)
         return [item.embedding for item in (resp.data or [])]
+
+    # --- Built-in MCP tool wiring -------------------------------------
+    def _build_mcp_tools(self) -> list:
+        """Construct Responses built-in MCP tool entries from config/session params.
+
+        Supported parameters (from merged session params):
+          - mcp_servers: CSV of label=url pairs, e.g., "math=https://mcp.example.com/math,files=https://..."
+                        or a JSON object mapping label->url
+          - mcp_headers_<label>: JSON object of headers to send for that server (optional)
+          - mcp_allowed_<label>: CSV of tool names to allow (optional)
+          - mcp_require_approval: "always"|"never" (global) OR per label via mcp_require_approval_<label>
+        Minimal path: only label+url are required.
+        """
+        params = self.session.get_params() or {}
+        servers_val = params.get('mcp_servers')
+        servers: dict[str, str] = {}
+
+        # Parse servers
+        try:
+            if isinstance(servers_val, dict):
+                servers = {str(k): str(v) for k, v in servers_val.items() if k and v}
+            elif isinstance(servers_val, str):
+                for item in servers_val.split(','):
+                    item = item.strip()
+                    if not item:
+                        continue
+                    if '=' in item:
+                        label, url = item.split('=', 1)
+                        label = label.strip()
+                        url = url.strip()
+                        if label and url:
+                            servers[label] = url
+            # else: unsupported type → ignore
+        except Exception:
+            servers = {}
+
+        tools = []
+        for label, url in servers.items():
+            try:
+                tool: dict = {'type': 'mcp', 'server_label': label, 'server_url': url}
+                # Optional headers per server: mcp_headers_<label>
+                hdr_key = f'mcp_headers_{label}'
+                headers_val = params.get(hdr_key)
+                if isinstance(headers_val, dict):
+                    tool['headers'] = {str(k): str(v) for k, v in headers_val.items()}
+                elif isinstance(headers_val, str) and headers_val.strip().startswith('{'):
+                    # Best-effort JSON parse
+                    import json
+                    try:
+                        parsed = json.loads(headers_val)
+                        if isinstance(parsed, dict):
+                            tool['headers'] = {str(k): str(v) for k, v in parsed.items()}
+                    except Exception:
+                        pass
+
+                # Optional per-server allowed tools: mcp_allowed_<label>
+                allowed_key = f'mcp_allowed_{label}'
+                allowed_val = params.get(allowed_key)
+                if isinstance(allowed_val, str) and allowed_val.strip():
+                    allow_list = [s.strip() for s in allowed_val.split(',') if s.strip()]
+                    if allow_list:
+                        tool['allowed_tools'] = allow_list
+
+                # Optional approval policy: global or per-label
+                ra = params.get('mcp_require_approval') or params.get(f'mcp_require_approval_{label}')
+                if isinstance(ra, str) and ra.strip().lower() in ('always', 'never'):
+                    tool['require_approval'] = ra.strip().lower()
+
+                tools.append(tool)
+            except Exception:
+                continue
+
+        return tools
 
     # --- Usage and cost -------------------------------------------------
     def get_usage(self) -> Dict[str, Any]:

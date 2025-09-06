@@ -464,9 +464,90 @@ class AnthropicProvider(APIProvider):
                     })
                 except Exception:
                     continue
+            # Built-in tools (optional): allow 'mcp' pass-through when enabled
+            try:
+                enabled_builtin = self.session.get_params().get('enable_builtin_tools')
+                if enabled_builtin:
+                    names = [s.strip() for s in str(enabled_builtin).split(',') if s.strip()]
+                    if 'mcp' in names:
+                        tools.extend(self._build_mcp_tools())
+            except Exception:
+                pass
             return tools
         except Exception:
             return []
+
+    # --- Built-in MCP tool wiring (Anthropic) ---------------------------
+    def _build_mcp_tools(self) -> list:
+        """Construct Anthropic Messages MCP tool entries from config/session params.
+
+        We mirror the OpenAIResponses pass-through shape for consistency:
+          - enable via `enable_builtin_tools = mcp`
+          - define servers via `mcp_servers = label=url, other=https://...`
+          - optional per-server headers: `mcp_headers_<label> = {"Authorization":"Bearer ..."}`
+          - optional allowlist: `mcp_allowed_<label> = tool1,tool2`
+          - optional approval policy: `mcp_require_approval[ _<label> ] = always|never`
+
+        Note: Exact field names accepted by Anthropic may vary; this is an
+        opt-in feature behind config flags.
+        """
+        params = self.session.get_params() or {}
+        servers_val = params.get('mcp_servers')
+        servers: dict[str, str] = {}
+
+        try:
+            if isinstance(servers_val, dict):
+                servers = {str(k): str(v) for k, v in servers_val.items() if k and v}
+            elif isinstance(servers_val, str):
+                for item in servers_val.split(','):
+                    item = item.strip()
+                    if not item:
+                        continue
+                    if '=' in item:
+                        label, url = item.split('=', 1)
+                        label = label.strip()
+                        url = url.strip()
+                        if label and url:
+                            servers[label] = url
+        except Exception:
+            servers = {}
+
+        builtins: list = []
+        for label, url in servers.items():
+            try:
+                tool: dict = {'type': 'mcp', 'server_label': label, 'server_url': url}
+                # Optional headers
+                hdr_key = f'mcp_headers_{label}'
+                headers_val = params.get(hdr_key)
+                if isinstance(headers_val, dict):
+                    tool['headers'] = {str(k): str(v) for k, v in headers_val.items()}
+                elif isinstance(headers_val, str) and headers_val.strip().startswith('{'):
+                    import json
+                    try:
+                        parsed = json.loads(headers_val)
+                        if isinstance(parsed, dict):
+                            tool['headers'] = {str(k): str(v) for k, v in parsed.items()}
+                    except Exception:
+                        pass
+
+                # Optional allowlist
+                allowed_key = f'mcp_allowed_{label}'
+                allowed_val = params.get(allowed_key)
+                if isinstance(allowed_val, str) and allowed_val.strip():
+                    allow_list = [s.strip() for s in allowed_val.split(',') if s.strip()]
+                    if allow_list:
+                        tool['allowed_tools'] = allow_list
+
+                # Optional approval policy
+                ra = params.get('mcp_require_approval') or params.get(f'mcp_require_approval_{label}')
+                if isinstance(ra, str) and ra.strip().lower() in ('always', 'never'):
+                    tool['require_approval'] = ra.strip().lower()
+
+                builtins.append(tool)
+            except Exception:
+                continue
+
+        return builtins
 
     def _update_usage_from_response(self, response: Any) -> None:
         """Update usage tracking from API response"""
