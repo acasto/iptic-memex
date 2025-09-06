@@ -188,6 +188,10 @@ class UserCommandsAction(InteractionAction):
                 "description": "List MCP resources per server",
                 "function": {"type": "action", "name": "mcp_list", "args": "resources"},
             },
+            "mcp doctor": {
+                "description": "Show MCP SDK/servers status",
+                "function": {"type": "action", "name": "mcp_doctor"},
+            },
             "register mcp tools": {
                 "description": "Register discovered MCP tools for this session",
                 "function": {"type": "action", "name": "mcp_register_tools"},
