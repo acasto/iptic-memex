@@ -60,6 +60,10 @@ class UserCommandsAction(InteractionAction):
                 "description": "Load a demo MCP server with sample tools",
                 "function": {"type": "action", "name": "mcp_demo"},
             },
+            "load mcp resource": {
+                "description": "Fetch an MCP resource and add to context",
+                "function": {"type": "action", "name": "mcp_fetch_resource"},
+            },
             "discover mcp tools": {
                 "description": "Discover tools exposed by an MCP server",
                 "function": {"type": "action", "name": "mcp_discover"},
