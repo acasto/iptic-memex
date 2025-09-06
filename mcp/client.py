@@ -99,3 +99,34 @@ def get_or_create_client(session) -> MCPClient:
         session.set_user_data(key, cli)
     return cli
 
+
+# --- Demo helper ------------------------------------------------------------
+
+def inject_demo_server(client: MCPClient, name: str = 'testmcp') -> MCPServerConnection:
+    """Create a demo MCP server with a couple of tools/resources for local tests.
+
+    Tools added:
+      - calc.sum: {a:number, b:number}
+      - echo.say: {text:string}
+    """
+    conn = MCPServerConnection(name=name, transport='http', url='https://demo.local', connected=True)
+    conn.tools = [
+        MCPToolSpec(
+            name='calc.sum',
+            description='Return the sum of two numbers.',
+            input_schema={'type': 'object', 'additionalProperties': False, 'required': ['a', 'b'], 'properties': {
+                'a': {'type': 'number'},
+                'b': {'type': 'number'},
+            }},
+        ),
+        MCPToolSpec(
+            name='echo.say',
+            description='Echo back provided text.',
+            input_schema={'type': 'object', 'additionalProperties': False, 'required': ['text'], 'properties': {
+                'text': {'type': 'string'},
+            }},
+        ),
+    ]
+    conn.resources = [MCPResource(uri='guides/welcome', title='Welcome', mime_type='text/plain')]
+    client._servers[name] = conn
+    return conn

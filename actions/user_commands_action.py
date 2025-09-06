@@ -56,6 +56,14 @@ class UserCommandsAction(InteractionAction):
                 "description": "Connect to an MCP server (http|stdio)",
                 "function": {"type": "action", "name": "mcp_connect"},
             },
+            "load mcp demo": {
+                "description": "Load a demo MCP server with sample tools",
+                "function": {"type": "action", "name": "mcp_demo"},
+            },
+            "discover mcp tools": {
+                "description": "Discover tools exposed by an MCP server",
+                "function": {"type": "action", "name": "mcp_discover"},
+            },
             "load search": {
                 "description": "Search the web",
                 "function": {"type": "action", "name": "brave_summary"},
@@ -175,6 +183,14 @@ class UserCommandsAction(InteractionAction):
             "list mcp resources": {
                 "description": "List MCP resources per server",
                 "function": {"type": "action", "name": "mcp_list", "args": "resources"},
+            },
+            "register mcp tools": {
+                "description": "Register discovered MCP tools for this session",
+                "function": {"type": "action", "name": "mcp_register_tools"},
+            },
+            "unregister mcp tools": {
+                "description": "Remove dynamic MCP tools (optionally with a pattern)",
+                "function": {"type": "action", "name": "mcp_unregister_tools"},
             },
             "export chat": {
                 "description": "Export the current chat",

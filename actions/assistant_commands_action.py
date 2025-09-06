@@ -144,6 +144,26 @@ class AssistantCommandsAction(InteractionAction):
         except Exception:
             pass
 
+        # Merge session dynamic tools (e.g., MCP-registered) if present
+        try:
+            dyn_tools = self.session.get_user_data('__dynamic_tools__') or {}
+            if isinstance(dyn_tools, dict) and dyn_tools:
+                for key, cfg in dyn_tools.items():
+                    name = str(key).strip().lower()
+                    if not name or not isinstance(cfg, dict):
+                        continue
+                    # Respect allow/deny filters
+                    if active and name not in active:
+                        continue
+                    if not active and inactive and name in set(inactive):
+                        continue
+                    # Accept as-is, but ensure a function mapping exists
+                    if 'function' not in cfg:
+                        continue
+                    tools[name] = dict(cfg)
+        except Exception:
+            pass
+
         return tools
 
     # ---- Canonical tool specs for providers ----
@@ -227,8 +247,18 @@ class AssistantCommandsAction(InteractionAction):
                 if command_info.get('auto_submit') and auto_submit is not False and allow_auto_submit:
                     self.session.set_flag('auto_submit', True)
 
-                # Run the command with interrupt handling
+                # Merge fixed_args (if any) before running
                 handler = command_info["function"]
+                try:
+                    fixed = handler.get('fixed_args') if isinstance(handler, dict) else None
+                    if isinstance(fixed, dict) and fixed:
+                        merged_args = dict(cmd['args'] or {})
+                        # Fixed args should override user-provided to enforce pinning
+                        merged_args.update(fixed)
+                        cmd['args'] = merged_args
+                except Exception:
+                    pass
+                # Run the command with interrupt handling
                 try:
                     # Stop any existing spinner before starting a new one
                     self.session.utils.output.stop_spinner()
