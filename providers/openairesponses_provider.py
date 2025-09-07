@@ -23,6 +23,8 @@ class OpenAIResponsesProvider(APIProvider):
         self._last_response = None
         self._last_response_id = None
         self._last_tool_calls = None
+        self._tool_api_to_cmd: Dict[str, str] = {}
+        self._pending_mcp_approvals: list[dict] = []
 
         # usage tracking
         self.turn_usage = None
@@ -31,6 +33,11 @@ class OpenAIResponsesProvider(APIProvider):
             'total_out': 0,
             'total_time': 0.0
         }
+
+    @staticmethod
+    def supports_mcp_passthrough() -> bool:
+        """This provider supports pass-through MCP via Responses built-ins."""
+        return True
 
     # --- Client init ----------------------------------------------------
     def _initialize_client(self) -> OpenAI:
@@ -63,6 +70,85 @@ class OpenAIResponsesProvider(APIProvider):
             options['timeout'] = params['timeout']
 
         return OpenAI(**options)
+
+    # --- MCP helpers ----------------------------------------------------
+    def _summarize_mcp_outputs(self, outputs: list) -> str:
+        """Render a concise textual summary of MCP outputs so the UI isn't blank.
+
+        - mcp_list_tools: show server label + tool names (limited)
+        - mcp_call: show server label, tool name, and a brief output preview
+        """
+        try:
+            if not isinstance(outputs, list):
+                return ''
+            imported: list[str] = []
+            calls: list[str] = []
+            for item in outputs:
+                try:
+                    itype = getattr(item, 'type', None)
+                    if itype == 'mcp_list_tools':
+                        label = getattr(item, 'server_label', None) or getattr(item, 'serverLabel', None)
+                        tools = getattr(item, 'tools', None) or []
+                        names = []
+                        for t in tools or []:
+                            name = getattr(t, 'name', None) if not isinstance(t, dict) else t.get('name')
+                            if isinstance(name, str) and name:
+                                names.append(name)
+                        if label and names:
+                            imported.append(f"{label}: {', '.join(names[:6])}{'…' if len(names) > 6 else ''}")
+                    elif itype == 'mcp_call':
+                        label = getattr(item, 'server_label', None) or getattr(item, 'serverLabel', None)
+                        name = getattr(item, 'name', None)
+                        output = getattr(item, 'output', None)
+                        if output is None:
+                            err = getattr(item, 'error', None)
+                            if err:
+                                calls.append(f"{label}.{name} error: {err}")
+                            continue
+                        text = ''
+                        try:
+                            s = str(output)
+                            text = s if len(s) <= 240 else s[:240] + '…'
+                        except Exception:
+                            text = '[output]'
+                        if label and name:
+                            calls.append(f"{label}.{name} → {text}")
+                    elif itype == 'mcp_approval_request':
+                        label = getattr(item, 'server_label', None) or getattr(item, 'serverLabel', None)
+                        name = getattr(item, 'name', None)
+                        calls.append(f"Approval requested for {label}.{name}")
+                except Exception:
+                    continue
+            parts = []
+            if imported:
+                parts.append("Imported MCP tools: " + "; ".join(imported))
+            if calls:
+                parts.append("MCP results: " + "; ".join(calls))
+            return "\n\n".join(parts)
+        except Exception:
+            return ''
+
+    def _capture_mcp_approvals(self, outputs: list) -> None:
+        """Scan outputs for mcp_approval_request and remember IDs for next turn."""
+        try:
+            if not isinstance(outputs, list):
+                return
+            pending: list[dict] = []
+            for item in outputs:
+                try:
+                    if getattr(item, 'type', None) == 'mcp_approval_request':
+                        pending.append({
+                            'id': getattr(item, 'id', None),
+                            'approval_request_id': getattr(item, 'approval_request_id', None) or getattr(item, 'id', None),
+                            'server_label': getattr(item, 'server_label', None) or getattr(item, 'serverLabel', None),
+                            'name': getattr(item, 'name', None),
+                        })
+                except Exception:
+                    continue
+            if pending:
+                self._pending_mcp_approvals = pending
+        except Exception:
+            pass
 
     # --- Message/Input assembly ----------------------------------------
     def _assemble_instructions(self) -> str | None:
@@ -172,10 +258,18 @@ class OpenAIResponsesProvider(APIProvider):
             if role == 'tool':
                 call_id = turn.get('tool_call_id') or turn.get('id')
                 output_text = turn.get('message') or ''
+                # If the tool returned JSON text (object/array/string), pass it through;
+                # otherwise wrap plain text as a JSON string.
                 try:
-                    output_json = json.dumps(output_text)
+                    ot = (output_text or '').strip()
+                    output_json: str
+                    if ot and ot[0] in '{["':
+                        json.loads(ot)
+                        output_json = ot
+                    else:
+                        output_json = json.dumps(output_text)
                 except Exception:
-                    output_json = '""'
+                    output_json = json.dumps(output_text or "")
                 if call_id:
                     input_items.append({'type': 'function_call_output', 'call_id': call_id, 'output': output_json})
                 # Skip normal message handling for tool turns
@@ -228,6 +322,29 @@ class OpenAIResponsesProvider(APIProvider):
             if will_chain and bool(p.get('chain_minimize_input', True)):
                 chain_minimize = True
             input_items = self._assemble_input(chain_minimize=chain_minimize)
+            # Auto-approval for MCP (optional): if enabled and we have any pending
+            # approval requests from the prior response, append mcp_approval_response
+            # items and force chaining with previous_response_id.
+            try:
+                auto_approve = bool(p.get('mcp_auto_approve'))
+            except Exception:
+                auto_approve = False
+            if auto_approve and self._pending_mcp_approvals:
+                for req in list(self._pending_mcp_approvals):
+                    arid = req.get('approval_request_id') or req.get('id')
+                    if not arid:
+                        continue
+                    input_items.append({
+                        'type': 'mcp_approval_response',
+                        'approve': True,
+                        'approval_request_id': arid,
+                    })
+                # Clear after staging
+                self._pending_mcp_approvals = []
+                # Force chain with previous response for approvals to reference
+                if self._last_response_id:
+                    will_chain = True
+                    chain_minimize = True
 
             # Base params
             api_params: Dict[str, Any] = {
@@ -241,10 +358,14 @@ class OpenAIResponsesProvider(APIProvider):
             api_params['input'] = input_items
 
             # Privacy/storage controls
+            # Storage/chaining: enable if requested, or if we need it for MCP approvals
             if p.get('store') is not None:
                 api_params['store'] = bool(p.get('store'))
+            # If we staged approvals and have a previous response id, force store + chaining
+            if auto_approve and self._last_response_id:
+                api_params['store'] = True
             # Optional: use previous response id when storing is enabled
-            if api_params.get('store') and p.get('use_previous_response') and self._last_response_id:
+            if (api_params.get('store') and (p.get('use_previous_response') or auto_approve) and self._last_response_id):
                 api_params['previous_response_id'] = self._last_response_id
 
             # Token cap: Responses uses 'max_output_tokens'
@@ -309,15 +430,20 @@ class OpenAIResponsesProvider(APIProvider):
                             self.running_usage['reasoning_tokens'] = self.running_usage.get('reasoning_tokens', 0) + rt
                     except Exception:
                         pass
-                # Parse function tool calls from non-streaming outputs
+                # Parse outputs for function calls and MCP items
                 self._last_tool_calls = []
                 outputs = getattr(resp, 'output', None)
+                mcp_summary_text = ''
                 if isinstance(outputs, list):
                     import json
+                    # Collect function_call items for our official tool pipeline
                     for item in outputs:
                         try:
-                            if getattr(item, 'type', None) == 'function_call':
+                            itype = getattr(item, 'type', None)
+                            if itype == 'function_call':
                                 name = getattr(item, 'name', None)
+                                if isinstance(name, str) and name in self._tool_api_to_cmd:
+                                    name = self._tool_api_to_cmd.get(name, name)
                                 args = getattr(item, 'arguments', None)
                                 call_id = getattr(item, 'id', None) or getattr(item, 'call_id', None)
                                 args_obj = {}
@@ -331,12 +457,24 @@ class OpenAIResponsesProvider(APIProvider):
                                 self._last_tool_calls.append({'id': call_id, 'name': name, 'arguments': args_obj})
                         except Exception:
                             continue
+                    # Capture MCP approvals and build summary
+                    try:
+                        self._capture_mcp_approvals(outputs)
+                    except Exception:
+                        pass
+                    # Build user-visible fallback text if the model didn't emit text
+                    mcp_summary_text = self._summarize_mcp_outputs(outputs)
             except Exception:
                 pass
 
             # Output text helper
             text = getattr(resp, 'output_text', None)
-            return text if isinstance(text, str) else ''
+            if isinstance(text, str) and text.strip() != '':
+                return text
+            # If no output_text, surface a concise MCP summary so users see progress
+            if mcp_summary_text:
+                return mcp_summary_text
+            return ''
 
         except Exception as e:
             self._last_response = None
@@ -383,7 +521,7 @@ class OpenAIResponsesProvider(APIProvider):
                         except Exception:
                             pass
 
-                    # On completed, record usage and parse tool calls
+                    # On completed, record usage and parse tool/MCP outputs
                     if etype == 'response.completed' and resp_obj is not None:
                         usage = getattr(resp_obj, 'usage', None)
                         if usage is not None:
@@ -415,8 +553,11 @@ class OpenAIResponsesProvider(APIProvider):
                             calls = []
                             for item in outputs:
                                 try:
-                                    if getattr(item, 'type', None) == 'function_call':
+                                    itype = getattr(item, 'type', None)
+                                    if itype == 'function_call':
                                         name = getattr(item, 'name', None)
+                                        if isinstance(name, str) and name in self._tool_api_to_cmd:
+                                            name = self._tool_api_to_cmd.get(name, name)
                                         args = getattr(item, 'arguments', None)
                                         call_id = getattr(item, 'id', None) or getattr(item, 'call_id', None)
                                         args_obj = {}
@@ -432,6 +573,18 @@ class OpenAIResponsesProvider(APIProvider):
                                     continue
                             if calls:
                                 self._last_tool_calls = calls
+                            # Capture MCP approvals for the next request
+                            try:
+                                self._capture_mcp_approvals(outputs)
+                            except Exception:
+                                pass
+                            # If we didn't stream any text, emit a short MCP summary at the end
+                            try:
+                                summary = self._summarize_mcp_outputs(outputs)
+                                if summary:
+                                    yield summary
+                            except Exception:
+                                pass
                 except Exception:
                     # If we don't recognize the event, ignore quietly
                     pass
@@ -520,6 +673,11 @@ class OpenAIResponsesProvider(APIProvider):
             cmd = self.session.get_action('assistant_commands')
             if not cmd or not hasattr(cmd, 'get_tool_specs'):
                 return []
+            # AssistantCommands returns API-safe names and may record a mapping
+            try:
+                self._tool_api_to_cmd = self.session.get_user_data('__tool_api_to_cmd__') or {}
+            except Exception:
+                self._tool_api_to_cmd = {}
             canonical = cmd.get_tool_specs() or []
             out = []
             # Config: allow optional properties to be explicitly null
@@ -539,12 +697,6 @@ class OpenAIResponsesProvider(APIProvider):
                         params['type'] = 'object'
                     if 'properties' not in params or not isinstance(params['properties'], dict):
                         params['properties'] = {}
-                    # Remove non-argument convenience fields (e.g., 'content')
-                    try:
-                        if 'content' in params['properties']:
-                            params['properties'].pop('content', None)
-                    except Exception:
-                        pass
                     # Optionally mark optional properties as nullable
                     if allow_nullable:
                         try:
@@ -582,11 +734,12 @@ class OpenAIResponsesProvider(APIProvider):
                         except Exception:
                             pass
                     params['additionalProperties'] = False
-                    # Ensure required includes every key in properties as per Responses validation
-                    prop_keys = list(params['properties'].keys())
-                    req = params.get('required')
-                    if not isinstance(req, list) or set(req) != set(prop_keys):
-                        params['required'] = prop_keys
+                    # Responses strict mode requires required == all property keys
+                    try:
+                        prop_keys = list((params.get('properties') or {}).keys())
+                    except Exception:
+                        prop_keys = []
+                    params['required'] = prop_keys
 
                     out.append({
                         'type': 'function',
@@ -597,16 +750,13 @@ class OpenAIResponsesProvider(APIProvider):
                     })
                 except Exception:
                     continue
-            # Optionally add built-in tools if explicitly enabled via config
+            # Add MCP built-in tools when app-side MCP is active
             try:
-                enabled_builtin = self.session.get_params().get('enable_builtin_tools')
-                if enabled_builtin:
-                    names = [s.strip() for s in str(enabled_builtin).split(',') if s.strip()]
-                    for name in names:
-                        # Minimal inclusion without provider-managed resources
-                        out.append({'type': name})
+                mcp_active = bool(self.session.get_option('MCP', 'active', fallback=False))
             except Exception:
-                pass
+                mcp_active = False
+            if mcp_active:
+                out.extend(self._build_mcp_tools())
             return out
         except Exception:
             return []
@@ -617,6 +767,122 @@ class OpenAIResponsesProvider(APIProvider):
         chosen = model or self.session.get_tools().get('embedding_model') or 'text-embedding-3-small'
         resp = self._client.embeddings.create(model=chosen, input=texts)
         return [item.embedding for item in (resp.data or [])]
+
+    # --- Built-in MCP tool wiring -------------------------------------
+    def _build_mcp_tools(self) -> list:
+        """Construct OpenAI Responses MCP tool entries from config/session params.
+
+        Docs (temp/openai_mcp.txt): tools entry shape examples:
+          {
+            "type": "mcp",
+            "server_label": "dmcp",
+            "server_description": "...",
+            "server_url": "https://.../sse",
+            "require_approval": "never",
+            "allowed_tools": ["roll"],            # optional
+            "authorization": "<token>",          # optional (connectors & some servers)
+            "connector_id": "connector_dropbox"  # optional (connectors)
+          }
+
+        We map session params synthesized by mcp/bootstrap.py and optional extras:
+          - mcp_servers: CSV or dict of label=url
+          - mcp_headers_<label>: JSON dict; we extract Authorization Bearer token → authorization
+          - mcp_allowed_<label>: CSV list of tool names
+          - mcp_require_approval[ _<label> ]: always|never
+          - mcp_description_<label>: optional description
+          - mcp_connector_id_<label>: optional connector id (when using connectors)
+          - mcp_token_<label> or mcp_authorization_<label>: explicit token override
+        """
+        params = self.session.get_params() or {}
+        servers_val = params.get('mcp_servers')
+        servers: dict[str, str] = {}
+
+        # Parse servers
+        try:
+            if isinstance(servers_val, dict):
+                servers = {str(k): str(v) for k, v in servers_val.items() if k and v}
+            elif isinstance(servers_val, str):
+                for item in servers_val.split(','):
+                    item = item.strip()
+                    if not item:
+                        continue
+                    if '=' in item:
+                        label, url = item.split('=', 1)
+                        label = label.strip()
+                        url = url.strip()
+                        if label and url:
+                            servers[label] = url
+            # else: unsupported type → ignore
+        except Exception:
+            servers = {}
+
+        tools = []
+        for label, url in servers.items():
+            try:
+                tool: dict = {'type': 'mcp', 'server_label': label}
+                if url:
+                    tool['server_url'] = url
+
+                # Optional description
+                desc_key = f'mcp_description_{label}'
+                if isinstance(params.get(desc_key), str) and params.get(desc_key).strip():
+                    tool['server_description'] = params.get(desc_key).strip()
+
+                # Optional authorization from headers or explicit token
+                token = None
+                hdr_key = f'mcp_headers_{label}'
+                headers_val = params.get(hdr_key)
+                headers_obj = None
+                if isinstance(headers_val, dict):
+                    headers_obj = headers_val
+                elif isinstance(headers_val, str) and headers_val.strip().startswith('{'):
+                    import json
+                    try:
+                        parsed = json.loads(headers_val)
+                        if isinstance(parsed, dict):
+                            headers_obj = parsed
+                    except Exception:
+                        headers_obj = None
+                if isinstance(headers_obj, dict):
+                    for k, v in headers_obj.items():
+                        if str(k).lower() == 'authorization':
+                            token = str(v)
+                            break
+                if not token:
+                    for tkey in (f'mcp_token_{label}', f'mcp_authorization_{label}'):
+                        if isinstance(params.get(tkey), str) and params.get(tkey).strip():
+                            token = params.get(tkey).strip()
+                            break
+                if token:
+                    # Pass as 'authorization' per docs; strip leading 'Bearer ' if present
+                    t = token
+                    if isinstance(t, str) and t.lower().startswith('bearer '):
+                        t = t[7:].strip()
+                    tool['authorization'] = t
+
+                # Optional connector_id
+                cid_key = f'mcp_connector_id_{label}'
+                if isinstance(params.get(cid_key), str) and params.get(cid_key).strip():
+                    tool['connector_id'] = params.get(cid_key).strip()
+
+                # Optional per-server allowed tools: mcp_allowed_<label>
+                allowed_key = f'mcp_allowed_{label}'
+                allowed_val = params.get(allowed_key)
+                if isinstance(allowed_val, str) and allowed_val.strip():
+                    allow_list = [s.strip() for s in allowed_val.split(',') if s.strip()]
+                    if allow_list:
+                        tool['allowed_tools'] = allow_list
+
+                # Optional approval policy: global or per-label
+                ra = params.get('mcp_require_approval') or params.get(f'mcp_require_approval_{label}')
+                if isinstance(ra, str) and ra.strip().lower() in ('always', 'never'):
+                    tool['require_approval'] = ra.strip().lower()
+
+                tools.append(tool)
+            except Exception:
+                continue
+
+        return tools
 
     # --- Usage and cost -------------------------------------------------
     def get_usage(self) -> Dict[str, Any]:

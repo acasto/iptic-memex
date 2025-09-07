@@ -52,6 +52,22 @@ class UserCommandsAction(InteractionAction):
                 "description": "Load a web page into the context",
                 "function": {"type": "action", "name": "fetch_from_web"},
             },
+            "load mcp": {
+                "description": "Connect to an MCP server (http|stdio)",
+                "function": {"type": "action", "name": "mcp_connect"},
+            },
+            "load mcp demo": {
+                "description": "Load a demo MCP server with sample tools",
+                "function": {"type": "action", "name": "mcp_demo"},
+            },
+            "load mcp resource": {
+                "description": "Fetch an MCP resource and add to context",
+                "function": {"type": "action", "name": "mcp_fetch_resource"},
+            },
+            "discover mcp tools": {
+                "description": "Discover tools exposed by an MCP server",
+                "function": {"type": "action", "name": "mcp_discover"},
+            },
             "load search": {
                 "description": "Search the web",
                 "function": {"type": "action", "name": "brave_summary"},
@@ -156,9 +172,38 @@ class UserCommandsAction(InteractionAction):
                 "description": "Save a code snippet",
                 "function": {"type": "action", "name": "save_code"},
             },
-            "list chats": {
+            "show chats": {
                 "description": "List saved chats",
                 "function": {"type": "action", "name": "manage_chats", "args": "list"},
+            },
+            # Unified MCP command
+            "mcp": {
+                "description": "List app-side MCP servers",
+                "function": {"type": "action", "name": "mcp"},
+            },
+            "mcp tools": {
+                "description": "List app-side MCP tools per server",
+                "function": {"type": "action", "name": "mcp", "args": "tools"},
+            },
+            "mcp resources": {
+                "description": "List app-side MCP resources per server",
+                "function": {"type": "action", "name": "mcp", "args": "resources"},
+            },
+            "mcp provider": {
+                "description": "Show provider MCP pass-through configuration",
+                "function": {"type": "action", "name": "mcp", "args": ["provider-mcp"]},
+            },
+            "mcp status": {
+                "description": "Show overall MCP status (app + provider)",
+                "function": {"type": "action", "name": "mcp", "args": "status"},
+            },
+            "register mcp tools": {
+                "description": "Register discovered MCP tools for this session",
+                "function": {"type": "action", "name": "mcp_register_tools"},
+            },
+            "unregister mcp tools": {
+                "description": "Remove dynamic MCP tools (optionally with a pattern)",
+                "function": {"type": "action", "name": "mcp_unregister_tools"},
             },
             "export chat": {
                 "description": "Export the current chat",

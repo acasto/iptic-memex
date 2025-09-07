@@ -55,6 +55,30 @@ envisioned a device that would compress and store all of their knowledge. https:
   - **RAG**: Build local indexes with embeddings and query them to load relevant snippets into chat context.
   - **Persona Review (%%PERSONA_REVIEW%%)**: Review content, ideas, or features from one or more persona perspectives and optionally synthesize a panel summary. Personas may be names or loaded from a Markdown file. Accepts `files` (list or CSV) for supplemental guidelines (brand, audience, product, persona notes). Prompts: `personas/review` and `personas/panel`.
 
+## MCP Quickstart
+
+Model Context Protocol (MCP) support includes provider pass‑through (OpenAI Responses, Anthropic) and app‑side clients (`http` and `stdio`).
+
+- Global gate: `[MCP].active = true|false` acts as an on/off switch for all MCP features.
+- Global defaults (config.ini → `[MCP]`):
+  - `mcp_servers = name1,name2` (optional; if omitted, all defined `[MCP.<name>]` are considered)
+  - `autoload = name1,name2` (connect these servers at startup)
+  - `auto_register = true|false` (expose discovered app‑side tools as first‑class tools)
+  - `auto_alias = true|false` (add short aliases when no conflicts exist)
+- Per‑server (config.ini → `[MCP.<name>]`):
+  - `transport = provider|http|stdio`
+  - `url` or `command` (depending on transport), `headers` (JSON/dict; supports `${env:VAR}`)
+  - `allowed_tools` (CSV) — limits provider pass‑through and filters app‑side auto‑registration
+  - `require_approval = never|always` — provider pass‑through hint when supported
+  - Overrides: `autoload`, `auto_register`, `auto_alias` (inherit global when omitted)
+- CLI helpers:
+  - `mcp status`, `mcp provider` – inspect support and configuration
+  - `mcp tools`, `mcp resources` – list app‑side discoveries
+  - `discover mcp tools <server>` → probe tools; `register mcp tools <server> [--tools t1,t2] [--alias]` → expose to the assistant
+  - `show tools` – assistant‑visible tool names (deduped), annotated with server
+
+Tip: Keep `[MCP].debug = false` for clean startup; set to true to see registration summaries and per‑call success lines.
+
 ### Filesystem Sandbox and --base-dir
 
 - Tools that touch the filesystem (file and cmd) operate inside a sandbox rooted at `[TOOLS].base_directory`.

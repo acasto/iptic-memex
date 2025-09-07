@@ -53,7 +53,40 @@ class ShowAction(InteractionAction):
             """Show currently active assistant tools (after config gating)."""
             try:
                 cmd = self.session.get_action('assistant_commands')
-                names = sorted(list((cmd.commands or {}).keys())) if cmd else []
+                entries = cmd.commands if cmd else {}
+                # Deduplicate by function identity and prefer normalized (alias) names.
+                # Also annotate MCP dynamic tools with their server label when available.
+                import json as _json
+                display_map = {}
+                if isinstance(entries, dict):
+                    for name, spec in entries.items():
+                        try:
+                            fn = spec.get('function') if isinstance(spec, dict) else None
+                            fn_key = _json.dumps(fn or {}, sort_keys=True)
+                            # Choose preferred label: prefer non-namespaced alias when duplicates exist
+                            current = display_map.get(fn_key)
+                            # Build annotated label
+                            label = str(name)
+                            server = None
+                            try:
+                                fixed = (fn or {}).get('fixed_args') or {}
+                                server = fixed.get('server')
+                            except Exception:
+                                server = None
+                            if server:
+                                # For MCP-registered tools, show "name (server)"
+                                label = f"{label} ({server})"
+                            if current is None:
+                                display_map[fn_key] = label
+                                continue
+                            # Prefer an alias (no namespace) over namespaced canonical keys
+                            is_alias = ':' not in name and '/' not in name
+                            is_current_alias = ':' not in current and '/' not in current
+                            if is_alias and not is_current_alias:
+                                display_map[fn_key] = label
+                        except Exception:
+                            continue
+                names = sorted(list(display_map.values())) if display_map else []
                 mode = 'agent' if getattr(self.session, 'in_agent_mode', lambda: False)() else 'chat'
                 header = f"Active tools ({mode}):"
                 lines = [header, "---------------------------------"]

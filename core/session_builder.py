@@ -118,6 +118,13 @@ class SessionBuilder:
         except Exception as e:
             print(f"Warning: Could not load prompt context: {e}")
 
+        # MCP autoload/bootstrap based on [MCP]
+        try:
+            from memex_mcp.bootstrap import autoload_mcp
+            autoload_mcp(session)
+        except Exception:
+            pass
+
         return session
 
     def rebuild_provider(self, session) -> None:

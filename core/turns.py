@@ -356,6 +356,15 @@ class TurnRunner:
                             continue
 
                         handler = spec.get('function') or {}
+                        # Merge fixed_args (for dynamic tools) before running; fixed override user-provided
+                        try:
+                            fixed = handler.get('fixed_args') if isinstance(handler, dict) else None
+                            if isinstance(fixed, dict) and fixed:
+                                merged = dict(args or {})
+                                merged.update(fixed)
+                                args = merged
+                        except Exception:
+                            pass
                         try:
                             from contextlib import nullcontext
                             self.session.utils.output.stop_spinner()
@@ -411,7 +420,9 @@ class TurnRunner:
                                     try:
                                         parts = []
                                         for item in new_items:
-                                            data = item.get('context').get() if isinstance(item, dict) and item.get('context') else None
+                                            # Accept both raw context objects and {type,context} wrappers
+                                            ctx_obj = item.get('context') if isinstance(item, dict) else item
+                                            data = ctx_obj.get() if hasattr(ctx_obj, 'get') else None
                                             if data and isinstance(data, dict):
                                                 c = data.get('content')
                                                 if isinstance(c, str) and c.strip():
@@ -441,6 +452,19 @@ class TurnRunner:
                                 })
                             except Exception:
                                 pass
+                    # Add a separator newline after all tools finish (CLI only)
+                    try:
+                        if not self.session.in_agent_mode():
+                            ui = getattr(self.session, 'ui', None)
+                            blocking = True
+                            try:
+                                blocking = bool(ui and ui.capabilities and ui.capabilities.blocking)
+                            except Exception:
+                                blocking = True
+                            if blocking:
+                                self.session.utils.output.write("")
+                    except Exception:
+                        pass
                     return True
         except Exception:
             pass

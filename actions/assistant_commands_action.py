@@ -144,6 +144,23 @@ class AssistantCommandsAction(InteractionAction):
         except Exception:
             pass
 
+        # Merge session dynamic tools (e.g., MCP-registered) if present
+        try:
+            dyn_tools = self.session.get_user_data('__dynamic_tools__') or {}
+            if isinstance(dyn_tools, dict) and dyn_tools:
+                for key, cfg in dyn_tools.items():
+                    name = str(key).strip().lower()
+                    if not name or not isinstance(cfg, dict):
+                        continue
+                    # Dynamic tools are user/session-registered; include them regardless of
+                    # global allow/deny filters so models can see them immediately.
+                    # Accept as-is, but ensure a function mapping exists
+                    if 'function' not in cfg:
+                        continue
+                    tools[name] = dict(cfg)
+        except Exception:
+            pass
+
         return tools
 
     # ---- Canonical tool specs for providers ----
@@ -158,18 +175,19 @@ class AssistantCommandsAction(InteractionAction):
         Shape per spec:
           { name, description, parameters: {type:'object', properties:{...}, required:[...]} }
         """
-        specs = []
+        import re, json as _json
+
+        # 1) Build raw entries with canonical names and function identity
+        entries = []
         for cmd_key, info in (self.commands or {}).items():
             try:
                 handler = (info.get('function') or {}).get('name', '')
-                name = str(cmd_key).lower()
-                desc = info.get('description') or self._auto_description(cmd_key, handler)
+                canonical_name = str(cmd_key).lower()
+                desc = info.get('description') or self._auto_description(canonical_name, handler)
                 arg_names = list(info.get('args', []) or [])
-
                 # Default properties: strings for all declared args + freeform content
                 properties = {a: {"type": "string"} for a in arg_names}
                 properties['content'] = {"type": "string"}
-
                 # Merge schema overrides when present
                 schema = info.get('schema') or {}
                 schema_props = schema.get('properties') or {}
@@ -179,23 +197,62 @@ class AssistantCommandsAction(InteractionAction):
                             properties[k] = v
                         except Exception:
                             continue
-
-                # Use 'required' from command spec if present; default to []
                 required = info['required'] if 'required' in info else []
-
-                specs.append({
-                    'name': name,
-                    'description': desc,
-                    'parameters': {
-                        'type': 'object',
-                        'properties': properties,
-                        'required': required,
-                        'additionalProperties': True,
-                    }
-                })
+                params = {'type': 'object', 'properties': properties, 'required': required, 'additionalProperties': True}
+                fn_key = _json.dumps(info.get('function') or {}, sort_keys=True)
+                entries.append({'canonical_name': canonical_name, 'desc': desc, 'parameters': params, 'fn_key': fn_key})
             except Exception:
                 continue
-        return specs
+
+        # 2) Group by function identity and choose an API-safe name per function
+        def is_ok(n: str) -> bool:
+            try:
+                return bool(re.match(r'^[A-Za-z0-9_-]+$', n or ''))
+            except Exception:
+                return False
+
+        groups: dict[str, list[dict]] = {}
+        for e in entries:
+            groups.setdefault(e['fn_key'], []).append(e)
+
+        name_map: dict[str, str] = {}
+        used: set[str] = set()
+        out_specs: list = []
+
+        for fn_key, items in groups.items():
+            # Prefer an existing alias with a valid name; otherwise sanitize the first canonical
+            chosen = None
+            for it in items:
+                if is_ok(it['canonical_name']):
+                    chosen = it
+                    break
+            if chosen is None:
+                chosen = items[0]
+            api_name = chosen['canonical_name']
+            if not is_ok(api_name):
+                base = re.sub(r'[^A-Za-z0-9_-]', '_', api_name) or 'tool'
+                api_name = base
+                i = 1
+                while api_name in used:
+                    api_name = f"{base}_{i}"
+                    i += 1
+            # Record mapping for provider tool_call → canonical name
+            name_map[api_name] = chosen['canonical_name']
+            used.add(api_name)
+            out_specs.append({
+                'name': api_name,
+                'description': chosen['desc'],
+                'parameters': chosen['parameters'],
+                'function': fn_key,  # keep for provider-side optional dedup/debug
+                'canonical_name': chosen['canonical_name'],
+            })
+
+        # Store mapping for providers to translate tool_call names back
+        try:
+            self.session.set_user_data('__tool_api_to_cmd__', name_map)
+        except Exception:
+            pass
+        return out_specs
 
     def run(self, response: str = None):
         # Backstop: sanitize out <think> ... </think> segments so parser
@@ -227,8 +284,18 @@ class AssistantCommandsAction(InteractionAction):
                 if command_info.get('auto_submit') and auto_submit is not False and allow_auto_submit:
                     self.session.set_flag('auto_submit', True)
 
-                # Run the command with interrupt handling
+                # Merge fixed_args (if any) before running
                 handler = command_info["function"]
+                try:
+                    fixed = handler.get('fixed_args') if isinstance(handler, dict) else None
+                    if isinstance(fixed, dict) and fixed:
+                        merged_args = dict(cmd['args'] or {})
+                        # Fixed args should override user-provided to enforce pinning
+                        merged_args.update(fixed)
+                        cmd['args'] = merged_args
+                except Exception:
+                    pass
+                # Run the command with interrupt handling
                 try:
                     # Stop any existing spinner before starting a new one
                     self.session.utils.output.stop_spinner()

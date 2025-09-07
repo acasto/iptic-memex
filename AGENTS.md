@@ -179,6 +179,8 @@ Gating and CLI‑only flows
   - `tool_spec(session)` → `{args, description, required, schema:{properties}, auto_submit}`.
   - Optional `tool_aliases()` and `can_run(session)` for gating.
   The canonical registry is built at runtime and used by providers for official tool calling.
+  - API-safe names: The registry selects an API-safe tool name (^[A-Za-z0-9_-]+$) per function, preferring a valid alias or sanitizing if needed. It also stores a mapping `__tool_api_to_cmd__` (api name → canonical command key) so providers can map tool calls back to the right action.
+  - Dynamic tools are always included: session-registered tools (e.g., MCP) bypass `[TOOLS].active_tools` filtering so models see them immediately.
 - Config:
   - `[TOOLS].active_tools` / `[TOOLS].inactive_tools` control exposure (agent variants supported).
   - Handler override per tool: `[TOOLS].<tool>_tool = action_name`.
@@ -215,7 +217,7 @@ Gating and CLI‑only flows
   - Note: No `tool_choice` control is wired at this time; the model decides when to call.
   - Parses `tool_calls` in non-streaming and streaming. Streaming aggregates argument deltas without printing JSON.
 - Turn orchestration:
-  - On a tool call, the runner replaces the last assistant message (provider view) with an assistant message containing `tool_calls`, executes the mapped actions, and appends `tool` role messages with `tool_call_id` and real outputs. Then it auto-submits the follow-up assistant turn.
+  - On a tool call, the runner replaces the last assistant message (provider view) with an assistant message containing `tool_calls`, merges any `function.fixed_args` (e.g., MCP server/tool pinning), executes the mapped actions, and appends `tool` role messages with `tool_call_id` and real outputs. Then it auto-submits the follow-up assistant turn.
   - Pseudo-tools still work (when enabled) and run after official tools if no official calls are present.
 - UX:
   - Chat Mode: shows a single spinner line `Tool calling: <name>` per tool; tools may print their own status lines (e.g., file tool). A separator newline is written after all tools finish to disambiguate from model output.
@@ -227,6 +229,8 @@ Gating and CLI‑only flows
 - Tool calls: Assistant emits `tool_use` content blocks (id, name, input). Client must reply with `user` `tool_result` blocks referencing `tool_use_id` and including result text.
 - Provider integration: The Anthropic provider maps assistant `tool_calls` to `tool_use` blocks and tool messages to `tool_result` blocks. Streaming detects `tool_use` starts and input deltas without printing raw JSON.
 - Limitations: With extended thinking, only `tool_choice: auto|none` is supported.
+
+- MCP connector (beta): Configure via top‑level `mcp_servers` (not `tools`). The provider attaches the required beta flag automatically and sends entries like `{type:"url", url:"https://.../sse", name:"label", authorization_token?, tool_configuration?}`. Claude returns MCP blocks (`mcp_tool_use`, `mcp_tool_result`).
 
 #### Local Backends (llama.cpp)
 - Current status:
@@ -269,6 +273,8 @@ Gating and CLI‑only flows
   - Core shows a spinner in CLI chat and status updates in Web/TUI while the provider initializes.
   - A matching `startup_ready_message` can be defined for a completion notice in non-blocking UIs.
   - Agent and Completion modes do not display these indicators.
+
+- MCP capability: providers may implement a static method `supports_mcp_passthrough() -> bool`. When `True`, and `[MCP].active=true`, provider pass‑through MCP will be surfaced (e.g., OpenAI Responses, Anthropic Messages). The `mcp provider` and `mcp status` commands report support explicitly to avoid confusion when app‑side MCP is active but the current provider cannot pass it through.
 
 ##### RAG embeddings with llama.cpp
 - The `LlamaCpp` provider implements `embed(texts, model?)` for local embeddings with a lightweight, lazy embedding handle.
@@ -338,7 +344,7 @@ Gating and CLI‑only flows
   - config.ini `[OpenAIResponses]`:
     - `store = true`, `use_previous_response = true` to enable stateful chaining.
     - `chain_minimize_input = true` to avoid resending history while chaining.
-    - Optional: `enable_builtin_tools = web_search_preview,file_search` to expose built‑ins.
+    - MCP pass‑through uses `[MCP].active` as the gate (no provider‑local toggle). When active and the provider supports pass‑through, MCP servers are sent via built‑ins; configure servers with `mcp_servers` and optional per‑server keys (see below).
   - Reasoning: set `reasoning = true` and `reasoning_effort = minimal|low|medium|high` on the model.
 
 ### Provider: OpenAIResponses
@@ -353,7 +359,7 @@ Gating and CLI‑only flows
   - `use_previous_response = False` (set `True` to pass `previous_response_id` when available)
   - `chain_minimize_input = True` (send only the latest user/tool window when chaining)
   - `tool_mode = official` (uses the dynamic canonical tool registry)
-  - Optional: `enable_builtin_tools = web_search_preview,file_search`
+  - MCP pass‑through: controlled by `[MCP].active`; configure with `mcp_servers` and per‑server options.
 
 - Example model (models.ini):
 ```
@@ -382,6 +388,7 @@ max_completion_tokens = 4096
     - `parameters.type = object`, `parameters.additionalProperties = false`, and `parameters.required` including every key in `parameters.properties`.
     - `strict = true`.
   - Tool calls in outputs are parsed as `function_call` items and normalized for TurnRunner.
+  - MCP tool calls are executed on the provider side (OpenAI). They surface as `mcp_*` items in `output` rather than `function_call` entries and therefore are not routed through our tool runner. Control approval with `mcp_require_approval = never|always` (global or per server via `mcp_require_approval_<label>`). Gated by `[MCP].active`.
   - Provider clears `get_tool_calls()` after read to avoid double execution in follow‑ups.
 
 - Tool result mapping (input side):
@@ -549,3 +556,28 @@ max_completion_tokens = 4096
   - Verbose: `python main.py --steps 3 -v -f -`
   - Raw‑only final: `echo "Do X" | python main.py --steps 2 -r --agent-output final -f -`
   - Deny writes: `python main.py --steps 3 --agent-writes deny -f plan.md`
+
+## MCP Integration (Provider Pass‑Through + App‑Side)
+
+- Global Gate
+  - `[MCP].active = true|false` acts as a single on/off switch for all MCP features (provider pass‑through and app‑side http/stdio). When false, MCP actions and autoload are disabled.
+
+- Provider Pass‑Through
+  - Providers can advertise support with `supports_mcp_passthrough()` (True in this repo for OpenAI Responses and Anthropic Messages).
+  - When supported and `[MCP].active=true`, MCP servers are forwarded using provider‑specific parameters (e.g., Responses built‑ins or Anthropic `mcp_servers`). Keys include: `mcp_servers`, `mcp_headers_<label>`, `mcp_allowed_<label>`, `mcp_require_approval(_<label>)`, `mcp_connector_id_<label>`.
+  - CLI: `mcp provider`, `mcp status` show whether the current provider supports pass‑through, whether MCP is active, and list configured servers with hints.
+
+- App‑Side MCP (http & stdio)
+  - `[MCP]` defaults: `mcp_servers` (optional), `autoload`, `auto_register`, `auto_alias`, `debug`.
+  - Per‑server: `[MCP.<name>]` with `transport = provider|http|stdio`, target `url|command`, `headers` (supports `${env:VAR}`), and provider hints (`allowed_tools`, `require_approval`).
+  - Per‑server overrides: `autoload`, `auto_register`, `auto_alias`. Omitted keys inherit the global defaults.
+  - `allowed_tools` also filters app‑side auto‑registration (only the listed tool names are registered for that server).
+  - Auto‑registration exposes app‑side tools to the assistant as `mcp:<server>/<tool>` with fixed args; optional aliases create short names when no conflicts exist.
+
+- CLI Helpers
+  - `mcp status`, `mcp provider`, `mcp tools`, `mcp resources` for visibility.
+  - `discover mcp tools <server>`; `register mcp tools <server> [--tools t1,t2] [--alias]`; `unregister mcp tools [pattern]`.
+  - `show tools` lists assistant‑visible tools (deduped) and annotates MCP entries with `(server)` for clarity.
+
+- Noise Control
+  - `[MCP].debug = true` surfaces auto‑registration summaries and per‑call success lines. Errors are always printed.

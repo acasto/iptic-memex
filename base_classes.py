@@ -55,6 +55,17 @@ class APIProvider(ABC):
         """
         return []
 
+    # --- Optional provider capabilities ------------------------------
+    @staticmethod
+    def supports_mcp_passthrough() -> bool:
+        """Return True if this provider natively supports pass-through MCP.
+
+        Defaults to False. Providers that can forward MCP connections (e.g.,
+        OpenAI Responses, Anthropic Messages with MCP beta) should override
+        to return True.
+        """
+        return False
+
     # --- Optional embeddings support ---------------------------------
     def embed(self, texts: List[str], model: Optional[str] = None) -> List[List[float]]:
         """Return embeddings for a list of texts using the provider, if supported.

@@ -37,12 +37,18 @@ class AnthropicProvider(APIProvider):
         self.total_usage = Usage()
         self._last_response = None
         self._last_stream_tool_calls = None
+        self._tool_api_to_cmd: Dict[str, str] = {}
 
         self.parameters = {
             'model', 'max_tokens', 'system', 'messages', 'stop_sequences',
             'metadata', 'stream', 'temperature', 'top_k', 'top_p',
-            'tools', 'tool_choice'
+            'tools', 'tool_choice', 'mcp_servers'
         }
+
+    @staticmethod
+    def supports_mcp_passthrough() -> bool:
+        """Anthropic Messages API supports pass-through MCP (beta)."""
+        return True
 
     def _initialize_client(self) -> Anthropic:
         """Initialize Anthropic client with current connection parameters"""
@@ -251,6 +257,14 @@ class AnthropicProvider(APIProvider):
         except Exception:
             pass
 
+        # Anthropic MCP (beta): attach mcp_servers when configured
+        try:
+            mcp_servers = self._build_mcp_servers()
+            if mcp_servers:
+                params['mcp_servers'] = mcp_servers
+        except Exception:
+            pass
+
         params['system'] = self._build_system_content()
         params['messages'] = self._build_messages()
         return params
@@ -259,7 +273,30 @@ class AnthropicProvider(APIProvider):
         start_time = time()
         try:
             params = self._prepare_api_parameters()
-            response = self.client.messages.create(**params)
+
+            # If MCP servers are present, invoke the beta Messages API with
+            # the required beta flag for MCP client access.
+            use_mcp_beta = bool(params.get('mcp_servers'))
+            if use_mcp_beta:
+                try:
+                    # Prefer official beta surface when available
+                    beta = getattr(self.client, 'beta', None)
+                    if beta and hasattr(beta, 'messages'):
+                        response = beta.messages.create(**params, betas=["mcp-client-2025-04-04"])
+                    else:
+                        # Fallback path: many SDKs accept per-call extra_headers
+                        try:
+                            response = self.client.messages.create(
+                                **params,
+                                extra_headers={"anthropic-beta": "mcp-client-2025-04-04"}
+                            )
+                        except TypeError:
+                            # If extra_headers is not supported, last resort without header
+                            response = self.client.messages.create(**params)
+                except Exception as e:
+                    return self._format_error(e)
+            else:
+                response = self.client.messages.create(**params)
             self._last_response = response
 
             if params.get('stream'):
@@ -427,6 +464,17 @@ class AnthropicProvider(APIProvider):
         Shape: [{"id": str, "name": str, "arguments": dict}]
         """
         if self._last_stream_tool_calls:
+            # Map back to canonical names when available
+            mapping = self.session.get_user_data('__tool_api_to_cmd__') or {}
+            if isinstance(mapping, dict) and mapping:
+                mapped = []
+                for c in self._last_stream_tool_calls:
+                    n = c.get('name')
+                    if isinstance(n, str) and n in mapping:
+                        c = dict(c)
+                        c['name'] = mapping.get(n, n)
+                    mapped.append(c)
+                return mapped
             return list(self._last_stream_tool_calls)
         resp = self._last_response
         out = []
@@ -435,10 +483,15 @@ class AnthropicProvider(APIProvider):
                 return out
             for block in getattr(resp, 'content', []) or []:
                 try:
-                    if getattr(block, 'type', None) == 'tool_use':
+                    btype = getattr(block, 'type', None)
+                    if btype == 'tool_use':
+                        name = getattr(block, 'name', None)
+                        mapping = self.session.get_user_data('__tool_api_to_cmd__') or {}
+                        if isinstance(name, str) and isinstance(mapping, dict) and name in mapping:
+                            name = mapping.get(name, name)
                         out.append({
                             'id': getattr(block, 'id', None),
-                            'name': getattr(block, 'name', None),
+                            'name': name,
                             'arguments': getattr(block, 'input', {}) or {}
                         })
                 except Exception:
@@ -453,6 +506,8 @@ class AnthropicProvider(APIProvider):
             cmd = self.session.get_action('assistant_commands')
             if not cmd or not hasattr(cmd, 'get_tool_specs'):
                 return []
+            # AssistantCommands returns API-safe names and stores a mapping
+            self._tool_api_to_cmd = self.session.get_user_data('__tool_api_to_cmd__') or {}
             canonical = cmd.get_tool_specs() or []
             tools = []
             for spec in canonical:
@@ -467,6 +522,107 @@ class AnthropicProvider(APIProvider):
             return tools
         except Exception:
             return []
+
+    # --- Anthropic MCP (beta) configuration ---------------------------
+    def _build_mcp_servers(self) -> list:
+        """Build Anthropic `mcp_servers` param from session config.
+
+        Source params synthesized by mcp/bootstrap.py:
+          - `mcp_servers`: CSV "label=url" pairs or dict mapping
+          - `mcp_headers_<label>`: JSON dict; we extract an Authorization Bearer token if present
+          - `mcp_allowed_<label>`: CSV of tool names
+
+        Returns a list per Anthropic MCP connector docs:
+          [{
+              "type": "url",
+              "url": "https://...",
+              "name": "label",
+              "authorization_token": "...",        # optional
+              "tool_configuration": {               # optional
+                  "enabled": true,
+                  "allowed_tools": ["foo", "bar"],
+              }
+          }]
+        """
+        # Gate by [MCP].active to align with app-side feature flag
+        try:
+            if not bool(self.session.get_option('MCP', 'active', fallback=False)):
+                return []
+        except Exception:
+            return []
+
+        params = self.session.get_params() or {}
+
+        # Parse server mapping
+        servers_val = params.get('mcp_servers')
+        servers: dict[str, str] = {}
+        try:
+            if isinstance(servers_val, dict):
+                servers = {str(k): str(v) for k, v in servers_val.items() if k and v}
+            elif isinstance(servers_val, str):
+                for item in servers_val.split(','):
+                    item = item.strip()
+                    if not item:
+                        continue
+                    if '=' in item:
+                        label, url = item.split('=', 1)
+                        label = label.strip()
+                        url = url.strip()
+                        if label and url:
+                            servers[label] = url
+        except Exception:
+            servers = {}
+
+        out: list = []
+        for label, url in servers.items():
+            try:
+                entry: dict = {'type': 'url', 'url': url, 'name': label}
+
+                # Extract Authorization Bearer token if configured
+                token: str | None = None
+                hdr_key = f'mcp_headers_{label}'
+                headers_val = params.get(hdr_key)
+                headers_obj = None
+                if isinstance(headers_val, dict):
+                    headers_obj = headers_val
+                elif isinstance(headers_val, str) and headers_val.strip().startswith('{'):
+                    import json
+                    try:
+                        parsed = json.loads(headers_val)
+                        if isinstance(parsed, dict):
+                            headers_obj = parsed
+                    except Exception:
+                        headers_obj = None
+                if isinstance(headers_obj, dict):
+                    auth = None
+                    for k, v in headers_obj.items():
+                        if str(k).lower() == 'authorization':
+                            auth = str(v)
+                            break
+                    if auth and auth.lower().startswith('bearer '):
+                        token = auth[7:].strip()
+                # Optional explicit token param (future-proof)
+                if not token:
+                    tkey = f'mcp_token_{label}'
+                    if isinstance(params.get(tkey), str) and params.get(tkey).strip():
+                        token = params.get(tkey).strip()
+                if token:
+                    entry['authorization_token'] = token
+
+                # Optional tool allowlist
+                allowed_key = f'mcp_allowed_{label}'
+                allowed_val = params.get(allowed_key)
+                allow_list = None
+                if isinstance(allowed_val, str) and allowed_val.strip():
+                    allow_list = [s.strip() for s in allowed_val.split(',') if s.strip()]
+                if allow_list:
+                    entry['tool_configuration'] = {'enabled': True, 'allowed_tools': allow_list}
+
+                out.append(entry)
+            except Exception:
+                continue
+
+        return out
 
     def _update_usage_from_response(self, response: Any) -> None:
         """Update usage tracking from API response"""
