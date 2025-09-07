@@ -59,45 +59,75 @@ def _normalize_path(p: str) -> str:
 
 
 def load_rag_config(session) -> Tuple[Dict[str, str], list[str], str, str]:
-    """Extract RAG-related config from session.
+    """Extract RAG-related config from session using the new schema.
 
-    Returns (indexes, active, vector_db, embedding_model)
+    Returns (indexes, active_names, vector_db, embedding_model)
     - indexes: mapping of index_name -> absolute path (existing only)
-    - active: list of active index names (subset of indexes) or all if not set
-    - vector_db: base directory for vector storage
+    - active_names: list of index names to search/update by default (now identical to [RAG].indexes)
+    - vector_db: base directory for vector storage (from [RAG].vector_db)
     - embedding_model: embedding model name (may be empty string if not configured)
+
+    New schema overview:
+      [RAG]
+      indexes = notes,docs
+      active = true
+
+      [RAG.notes]
+      path = ~/notes
+      include = **/*.md
+      exclude = .git, node_modules
+
+      [RAG.docs]
+      path = ~/docs
     """
     tools = session.get_tools()
     params = session.get_params()
 
-    # Indexes from [RAG] as flat key=path (ONLY keys explicitly in [RAG])
-    indexes: Dict[str, str] = {}
     # Be robust in tests or minimal sessions without a config
     cfg = getattr(getattr(session, 'config', None), 'base_config', None) or configparser.ConfigParser()
-    sec = getattr(cfg, '_sections', {}).get('RAG', {}) or {}
+
+    # Parse [RAG].indexes list
+    indexes: Dict[str, str] = {}
+    rag_top: Dict[str, str] = {}
     try:
-        for key, value in sec.items():
-            if key in ('active', '__name__'):
-                continue
-            abspath = _normalize_path(value)
-            if os.path.isdir(abspath):
-                indexes[key] = abspath
+        rag_top = {k: v for k, v in getattr(cfg, '_sections', {}).get('RAG', {}) .items()}
     except Exception:
-        pass
+        rag_top = {}
 
-    # Active list
-    active_raw = None
+    raw_indexes = None
     try:
-        active_raw = sec.get('active')
+        raw_indexes = rag_top.get('indexes')
     except Exception:
-        active_raw = None
-    active = [x.strip() for x in str(active_raw).split(',')] if active_raw else list(indexes.keys())
-    active = [n for n in active if n in indexes]
+        raw_indexes = None
+    names = [x.strip() for x in str(raw_indexes).split(',')] if raw_indexes else []
 
-    # Vector DB path, default under home
-    vector_db = params.get('vector_db') or os.path.expanduser('~/.codex/vector_store')
+    # Build indexes from [RAG.<name>].path
+    if names:
+        for name in names:
+            sec_name = f'RAG.{name}'
+            try:
+                if cfg.has_section(sec_name):
+                    path_val = cfg.get(sec_name, 'path', fallback='')
+                else:
+                    path_val = ''
+            except Exception:
+                path_val = ''
+            if path_val:
+                abspath = _normalize_path(path_val)
+                if os.path.isdir(abspath):
+                    indexes[name] = abspath
+    # If none found, leave empty (no legacy auto-detection required)
 
-    # Embedding model from tools
+    # Active indexes list is the same as declared [RAG].indexes
+    active = list(indexes.keys())
+
+    # Vector DB path: must be provided in [RAG].vector_db (no fallback)
+    try:
+        vector_db = (cfg.get('RAG', 'vector_db', fallback='') or '').strip()
+    except Exception:
+        vector_db = ''
+
+    # Embedding model from tools (still configured under [TOOLS])
     embedding_model = tools.get('embedding_model', '') or ''
 
     return indexes, active, vector_db, embedding_model
@@ -220,34 +250,33 @@ def load_rag_filters(session) -> Dict[str, Dict[str, List[str] | None]]:
     """Load per-index include/exclude glob patterns.
 
     Returns mapping: { index: { 'include': [patterns]|None, 'exclude': [patterns]|None } }
-    - Per-index keys read from [RAG]: <index>_include, <index>_exclude
-    - Defaults from [TOOLS]: rag_default_include, rag_default_exclude
+    - Per-index keys read from [RAG.<index>]: include, exclude
+    - Defaults from [RAG]: default_include, default_exclude
     """
-    tools = session.get_tools() or {}
-    # Accept both the requested key and a correctly spelled alias for safety
-    default_include = get_list(tools, 'rag_default_include') or []
-    default_exclude = get_list(tools, 'rag_default_exclude') or []
-
     # Be robust in tests or minimal sessions without a config
     cfg = getattr(getattr(session, 'config', None), 'base_config', None) or configparser.ConfigParser()
-    sec = getattr(cfg, '_sections', {}).get('RAG', {}) or {}
 
-    # Build index roots
-    indexes: Dict[str, str] = {}
+    # Top-level defaults under [RAG]
+    top = getattr(cfg, '_sections', {}).get('RAG', {}) or {}
+    default_include = get_list(top, 'default_include') or []  # type: ignore[arg-type]
+    default_exclude = get_list(top, 'default_exclude') or []  # type: ignore[arg-type]
+
+    # Which indexes are defined
+    raw_names = (top.get('indexes') if isinstance(top, dict) else None) or ''
+    names = [x.strip() for x in str(raw_names).split(',') if str(x).strip()]
+
     out: Dict[str, Dict[str, List[str] | None]] = {}
-    try:
-        for key, value in sec.items():
-            if key in ('active', '__name__') or key.endswith('_include') or key.endswith('_exclude'):
-                continue
-            abspath = _normalize_path(value)
-            if os.path.isdir(abspath):
-                indexes[key] = abspath
-    except Exception:
-        pass
-
-    for name in indexes.keys():
-        inc = get_list(sec, f'{name}_include')  # type: ignore[arg-type]
-        exc = get_list(sec, f'{name}_exclude')  # type: ignore[arg-type]
+    for name in names:
+        sec_name = f'RAG.{name}'
+        inc = []
+        exc = []
+        try:
+            if cfg.has_section(sec_name):
+                inc = get_list(cfg._sections.get(sec_name, {}), 'include') or []  # type: ignore[arg-type]
+                exc = get_list(cfg._sections.get(sec_name, {}), 'exclude') or []  # type: ignore[arg-type]
+        except Exception:
+            inc = []
+            exc = []
         eff_inc = inc if (inc and len(inc) > 0) else (default_include if default_include else None)
         # Merge default + per-index for excludes
         merged_exc: List[str] = []
@@ -266,11 +295,13 @@ def load_rag_filters(session) -> Dict[str, Dict[str, List[str] | None]]:
 def load_rag_exts(session) -> Set[str]:
     """Return effective extension allowlist for discovery.
 
-    Defaults to DEFAULT_EXTS. If `[TOOLS].rag_included_exts` is set, it extends
+    Defaults to DEFAULT_EXTS. If `[RAG].included_exts` is set, it extends
     the defaults (merge) for safety.
     """
-    tools = session.get_tools() or {}
-    raw = get_list(tools, 'rag_included_exts')
+    # Read from [RAG] section
+    cfg = getattr(getattr(session, 'config', None), 'base_config', None) or configparser.ConfigParser()
+    top = getattr(cfg, '_sections', {}).get('RAG', {}) or {}
+    raw = get_list(top, 'included_exts')  # type: ignore[arg-type]
     exts: Set[str] = set(DEFAULT_EXTS)
     if raw:
         for itm in raw:
@@ -289,10 +320,11 @@ def load_rag_exts(session) -> Set[str]:
 def load_rag_max_bytes(session) -> int:
     """Return max file size in bytes for discovery.
 
-    Reads `[TOOLS].rag_max_file_mb`; defaults to 10 MB when unset/invalid.
+    Reads `[RAG].max_file_mb`; defaults to 10 MB when unset/invalid.
     """
-    tools = session.get_tools() or {}
-    mb = get_int(tools, 'rag_max_file_mb')
+    cfg = getattr(getattr(session, 'config', None), 'base_config', None) or configparser.ConfigParser()
+    top = getattr(cfg, '_sections', {}).get('RAG', {}) or {}
+    mb = get_int(top, 'max_file_mb')  # type: ignore[arg-type]
     if not isinstance(mb, int) or mb <= 0:
         return 10 * 1024 * 1024
     return mb * 1024 * 1024

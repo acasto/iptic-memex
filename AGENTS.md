@@ -292,24 +292,34 @@ Gating and CLI‑only flows
 ### Retrieval-Augmented Generation (RAG)
 - Overview:
   - Lightweight local RAG pipeline under `rag/`: discovery → chunking → embeddings → on-disk vector store → semantic search.
-  - Artifacts per index live under `vector_db/<index>/` (configurable via `vector_db`).
+  - Artifacts per index live under `vector_db/<index>/` (configurable via `[RAG].vector_db`).
 - Commands:
   - `rag update` (action: `actions/rag_update_action.py`): build or refresh indexes using the current embedding provider (prefers current provider; falls back to an embedding-capable provider).
   - `load rag` (action: `actions/load_rag_action.py`): interactive query and summary; loads top matches into chat context.
 - Config:
-  - `[RAG]`: list indexes as `name = /path/to/folder`.
-  - Optional per-index filters: `name_include = <globs>`, `name_exclude = <globs>` (globs are matched relative to the index root; includes run first, then excludes prune).
-  - Optional extension allowlist: `[TOOLS] rag_included_exts = .md,.mdx,.txt,.rst,.pdf,.docx,.xlsx` to enable PDF/DOCX/XLSX extraction.
-  - `[TOOLS].embedding_model`: choose an embedding model (e.g., `text-embedding-3-small`).
-  - Optional `[TOOLS].embedding_provider` to override which provider performs embeddings.
-  - Optional `[TOOLS]` defaults for discovery: `rag_default_include = <globs>` and `rag_default_exclude = <globs>`.
+  - `[RAG]`: declare indexes and global defaults.
+    - `indexes = notes, docs` (the active index list)
+    - `active = true|false` (global feature gate, like `[MCP].active`)
+    - `included_exts = .md,.mdx,.txt,.rst,.pdf,.docx,.xlsx` (optional; extends base allowlist)
+    - `default_include = **/*.md, **/*.mdx, **/*.txt, **/*.rst` (optional)
+    - `default_exclude = .git, node_modules, __pycache__, .venv, **/*.png, **/*.jpg` (optional)
+    - `max_file_mb = 10` (optional; discovery size cap per file)
+    - RAG tuning knobs (global defaults):
+      - `top_k`, `per_index_cap`, `preview_lines`, `similarity_threshold`
+      - `attach_mode` ('summary'|'snippets'), `total_chars_budget`
+      - `group_by_file`, `merge_adjacent`, `merge_gap`
+  - Per-index sections: `[RAG.<name>]` with:
+    - `path = /path/to/folder`
+    - Optional `include`/`exclude` globs (matched relative to the index root)
+  - Embeddings: still configured under `[TOOLS]`:
+    - `embedding_provider`, `embedding_model`
 - Internals:
   - `rag/vector_store.py`: `NaiveStore` layout – `manifest.json`, `chunks.jsonl`, `embeddings.json`.
   - `rag/indexer.py`: chunks text, batches embeddings, writes artifacts.
   - `rag/search.py`: loads artifacts, embeds query, cosine similarity, maps to line-range previews.
   - `rag/fs_utils.py`: pulls `[RAG]` config, active index, paths, and embedding model/provider.
   - See `rag/README.md` for details and roadmaps (incremental updates, locks, backends).
-  - Size cap: `[TOOLS].rag_max_file_mb` (default 10) controls the maximum file size considered during discovery.
+  - Size cap: `[RAG].max_file_mb` (default 10) controls the maximum file size considered during discovery.
 
 ## Stepwise Actions & UI Adapters (Core)
 ## OpenAI Responses API

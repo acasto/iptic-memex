@@ -315,9 +315,11 @@ Persona Review quickstart
    - `rag status` Show per-index status (paths, counts, vector dim, last updated) and consistency checks.
 
 RAG quickstart
-- Configure indexes in the `[RAG]` section of `config.ini` (keys are index names; values are folder paths). Example:
-  - `[RAG]\nnotes = ~/Notes\nresearch = ~/Research`
-- Set `vector_db` (default in repo config is `~/.config/iptic-memex/vector_store`).
+- Configure indexes in `[RAG]` (new layout):
+  - `[RAG]\nindexes = notes, research\nactive = true`
+  - `[RAG.notes]\npath = ~/Notes`
+  - `[RAG.research]\npath = ~/Research`
+- Set `[RAG].vector_db` (default in repo config is `~/.config/iptic-memex/vector_store`).
 - Choose an embedding model via `[TOOLS].embedding_model` (e.g., `text-embedding-3-small`). Optional: `embedding_provider` to override which provider performs embeddings.
 - Build indexes: `rag update` (prompts for which index if not specified).
 - Query: `load rag` (interactive prompt) or `load rag <index>`; results are summarized and added to context.

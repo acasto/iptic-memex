@@ -49,43 +49,54 @@ A small, self-contained retrieval system that indexes user-configured folders an
 - `contexts/rag_context.py`: Minimal `{ name, content }` wrapper used by `load rag` output.
 
 ## Configuration
-- `[RAG]`
-  - Flat map of indexes: `notes=/abs/path/to/notes`, `docs=/abs/path/to/docs`
-  - Optional: `active=notes,docs` (defaults to all keys if omitted)
-  - Optional per-index filters (glob patterns, matched relative to each index root):
-    - `notes_include = **/*.md, **/*.txt` (include-only; if set, files must match at least one)
-    - `notes_exclude = **/node_modules/**, **/*.png` (exclude list)
-  - Extensions: base allowlist is `.md,.mdx,.txt,.rst`. To include PDFs/DOCX/XLSX, set `[TOOLS] rag_included_exts = .md,.mdx,.txt,.rst,.pdf,.docx,.xlsx`.
+- `[RAG]` (top-level)
+  - `indexes = notes, docs` (defines the active index list)
+  - `active = true|false` (global on/off gate; when false, RAG commands/tools are hidden)
+  - Optional global discovery controls:
+    - `included_exts = .md,.mdx,.txt,.rst,.pdf,.docx,.xlsx` (extends base allowlist)
+    - `default_include = **/*.md, **/*.mdx, **/*.txt, **/*.rst`
+    - `default_exclude = .git, node_modules, __pycache__, .venv, **/*.png, **/*.jpg`
+    - `max_file_mb = 10` (skip files larger than this size)
+  - RAG tuning knobs (global defaults):
+    - `top_k` (default 8)
+    - `per_index_cap` (default None)
+    - `preview_lines` (default 3)
+    - `similarity_threshold` (default 0.0)
+    - `attach_mode` ('summary'|'snippets', default 'summary')
+    - `total_chars_budget` (default 20000)
+    - `group_by_file` (default True)
+    - `merge_adjacent` (default True)
+    - `merge_gap` (default 5)
+- Per-index sections `[RAG.<name>]`
+  - `path = /abs/path/to/folder`
+  - Optional `include` / `exclude` glob lists (matched relative to the index root)
   - Glob nuance: a leading `**/` is treated as optional for includes, so `**/*.md` also matches files at the index root.
-- `[DEFAULT]`
-  - `vector_db=~/.codex/vector_store` (or your preferred path, e.g., `~/.config/iptic-memex/vector_store`)
-- `[TOOLS]`
+- `[RAG]`
+  - `vector_db=~/.config/iptic-memex/vector_store` (default in repo config)
+- `[TOOLS]` (embeddings)
   - `embedding_model=text-embedding-3-small` (or your choice)
-  - Optional: `embedding_provider=openai|openairesponses|…` to override embedding provider only.
-  - Optional defaults for filters (applied to all indexes unless overridden):
-    - `rag_default_include =` (empty means include everything)
-    - `rag_default_exclude = .git, node_modules, __pycache__, .venv, **/*.png, **/*.jpg`
+  - `embedding_provider=openai|openairesponses|…` selects the embedding-capable provider
 
-### RAG tuning (in `[TOOLS]`)
-RAG exposes a few focused knobs under `[TOOLS]` to balance relevance vs context size:
+### RAG tuning (in `[RAG]`)
+Knobs to balance relevance vs context size. Defaults shown above.
 
-- `rag_top_k` (int, default 8): number of top results to consider.
-- `rag_per_index_cap` (int|None): cap results per index (default None).
-- `rag_preview_lines` (int, default 3): preview lines per hit in summary mode.
-- `rag_similarity_threshold` (float, default 0.0): drop hits below this cosine score.
-- `rag_attach_mode` ('summary'|'snippets', default 'summary'):
+- `top_k`: number of top results to consider.
+- `per_index_cap`: cap results per index.
+- `preview_lines`: preview lines per hit in summary mode.
+- `similarity_threshold`: drop hits below this cosine score.
+- `attach_mode` ('summary'|'snippets'):
   - `summary`: a single consolidated, readable block with paths + previews.
   - `snippets`: attach sliced text ranges directly as context under a character budget.
-- `rag_total_chars_budget` (int, default 20000): character budget for snippets.
-- `rag_group_by_file` (bool, default True): group hits by file before attaching.
-- `rag_merge_adjacent` (bool, default True): merge near-contiguous ranges in the same file.
-- `rag_merge_gap` (int, default 5): maximum line gap to merge adjacent ranges.
-- `rag_max_file_mb` (int, default 10): maximum file size considered during discovery.
+- `total_chars_budget`: character budget for snippets.
+- `group_by_file`: group hits by file before attaching.
+- `merge_adjacent`: merge near-contiguous ranges in the same file.
+- `merge_gap`: maximum line gap to merge adjacent ranges.
+- `max_file_mb`: maximum file size considered during discovery.
 
 ## Filesystem Model (Security)
 - Read-only traversal of configured roots; no writes into source trees.
 - Realpath validation blocks symlink escapes.
-- Filters: include `.md|.mdx|.txt|.rst` by default; optional per-index `*_include`/`*_exclude` glob patterns, plus `[TOOLS]` defaults. Extend the allowlist via `[TOOLS].rag_included_exts`.
+- Filters: include `.md|.mdx|.txt|.rst` by default; optional per-index `include`/`exclude` glob patterns, plus `[RAG] default_include/default_exclude`. Extend the allowlist via `[RAG].included_exts`.
 - Size caps to avoid runaway memory/latency.
 
 ## Data Layout
@@ -120,7 +131,7 @@ RAG exposes a few focused knobs under `[TOOLS]` to balance relevance vs context 
   - This is off by default to avoid model coupling.
 
 ## Usage
-- Configure indexes in `[RAG]`, choose `embedding_model`, set `vector_db`.
+- Configure indexes in `[RAG]`, choose `embedding_model`, set `[RAG].vector_db`.
 - Build: `rag update` or `rag update notes`.
 - Search: `load rag`, `load rag notes`, `load rag 3` (preview lines), `load rag notes 5`.
 - Results are added to context as a single consolidated, readable block.
@@ -150,9 +161,8 @@ RAG exposes a few focused knobs under `[TOOLS]` to balance relevance vs context 
 Near-term improvements
 - Incremental updates: track file mtimes/hashes; only re-embed changed chunks; delete removed docs.
 - Per-index file locks: simple `.lock` in `vector_db/<index>/` to avoid concurrent writers.
-- Knobs: `[TOOLS] rag_top_k` (default 8), `rag_per_index_cap`, `rag_preview_lines_default`.
 - `rag status` JSON output option for scripting and integrations.
-- More discovery knobs as needed (rag_included_exts is supported).
+- More discovery knobs as needed (`included_exts`, `default_*` supported).
 - UX: dedupe near-identical results; group hits by file with consolidated previews; ANSI highlighting for preview matches (optional).
 - Assistant tool (later): `RAGSEARCH` official tool returning structured citations; assistant requests user to load files as needed.
 

@@ -24,8 +24,11 @@ class RagUpdateAction(InteractionAction):
 
     @staticmethod
     def can_run(session) -> bool:
-        # Always available for user command; embedding may error later if no provider
-        return True
+        # Gate RAG commands behind [RAG].active similar to MCP
+        try:
+            return bool(session.get_option('RAG', 'active', fallback=False))
+        except Exception:
+            return False
 
     def _resolve_embedder(self) -> Optional[object]:
         tools = self.session.get_tools()
@@ -48,13 +51,19 @@ class RagUpdateAction(InteractionAction):
         args = args or []
         target = args[0] if args else None
         indexes, active, vector_db, embedding_model = load_rag_config(self.session)
+        if not vector_db:
+            try:
+                self.session.ui.emit('error', {'message': "RAG requires [RAG].vector_db to be set."})
+            except Exception:
+                pass
+            return False
         filters = load_rag_filters(self.session)
         exts = load_rag_exts(self.session)
         max_bytes = load_rag_max_bytes(self.session)
 
         if not indexes:
             try:
-                self.session.ui.emit('error', {'message': 'No [RAG] indexes configured. Add entries like notes=/path in config.ini.'})
+                self.session.ui.emit('error', {'message': "No [RAG] indexes configured. Define [RAG].indexes and per-index sections like [RAG.notes] with path=... in config.ini."})
             except Exception:
                 pass
             return False

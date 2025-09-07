@@ -37,14 +37,19 @@ class FakeUI:
 
 
 class FakeSession:
-    def __init__(self, tools: dict):
+    def __init__(self, tools: dict, rag: dict | None = None):
         self._tools = dict(tools)
+        self._rag = dict(rag or {})
         self.utils = FakeUtils()
         self.ui = FakeUI()
         self._contexts = []
         self._registry = type('R', (), {'config': type('Cfg', (), {})()})()
     def get_tools(self):
         return dict(self._tools)
+    def get_all_options_from_section(self, section: str):
+        if section == 'RAG':
+            return dict(self._rag)
+        return {}
     def add_context(self, kind: str, data):
         self._contexts.append((kind, data))
     def get_action(self, name):
@@ -74,7 +79,10 @@ def test_threshold_filters_and_summary(monkeypatch, tmp_path):
     (tmp_path / 'a.md').write_text('aaa')
     (tmp_path / 'b.md').write_text('bbb')
 
-    sess = FakeSession({'embedding_provider': 'X', 'embedding_model': 'M', 'rag_similarity_threshold': 0.5, 'rag_attach_mode': 'summary'})
+    sess = FakeSession(
+        {'embedding_provider': 'X', 'embedding_model': 'M'},
+        {'similarity_threshold': 0.5, 'attach_mode': 'summary'}
+    )
     ok = LoadRagAction(sess).run([])
     assert ok is True
     # Only one context added with summary; threshold filters out low-score
@@ -105,7 +113,10 @@ def test_snippets_mode_groups_and_budget(monkeypatch, tmp_path):
 
     (tmp_path / 'c.md').write_text('line1\nline2\nline3\nline4\n')
 
-    sess = FakeSession({'embedding_provider': 'X', 'embedding_model': 'M', 'rag_attach_mode': 'snippets', 'rag_total_chars_budget': 100})
+    sess = FakeSession(
+        {'embedding_provider': 'X', 'embedding_model': 'M'},
+        {'attach_mode': 'snippets', 'total_chars_budget': 100}
+    )
     ok = LoadRagAction(sess).run([])
     assert ok is True
     kinds = [k for k, _ in sess._contexts]
@@ -138,7 +149,10 @@ def test_merge_gap_controls_merge(monkeypatch, tmp_path):
     (tmp_path / 'd.md').write_text('\n'.join([f'l{i}' for i in range(1, 11)]))
 
     # Small merge gap => no merge
-    sess1 = FakeSession({'embedding_provider': 'X', 'embedding_model': 'M', 'rag_attach_mode': 'snippets', 'rag_group_by_file': True, 'rag_merge_adjacent': True, 'rag_merge_gap': 5})
+    sess1 = FakeSession(
+        {'embedding_provider': 'X', 'embedding_model': 'M'},
+        {'attach_mode': 'snippets', 'group_by_file': True, 'merge_adjacent': True, 'merge_gap': 5}
+    )
     ok1 = LoadRagAction(sess1).run([])
     assert ok1 is True
     content1 = sess1._contexts[0][1]['content']
@@ -146,7 +160,10 @@ def test_merge_gap_controls_merge(monkeypatch, tmp_path):
     assert 'd.md#L1-L2' in content1 and 'd.md#L8-L9' in content1
 
     # Larger merge gap => merged into one range
-    sess2 = FakeSession({'embedding_provider': 'X', 'embedding_model': 'M', 'rag_attach_mode': 'snippets', 'rag_group_by_file': True, 'rag_merge_adjacent': True, 'rag_merge_gap': 10})
+    sess2 = FakeSession(
+        {'embedding_provider': 'X', 'embedding_model': 'M'},
+        {'attach_mode': 'snippets', 'group_by_file': True, 'merge_adjacent': True, 'merge_gap': 10}
+    )
     ok2 = LoadRagAction(sess2).run([])
     assert ok2 is True
     content2 = sess2._contexts[0][1]['content']

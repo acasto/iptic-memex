@@ -30,7 +30,10 @@ class LoadRagAction(InteractionAction):
 
     @staticmethod
     def can_run(session) -> bool:
-        return True
+        try:
+            return bool(session.get_option('RAG', 'active', fallback=False))
+        except Exception:
+            return False
 
     def run(self, args: List[str] | None = None):
         args = args or []
@@ -53,6 +56,12 @@ class LoadRagAction(InteractionAction):
                 preview_lines = 0
 
         indexes, active, vector_db, embedding_model = load_rag_config(self.session)
+        if not vector_db:
+            try:
+                self.session.ui.emit('error', {'message': "RAG requires [RAG].vector_db to be set."})
+            except Exception:
+                pass
+            return False
         if not indexes:
             try:
                 self.session.ui.emit('error', {'message': 'No [RAG] indexes configured.'})
@@ -97,39 +106,45 @@ class LoadRagAction(InteractionAction):
                 pass
             return False
 
-        # Read RAG tuning knobs from [TOOLS]
-        def _get_tool_opt(name: str, default):
+        # Read RAG tuning knobs from [RAG]
+        rag_opts = {}
+        try:
+            rag_opts = self.session.get_all_options_from_section('RAG') or {}
+        except Exception:
+            rag_opts = {}
+
+        def _get_rag_opt(name: str, default):
             try:
-                return tools.get(name, default)
+                return rag_opts.get(name, default)
             except Exception:
                 return default
 
         try:
-            top_k = int(_get_tool_opt('rag_top_k', 8) or 8)
+            top_k = int(_get_rag_opt('top_k', 8) or 8)
         except Exception:
             top_k = 8
-        raw_cap = _get_tool_opt('rag_per_index_cap', None)
+        raw_cap = _get_rag_opt('per_index_cap', None)
         try:
             per_index_cap = int(raw_cap) if raw_cap is not None else None
         except Exception:
             per_index_cap = None
         try:
-            preview_default = int(_get_tool_opt('rag_preview_lines', 3) or 3)
+            preview_default = int(_get_rag_opt('preview_lines', 3) or 3)
         except Exception:
             preview_default = 3
         try:
-            threshold = float(_get_tool_opt('rag_similarity_threshold', 0.0) or 0.0)
+            threshold = float(_get_rag_opt('similarity_threshold', 0.0) or 0.0)
         except Exception:
             threshold = 0.0
-        attach_mode = str(_get_tool_opt('rag_attach_mode', 'summary') or 'summary').strip().lower()
+        attach_mode = str(_get_rag_opt('attach_mode', 'summary') or 'summary').strip().lower()
         try:
-            budget = int(_get_tool_opt('rag_total_chars_budget', 20000) or 20000)
+            budget = int(_get_rag_opt('total_chars_budget', 20000) or 20000)
         except Exception:
             budget = 20000
-        group_by_file = bool(_get_tool_opt('rag_group_by_file', True))
-        merge_adjacent = bool(_get_tool_opt('rag_merge_adjacent', True))
+        group_by_file = bool(_get_rag_opt('group_by_file', True))
+        merge_adjacent = bool(_get_rag_opt('merge_adjacent', True))
         try:
-            merge_gap = int(_get_tool_opt('rag_merge_gap', 5) or 5)
+            merge_gap = int(_get_rag_opt('merge_gap', 5) or 5)
         except Exception:
             merge_gap = 5
 

@@ -17,8 +17,8 @@ class AssistantRagsearchToolAction(InteractionAction):
       - query (str, required): search query text (falls back to content)
       - index (str, optional): single index name
       - indexes (str|list, optional): comma-separated or list of index names
-      - k (int, optional): top-K results (default from [TOOLS].rag_top_k)
-      - preview_lines (int, optional): lines per hit (default from [TOOLS].rag_preview_lines)
+      - k (int, optional): top-K results (default from [RAG].top_k)
+      - preview_lines (int, optional): lines per hit (default from [RAG].preview_lines)
       - per_index_cap (int, optional): cap per index
       - threshold (float, optional): similarity threshold to filter results
 
@@ -67,7 +67,10 @@ class AssistantRagsearchToolAction(InteractionAction):
 
     @staticmethod
     def can_run(session) -> bool:
-        return True
+        try:
+            return bool(session.get_option('RAG', 'active', fallback=False))
+        except Exception:
+            return False
 
     def run(self, args: Dict[str, Any], content: str = ""):
         args = args or {}
@@ -87,6 +90,12 @@ class AssistantRagsearchToolAction(InteractionAction):
             self.session.add_context('assistant', {
                 'name': 'rag_error',
                 'content': 'RAGSEARCH: no [RAG] indexes configured.'
+            })
+            return
+        if not vector_db:
+            self.session.add_context('assistant', {
+                'name': 'rag_error',
+                'content': 'RAGSEARCH: [RAG].vector_db is not set.'
             })
             return
 
@@ -157,10 +166,14 @@ class AssistantRagsearchToolAction(InteractionAction):
             })
             return
 
-        # Tuning knobs (defaults from [TOOLS], allow overrides via args)
-        def _tool_opt(name: str, default):
+        # Tuning knobs (defaults from [RAG], allow overrides via args)
+        try:
+            rag_opts = self.session.get_all_options_from_section('RAG') or {}
+        except Exception:
+            rag_opts = {}
+        def _rag_opt(name: str, default):
             try:
-                return tools.get(name, default)
+                return rag_opts.get(name, default)
             except Exception:
                 return default
 
@@ -176,14 +189,14 @@ class AssistantRagsearchToolAction(InteractionAction):
             except Exception:
                 return d
 
-        top_k = _int(args.get('k', None), _int(_tool_opt('rag_top_k', 8) or 8, 8))
-        preview_default = _int(_tool_opt('rag_preview_lines', 3) or 3, 3)
+        top_k = _int(args.get('k', None), _int(_rag_opt('top_k', 8) or 8, 8))
+        preview_default = _int(_rag_opt('preview_lines', 3) or 3, 3)
         preview_lines = _int(args.get('preview_lines', None), preview_default)
         pic_raw = args.get('per_index_cap', None)
         if pic_raw is None:
-            pic_raw = _tool_opt('rag_per_index_cap', None)
+            pic_raw = _rag_opt('per_index_cap', None)
         per_index_cap = None if pic_raw is None else _int(pic_raw, None)
-        threshold = _float(args.get('threshold', None), _float(_tool_opt('rag_similarity_threshold', 0.0) or 0.0, 0.0))
+        threshold = _float(args.get('threshold', None), _float(_rag_opt('similarity_threshold', 0.0) or 0.0, 0.0))
 
         # Execute search
         try:
@@ -213,9 +226,9 @@ class AssistantRagsearchToolAction(InteractionAction):
             pass
 
         # Group by file and merge adjacent line ranges (mirror LoadRagAction defaults)
-        group_by_file = bool(_tool_opt('rag_group_by_file', True))
-        merge_adjacent = bool(_tool_opt('rag_merge_adjacent', True))
-        merge_gap = _int(_tool_opt('rag_merge_gap', 5) or 5, 5)
+        group_by_file = bool(_rag_opt('group_by_file', True))
+        merge_adjacent = bool(_rag_opt('merge_adjacent', True))
+        merge_gap = _int(_rag_opt('merge_gap', 5) or 5, 5)
 
         grouped: List[Dict[str, Any]] = []
         if group_by_file:
@@ -285,4 +298,3 @@ class AssistantRagsearchToolAction(InteractionAction):
             })
         except Exception:
             pass
-

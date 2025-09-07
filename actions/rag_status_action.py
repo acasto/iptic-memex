@@ -20,7 +20,10 @@ class RagStatusAction(InteractionAction):
 
     @staticmethod
     def can_run(session) -> bool:
-        return True
+        try:
+            return bool(session.get_option('RAG', 'active', fallback=False))
+        except Exception:
+            return False
 
     def _format_status_lines(self, rows: List[Dict[str, Any]]) -> List[str]:
         lines: List[str] = []
@@ -53,10 +56,16 @@ class RagStatusAction(InteractionAction):
         args = args or []
         target = args[0] if args else None
         indexes, active, vector_db, _ = load_rag_config(self.session)
+        if not vector_db:
+            try:
+                self.session.ui.emit('error', {'message': "RAG requires [RAG].vector_db to be set."})
+            except Exception:
+                pass
+            return False
 
         if not indexes:
             try:
-                self.session.ui.emit('error', {'message': 'No [RAG] indexes configured. Add entries like notes=/path in config.ini.'})
+                self.session.ui.emit('error', {'message': "No [RAG] indexes configured. Define [RAG].indexes and per-index sections like [RAG.notes] with path=... in config.ini."})
             except Exception:
                 pass
             return False
@@ -124,4 +133,3 @@ class RagStatusAction(InteractionAction):
             except Exception:
                 pass
         return True
-
