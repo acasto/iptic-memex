@@ -18,7 +18,7 @@
 //   - upload:done { files }
 //   - upload:error { message }
 import { on, emit } from './bus.js';
-import { apiChat, apiStreamStart, actionStart, actionResume, actionCancel, uploadFiles } from './api.js';
+import { apiChat, apiStreamStart, apiStreamCancel, actionStart, actionResume, actionCancel, uploadFiles } from './api.js';
 import { openEventSource } from './sse.js';
 
 // Non-stream chat send
@@ -39,6 +39,9 @@ on('controller:chat:send', async (ev) => {
 });
 
 // Stream start: acquire token and open SSE (sse.js emits token/done/error)
+const _streams = new Map(); // messageId -> { es, token }
+let _currentStreamId = null;
+
 on('controller:stream:start', async (ev) => {
   const d = (ev && ev.detail) || {};
   const text = (d.text || '').trim();
@@ -47,10 +50,42 @@ on('controller:stream:start', async (ev) => {
   try {
     const init = await apiStreamStart(text);
     const token = init && init.token; if (!token) throw new Error('No stream token');
-    openEventSource(token, { messageId });
+    const es = openEventSource(token, { messageId });
+    _streams.set(messageId, { es, token });
+    _currentStreamId = messageId;
   } catch (e) {
     // Fallback to non-stream
     emit('controller:chat:send', { text });
+  }
+});
+
+// Track lifecycle to clear current mapping
+on('sse:done', (ev) => {
+  const d = (ev && ev.detail) || {};
+  const id = d.messageId;
+  if (id && _streams.has(id)) _streams.delete(id);
+  if (_currentStreamId === id) _currentStreamId = null;
+});
+on('sse:error', (ev) => {
+  const d = (ev && ev.detail) || {};
+  const id = d.messageId;
+  if (id && _streams.has(id)) _streams.delete(id);
+  if (_currentStreamId === id) _currentStreamId = null;
+});
+
+// External stop request (e.g., Stop button)
+on('controller:stream:stop', async () => {
+  const id = _currentStreamId;
+  if (!id) return;
+  const rec = _streams.get(id);
+  if (!rec) return;
+  try {
+    try { rec.es.close(); } catch {}
+    try { await apiStreamCancel(rec.token); } catch {}
+  } finally {
+    _streams.delete(id);
+    _currentStreamId = null;
+    emit('stream:stopped', { messageId: id });
   }
 });
 

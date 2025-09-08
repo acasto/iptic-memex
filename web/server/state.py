@@ -29,6 +29,8 @@ class WebState:
         self.session = session
         self._secret = secrets.token_bytes(32)
         self._states: Dict[str, ActionState] = {}
+        # Optional: cooperative cancellation per issued token
+        self._cancel_events: Dict[str, Any] = {}
 
     def sign(self, payload: bytes) -> str:
         return hmac.new(self._secret, payload, hashlib.sha256).hexdigest()
@@ -72,3 +74,29 @@ class WebState:
         if time.time() - st.issued_at > ttl_seconds:
             return None, "Token expired"
         return st, None
+
+    # ---- Cancellation helpers (optional) ----
+    def register_cancel_event(self, token: str, event: Any) -> None:
+        try:
+            self._cancel_events[token] = event
+        except Exception:
+            pass
+
+    def trigger_cancel(self, token: str) -> bool:
+        ev = self._cancel_events.get(token)
+        try:
+            if ev is not None:
+                # Support threading.Event-like objects
+                if hasattr(ev, 'set') and callable(getattr(ev, 'set')):
+                    ev.set()
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def clear_cancel_event(self, token: str) -> None:
+        try:
+            if token in self._cancel_events:
+                del self._cancel_events[token]
+        except Exception:
+            pass

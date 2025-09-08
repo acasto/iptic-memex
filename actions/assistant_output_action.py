@@ -184,12 +184,16 @@ class AssistantOutputAction(InteractionAction):
         self._accumulated_return_parts = []
         self._load_filters()
 
+        # Allow cooperative cancellation when output sink provides a cancel_check
+        cancel_check = getattr(self.output, 'cancel_check', None)
         raw_result = self.session.utils.stream.process_stream(
             stream,
             on_token=self._on_token,
             on_complete=self._on_complete,
             on_buffer=None,
-            spinner_message=spinner_message
+            spinner_message=spinner_message,
+            spinner_style=None,
+            cancel_check=cancel_check
         )
 
         # Return raw result for compatibility; ChatMode can query sanitized via getter

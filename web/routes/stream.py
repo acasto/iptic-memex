@@ -27,6 +27,8 @@ async def handle_api_stream(app, request: Request):
 
     # Prefer token-based message handoff to avoid logging sensitive content in query strings
     token = (request.query_params.get('token') or '').strip()
+    cancel_token = None
+    cancel_ev = None
     if token:
         st, err = app._verify_token(token)
         if not st:
@@ -36,6 +38,14 @@ async def handle_api_stream(app, request: Request):
         message = (st.data or {}).get('message') or ''
         # Mark token used (single-use)
         st.used = True
+        # Register a cooperative cancel event for this token
+        try:
+            import threading
+            cancel_ev = threading.Event()
+            app._webstate.register_cancel_event(token, cancel_ev)
+            cancel_token = token
+        except Exception:
+            cancel_ev = None
     else:
         # Backward compatibility: allow message in query param (discouraged)
         message = (request.query_params.get('message') or '').strip()
@@ -168,6 +178,12 @@ async def handle_api_stream(app, request: Request):
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_running_loop()
     web_output = WebOutput(loop=loop, queue=queue)
+    # Provide cooperative cancellation to stream processors
+    if cancel_ev is not None:
+        try:
+            web_output.cancel_check = cancel_ev.is_set  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
     def run_streaming_turn():
         original_output = app.session.utils.output
@@ -256,6 +272,12 @@ async def handle_api_stream(app, request: Request):
             except Exception:
                 pass
             app.session.utils.replace_output(original_output)
+            # Clear cancel event registration after completion
+            try:
+                if cancel_token:
+                    app._webstate.clear_cancel_event(cancel_token)
+            except Exception:
+                pass
 
     # Run the turn in a thread; consume queue into SSE
     t = threading.Thread(target=run_streaming_turn, daemon=True)
@@ -284,3 +306,20 @@ async def handle_api_stream(app, request: Request):
 
     headers = {"Cache-Control": "no-cache", "Connection": "keep-alive"}
     return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
+
+
+async def handle_api_stream_cancel(app, request: Request):
+    try:
+        payload: Dict[str, Any] = await request.json()
+    except Exception:
+        return PlainTextResponse('Invalid JSON', status_code=400)
+    token = (payload.get('token') or '').strip()
+    if not token:
+        return PlainTextResponse('Missing "token"', status_code=400)
+    # Trigger cancel if registered; independent of token verification for speed
+    ok = False
+    try:
+        ok = app._webstate.trigger_cancel(token)
+    except Exception:
+        ok = False
+    return JSONResponse({"ok": True, "cancelled": bool(ok)})

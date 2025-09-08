@@ -25,7 +25,8 @@ class StreamHandler:
             on_complete: Optional[Callable[[str], Any]] = None,
             on_buffer: Optional[Callable[[str], Any]] = None,
             spinner_message: Optional[str] = None,
-            spinner_style: Optional[str] = None
+            spinner_style: Optional[str] = None,
+            cancel_check: Optional[Callable[[], bool]] = None
     ) -> str:
         """
         Process a stream of text tokens, collecting them while allowing real-time processing.
@@ -70,6 +71,13 @@ class StreamHandler:
 
             # Process rest of stream normally
             for token in stream_iter:
+                # Cooperative cancellation point
+                try:
+                    if cancel_check and cancel_check():
+                        raise KeyboardInterrupt()
+                except Exception:
+                    # If cancel_check itself errors, ignore and continue
+                    pass
                 if on_token:
                     on_token(token)
                 accumulated += token

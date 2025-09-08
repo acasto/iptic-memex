@@ -15,6 +15,7 @@ const newChatBtn = document.getElementById('newchat');
 const attachBtn = document.getElementById('attach');
 const optionsBtn = document.getElementById('options');
 const darkToggle = document.getElementById('darkmode');
+const stopBtn = document.getElementById('stop');
 
 // Store-backed message rendering
 const _nodes = new Map(); // id -> content span
@@ -111,6 +112,9 @@ function sendStream(text) {
     } finally { offToken(); offDone(); offErr(); }
   });
 
+  // Show Stop while active
+  if (stopBtn) stopBtn.style.display = 'inline-block';
+
   emit('controller:stream:start', { text, messageId });
   // On immediate failure, controller will fall back by emitting non-stream send
   // Also provide local fallback after a microtask in case no event arrives
@@ -206,6 +210,15 @@ if (log) {
   log.addEventListener('scroll', () => updateJumpVisibility());
   // Initial state
   updateJumpVisibility();
+}
+
+// Stop button wiring: visible only during active stream
+if (stopBtn) {
+  stopBtn.addEventListener('click', () => emit('controller:stream:stop'));
+  const hide = () => { stopBtn.style.display = 'none'; };
+  on('sse:done', hide);
+  on('sse:error', hide);
+  on('stream:stopped', hide);
 }
 
 // ---- Panel helpers ----

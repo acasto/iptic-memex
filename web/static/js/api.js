@@ -23,6 +23,7 @@ export function apiParams() { return getJSON('/api/params'); }
 export function apiModels() { return getJSON('/api/models'); }
 export function apiChat(message) { return postJSON('/api/chat', { message }); }
 export function apiStreamStart(message) { return postJSON('/api/stream/start', { message }); }
+export function apiStreamCancel(token) { return postJSON('/api/stream/cancel', { token }); }
 export function actionStart(action, args, content=null) { return postJSON('/api/action/start', { action, args: args||{}, content }); }
 export function actionResume(state_token, response) { return postJSON('/api/action/resume', { state_token, response }); }
 export function actionCancel(state_token) { return postJSON('/api/action/cancel', { state_token }); }
@@ -35,4 +36,3 @@ export async function uploadFiles(files) {
   body._status = r.status;
   return body;
 }
-

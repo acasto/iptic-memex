@@ -78,6 +78,10 @@ def create_app(session, webstate: WebState | None = None) -> Starlette:
         from web.routes.stream import handle_api_stream
         return await handle_api_stream(ctx, request)
 
+    async def api_stream_cancel(request: Request):
+        from web.routes.stream import handle_api_stream_cancel
+        return await handle_api_stream_cancel(ctx, request)
+
     async def api_action_start(request: Request):
         from web.routes.actions import handle_api_action_start
         return await handle_api_action_start(ctx, request)
@@ -98,6 +102,7 @@ def create_app(session, webstate: WebState | None = None) -> Starlette:
         Route('/api/chat', api_chat, methods=['POST']),
         Route('/api/stream/start', api_stream_start, methods=['POST']),
         Route('/api/stream', api_stream, methods=['GET']),
+        Route('/api/stream/cancel', api_stream_cancel, methods=['POST']),
         Route('/api/action/start', api_action_start, methods=['POST']),
         Route('/api/action/resume', api_action_resume, methods=['POST']),
         Route('/api/action/cancel', api_action_cancel, methods=['POST']),

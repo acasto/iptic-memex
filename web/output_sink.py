@@ -19,6 +19,8 @@ class WebOutput:
         self._loop: Optional[asyncio.AbstractEventLoop] = loop
         self._queue: Optional[asyncio.Queue] = queue
         self._emitted: bool = False
+        # Optional cooperative cancellation hook: a callable returning True when cancel is requested
+        self.cancel_check = None
 
     def set_async(self, loop: asyncio.AbstractEventLoop, queue: asyncio.Queue) -> None:
         self._loop = loop
