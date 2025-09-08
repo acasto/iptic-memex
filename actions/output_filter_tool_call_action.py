@@ -90,10 +90,19 @@ class OutputFilterToolCallAction(InteractionAction):
         buf = self._carry + text
         lines = buf.splitlines(keepends=True)
 
-        # If the last line doesn't end with a newline, keep it as carry for the next chunk
+        # If the last line doesn't end with a newline, keep it as carry for the next chunk.
+        # HOWEVER, to preserve smooth streaming for normal text, flush carry immediately when
+        # it clearly cannot be the start of a tool block opener (i.e., it doesn't begin with '%%').
         if lines and not (lines[-1].endswith("\n") or lines[-1].endswith("\r")):
-            carry = lines[-1]
-            proc_lines = lines[:-1]
+            possible_carry = lines[-1]
+            # Only hold the carry if it might be a standalone opener (start-of-line '%%...%%').
+            # Otherwise, emit it now to avoid line-by-line gating.
+            if not self.in_block and not self._in_code_fence and not possible_carry.lstrip().startswith(self.OPEN_DELIM):
+                proc_lines = lines  # Treat entire buffer as complete lines for pass-through
+                carry = ""
+            else:
+                carry = possible_carry
+                proc_lines = lines[:-1]
         else:
             carry = ""
             proc_lines = lines
