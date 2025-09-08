@@ -64,6 +64,20 @@ class AssistantPersonaReviewToolAction(StepwiseAction):
 
     # ---- Stepwise protocol -----------------------------------------------
     def start(self, args: Dict[str, Any], content: str = "") -> Completed:
+        # Cooperative cancellation helper
+        def _check_cancel() -> None:
+            try:
+                if self.session.get_flag('turn_cancelled'):
+                    raise KeyboardInterrupt()
+            except Exception:
+                pass
+            try:
+                tok = self.session.get_cancellation_token()
+                if tok and getattr(tok, 'is_cancelled', None) and tok.is_cancelled():
+                    raise KeyboardInterrupt()
+            except Exception:
+                pass
+
         # Inputs (content can be the item text or a short reference; files may contain the full context)
         raw_content = (get_str(args, 'content') or content or '').strip()
         personas_arg = get_list(args, 'personas') or []
@@ -91,11 +105,13 @@ class AssistantPersonaReviewToolAction(StepwiseAction):
         panel_prompt = 'personas/panel'
 
         results: List[Dict[str, str]] = []
+        _check_cancel()
         for p in personas:
             name = str(p.get('name', '')).strip()
             details = str(p.get('details', '') or '').strip()
             if not name:
                 continue
+            _check_cancel()
             msg = self._build_persona_message(
                 persona=name,
                 persona_details=details,
@@ -111,10 +127,13 @@ class AssistantPersonaReviewToolAction(StepwiseAction):
             res = self.session.run_internal_completion(message=msg, overrides=overrides, contexts=None, capture='text')
             text = getattr(res, 'last_text', None) or ''
             results.append({'persona': name, 'review': text})
+            # Allow a cancel between persona runs
+            _check_cancel()
 
         # Optional panel synthesis
         panel_text = None
         if do_panel and results:
+            _check_cancel()
             panel_msg = self._build_panel_message(results, goal=goal, notes=notes, artifact_type=artifact_type, guidelines=guidelines_text)
             overrides = {'prompt': panel_prompt}
             if model_override:
@@ -207,35 +226,45 @@ class AssistantPersonaReviewToolAction(StepwiseAction):
     def _collect_personas(self, personas_input: List[Any]) -> List[Dict[str, str]]:
         """Accept a list/CSV of persona names or a path to a Markdown personas file.
 
-        Supported Markdown formats:
+        Supported Markdown formats for the file case:
         - Sectioned: a heading named "Personas" containing subheadings per persona (### Name) with optional body.
         - Headings: top-level headings (##/###) are treated as persona names with their section body as details.
         - Bulleted: lines like "- Name: one-liner" or "- Name".
+
+        Detection rule:
+        - If there is a single item and it resolves to an existing file (within the sandbox), parse that file.
+        - Otherwise treat each item as a persona name (no file I/O attempted per item).
         """
         if not personas_input:
             return []
+
+        # Normalize to strings
+        items = [str(x or '').strip() for x in personas_input if str(x or '').strip()]
+        if not items:
+            return []
+
         fs = self.session.get_action('assistant_fs_handler')
 
-        collected: List[Dict[str, str]] = []
-        for item in personas_input:
-            name = str(item or '').strip()
-            if not name:
-                continue
-            # Try to read as a file
-            content = None
+        # Single-file mode: only when exactly one item and it resolves to an existing file
+        if len(items) == 1 and fs:
+            candidate = items[0]
             try:
-                content = fs.read_file(name, binary=False, encoding='utf-8') if fs else None
+                resolved = fs.resolve_path(candidate, must_exist=True)
             except Exception:
-                content = None
-            if isinstance(content, bytes):
-                try:
-                    content = content.decode('utf-8', errors='ignore')
-                except Exception:
-                    content = None
-            if isinstance(content, str) and content.strip():
-                collected.extend(self._parse_personas_markdown(content))
-            else:
-                collected.append({'name': name, 'details': ''})
+                resolved = None
+            if resolved:
+                content = fs.read_file(candidate, binary=False, encoding='utf-8')
+                if isinstance(content, bytes):
+                    try:
+                        content = content.decode('utf-8', errors='ignore')
+                    except Exception:
+                        content = None
+                if isinstance(content, str) and content.strip():
+                    return self._parse_personas_markdown(content)
+                # Fall through to name list if file empty/unreadable
+
+        # Name list mode: treat every item as a persona name
+        collected: List[Dict[str, str]] = [{'name': name, 'details': ''} for name in items]
 
         # Deduplicate by name while keeping the first details
         seen = {}

@@ -516,7 +516,35 @@ class TurnRunner:
                                     break
                                 except Exception:
                                     # Fallback: try once more without output suppression
-                                    action.run(args, content)
+                                    try:
+                                        action.run(args, content)
+                                    except KeyboardInterrupt:
+                                        # Mirror cancellation handling in the main path
+                                        try:
+                                            self.session.set_flag('turn_cancelled', True)
+                                        except Exception:
+                                            pass
+                                        try:
+                                            tok = self.session.get_cancellation_token()
+                                            if tok and hasattr(tok, 'cancel'):
+                                                tok.cancel('keyboard')
+                                        except Exception:
+                                            pass
+                                        try:
+                                            chat_ctx = self.session.get_context('chat') or self.session.add_context('chat')
+                                            extra = {'tool_call_id': call_id} if call_id else None
+                                            chat_ctx.add('Cancelled', role='tool', extra=extra)
+                                        except Exception:
+                                            pass
+                                        try:
+                                            self.session.add_context('assistant', {
+                                                'name': 'command_error',
+                                                'content': f"Tool '{name}' cancelled by user"
+                                            })
+                                        except Exception:
+                                            pass
+                                        cancelled_during_tools = True
+                                        break
                             ran_any = True
                             try:
                                 after_ctx = list(self.session.get_contexts('assistant') or [])
