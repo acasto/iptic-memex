@@ -26,7 +26,8 @@ class StreamHandler:
             on_buffer: Optional[Callable[[str], Any]] = None,
             spinner_message: Optional[str] = None,
             spinner_style: Optional[str] = None,
-            cancel_check: Optional[Callable[[], bool]] = None
+            cancel_check: Optional[Callable[[], bool]] = None,
+            on_cancel: Optional[Callable[[], None]] = None,
     ) -> str:
         """
         Process a stream of text tokens, collecting them while allowing real-time processing.
@@ -74,7 +75,21 @@ class StreamHandler:
                 # Cooperative cancellation point
                 try:
                     if cancel_check and cancel_check():
-                        raise KeyboardInterrupt()
+                        # Best-effort cooperative cancellation: mark and close the stream
+                        try:
+                            if on_cancel:
+                                on_cancel()
+                        except Exception:
+                            pass
+                        try:
+                            # Attempt to close the generator/iterator to signal upstream cleanup
+                            close_fn = getattr(stream, 'close', None)
+                            if callable(close_fn):
+                                close_fn()
+                        except Exception:
+                            pass
+                        # Finish gracefully: stop consuming further tokens
+                        break
                 except Exception:
                     # If cancel_check itself errors, ignore and continue
                     pass
@@ -103,6 +118,18 @@ class StreamHandler:
             return accumulated
 
         except (KeyboardInterrupt, EOFError):
+            # Treat terminal interrupts as graceful cancellations of the current stream
+            try:
+                if on_cancel:
+                    on_cancel()
+            except Exception:
+                pass
+            try:
+                close_fn = getattr(stream, 'close', None)
+                if callable(close_fn):
+                    close_fn()
+            except Exception:
+                pass
             if on_complete:
                 on_complete(accumulated)
             return accumulated

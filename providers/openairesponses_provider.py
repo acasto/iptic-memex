@@ -591,6 +591,13 @@ class OpenAIResponsesProvider(APIProvider):
         except Exception as e:
             yield f"Stream interrupted (Responses): {e}"
         finally:
+            # Ensure upstream stream is closed when cooperatively cancelled
+            try:
+                close_fn = getattr(resp, 'close', None)
+                if callable(close_fn):
+                    close_fn()
+            except Exception:
+                pass
             self.running_usage['total_time'] += time() - start
 
     # --- Introspection --------------------------------------------------

@@ -184,8 +184,40 @@ class AssistantOutputAction(InteractionAction):
         self._accumulated_return_parts = []
         self._load_filters()
 
-        # Allow cooperative cancellation when output sink provides a cancel_check
-        cancel_check = getattr(self.output, 'cancel_check', None)
+        # Build a cooperative cancellation check that prefers the session token
+        token = None
+        try:
+            token = self.session.get_cancellation_token()
+        except Exception:
+            token = None
+
+        sink_cancel = getattr(self.output, 'cancel_check', None)
+
+        def _combined_cancel_check():
+            try:
+                if token and getattr(token, 'is_cancelled', None) and token.is_cancelled():
+                    return True
+            except Exception:
+                pass
+            try:
+                if sink_cancel and sink_cancel():
+                    return True
+            except Exception:
+                pass
+            return False
+
+        # Define a lightweight cancel hook to mark the current turn as cancelled
+        def _mark_cancelled():
+            try:
+                self.session.set_flag('turn_cancelled', True)
+            except Exception:
+                pass
+            try:
+                if token and getattr(token, 'cancel', None):
+                    token.cancel('user')
+            except Exception:
+                pass
+
         raw_result = self.session.utils.stream.process_stream(
             stream,
             on_token=self._on_token,
@@ -193,7 +225,8 @@ class AssistantOutputAction(InteractionAction):
             on_buffer=None,
             spinner_message=spinner_message,
             spinner_style=None,
-            cancel_check=cancel_check
+            cancel_check=_combined_cancel_check,
+            on_cancel=_mark_cancelled,
         )
 
         # Return raw result for compatibility; ChatMode can query sanitized via getter

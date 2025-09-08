@@ -266,6 +266,11 @@ class Session:
         """Get arbitrary user data"""
         return self.user_data.get(key, default)
 
+    # ---- Cancellation helpers -----------------------------------------
+    def get_cancellation_token(self):
+        """Return the current turn's CancellationToken if present."""
+        return self.user_data.get('__turn_cancel__')
+
     # Agent mode helpers
     WritePolicy = Literal['deny', 'dry-run', 'allow']
 

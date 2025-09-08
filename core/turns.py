@@ -59,6 +59,20 @@ class TurnRunner:
         stopped_on_sentinel = False
         any_tools = False
 
+        # Reset per-turn cancellation flag
+        try:
+            self.session.set_flag('turn_cancelled', False)
+        except Exception:
+            pass
+        # Initialize a per-turn cancellation token
+        token = None
+        try:
+            from core.cancellation import CancellationToken  # local import to avoid import cycles
+            token = CancellationToken()
+            self.session.set_user_data('__turn_cancel__', token)
+        except Exception:
+            token = None
+
         initial_auto = bool(self.session.get_flag("auto_submit"))
         contexts = self._process_contexts(auto_submit=initial_auto, suppress_print=opts.suppress_context_print)
         if initial_auto:
@@ -73,6 +87,17 @@ class TurnRunner:
             last_display = display
             last_sanitized = sanitized
             self._record_assistant(raw)
+            # If the turn was cancelled mid-stream, stop without executing tools
+            try:
+                if self.session.get_flag('turn_cancelled'):
+                    break
+            except Exception:
+                pass
+            try:
+                if token and token.is_cancelled():
+                    break
+            except Exception:
+                pass
             if display and self._contains_sentinel(display, opts.sentinels):
                 stopped_on_sentinel = True
                 break
@@ -113,6 +138,20 @@ class TurnRunner:
         last_sanitized: Optional[str] = None
         stopped_on_sentinel = False
         any_tools = False
+
+        # Reset per-run cancellation flag
+        try:
+            self.session.set_flag('turn_cancelled', False)
+        except Exception:
+            pass
+        # Initialize a per-run cancellation token
+        token = None
+        try:
+            from core.cancellation import CancellationToken
+            token = CancellationToken()
+            self.session.set_user_data('__turn_cancel__', token)
+        except Exception:
+            token = None
 
         if not self.session.get_context("chat"):
             self.session.add_context("chat")
@@ -171,6 +210,17 @@ class TurnRunner:
             self._record_assistant(raw)
 
             text_for_stop = display or sanitized or raw or ""
+            # If cancelled mid-stream, stop early and do not execute tools
+            try:
+                if self.session.get_flag('turn_cancelled'):
+                    break
+            except Exception:
+                pass
+            try:
+                if token and token.is_cancelled():
+                    break
+            except Exception:
+                pass
             if text_for_stop and self._contains_sentinel(text_for_stop, opts.sentinels):
                 stopped_on_sentinel = True
                 break
@@ -304,6 +354,19 @@ class TurnRunner:
         except Exception:
             provider = None
 
+        # Skip tool execution if cancellation has been requested
+        try:
+            if self.session.get_flag('turn_cancelled'):
+                return False
+        except Exception:
+            pass
+        try:
+            token = self.session.get_cancellation_token()
+            if token and getattr(token, 'is_cancelled', None) and token.is_cancelled():
+                return False
+        except Exception:
+            pass
+
         try:
             effective_mode = 'none'
             try:
@@ -337,7 +400,22 @@ class TurnRunner:
                     except Exception:
                         pass
 
-                    for call in tool_calls:
+                    cancelled_during_tools = False
+                    for idx, call in enumerate(tool_calls):
+                        # Respect cancellation between queued calls
+                        try:
+                            if self.session.get_flag('turn_cancelled'):
+                                cancelled_during_tools = True
+                                break
+                        except Exception:
+                            pass
+                        try:
+                            token = self.session.get_cancellation_token()
+                            if token and getattr(token, 'is_cancelled', None) and token.is_cancelled():
+                                cancelled_during_tools = True
+                                break
+                        except Exception:
+                            pass
                         name = (call.get('name') or '').lower()
                         call_id = call.get('id') or call.get('call_id')
                         args = dict(call.get('arguments') or {})
@@ -408,7 +486,36 @@ class TurnRunner:
                                             action.run(args, content)
                                     else:
                                         action.run(args, content)
+                                except KeyboardInterrupt:
+                                    # Cooperative cancellation: mark token and stop executing queued calls
+                                    try:
+                                        self.session.set_flag('turn_cancelled', True)
+                                    except Exception:
+                                        pass
+                                    try:
+                                        tok = self.session.get_cancellation_token()
+                                        if tok and hasattr(tok, 'cancel'):
+                                            tok.cancel('keyboard')
+                                    except Exception:
+                                        pass
+                                    # Emit tool_result for the current call to satisfy provider pairing
+                                    try:
+                                        chat_ctx = self.session.get_context('chat') or self.session.add_context('chat')
+                                        extra = {'tool_call_id': call_id} if call_id else None
+                                        chat_ctx.add('Cancelled', role='tool', extra=extra)
+                                    except Exception:
+                                        pass
+                                    try:
+                                        self.session.add_context('assistant', {
+                                            'name': 'command_error',
+                                            'content': f"Tool '{name}' cancelled by user"
+                                        })
+                                    except Exception:
+                                        pass
+                                    cancelled_during_tools = True
+                                    break
                                 except Exception:
+                                    # Fallback: try once more without output suppression
                                     action.run(args, content)
                             ran_any = True
                             try:
@@ -452,6 +559,44 @@ class TurnRunner:
                                 })
                             except Exception:
                                 pass
+                    # If cancelled during any tool call, emit tool_result stubs for remaining calls
+                    try:
+                        if cancelled_during_tools or self.session.get_flag('turn_cancelled'):
+                            # Emit 'Cancelled' tool results for any unprocessed tool_calls
+                            try:
+                                remaining = tool_calls[idx + 1:] if 'idx' in locals() else []
+                            except Exception:
+                                remaining = []
+                            for rem in remaining:
+                                try:
+                                    rem_id = rem.get('id') or rem.get('call_id')
+                                    chat_ctx = self.session.get_context('chat') or self.session.add_context('chat')
+                                    extra = {'tool_call_id': rem_id} if rem_id else None
+                                    chat_ctx.add('Cancelled', role='tool', extra=extra)
+                                except Exception:
+                                    pass
+                            return True
+                    except Exception:
+                        pass
+                    try:
+                        token = self.session.get_cancellation_token()
+                        if token and getattr(token, 'is_cancelled', None) and token.is_cancelled():
+                            # Also emit stubs if not already done
+                            try:
+                                remaining = tool_calls[idx + 1:] if 'idx' in locals() else []
+                            except Exception:
+                                remaining = []
+                            for rem in remaining:
+                                try:
+                                    rem_id = rem.get('id') or rem.get('call_id')
+                                    chat_ctx = self.session.get_context('chat') or self.session.add_context('chat')
+                                    extra = {'tool_call_id': rem_id} if rem_id else None
+                                    chat_ctx.add('Cancelled', role='tool', extra=extra)
+                                except Exception:
+                                    pass
+                            return True
+                    except Exception:
+                        pass
                     # Add a separator newline after all tools finish (CLI only)
                     try:
                         if not self.session.in_agent_mode():

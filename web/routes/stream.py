@@ -209,6 +209,18 @@ async def handle_api_stream(app, request: Request):
             from core.turns import TurnRunner, TurnOptions
             from base_classes import InteractionNeeded
             runner = TurnRunner(app.session)
+            # Bridge Web cancel event to the per-turn cancellation token so it also
+            # cancels queued tool execution if the user presses cancel after streaming.
+            if cancel_ev is not None:
+                def _watch_cancel_event():
+                    try:
+                        cancel_ev.wait()
+                        tok = app.session.get_cancellation_token()
+                        if tok and hasattr(tok, 'cancel'):
+                            tok.cancel('web')
+                    except Exception:
+                        pass
+                threading.Thread(target=_watch_cancel_event, daemon=True).start()
             try:
                 result = runner.run_user_turn(message, options=TurnOptions(stream=True, suppress_context_print=True))
             except InteractionNeeded as need:
@@ -263,7 +275,19 @@ async def handle_api_stream(app, request: Request):
                                 pass
             except Exception:
                 pass
-            data = {"text": text, "updates": emitted}
+            # Surface a cooperative cancellation signal when set
+            cancelled = False
+            try:
+                cancelled = bool(app.session.get_flag('turn_cancelled'))
+            except Exception:
+                cancelled = False
+            # Also consider explicit cancel event if available
+            try:
+                if not cancelled and cancel_ev is not None:
+                    cancelled = bool(cancel_ev.is_set())
+            except Exception:
+                pass
+            data = {"text": text, "updates": emitted, "cancelled": cancelled}
             loop.call_soon_threadsafe(queue.put_nowait, ("done", data))
         finally:
             try:
