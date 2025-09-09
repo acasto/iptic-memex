@@ -176,7 +176,19 @@ def autoload_mcp(session) -> None:
     global_sec, raw_servers = _get_cfg_sections(session)
     if not global_sec:
         return
-    if not _coerce_bool(global_sec.get('active'), False):
+    # Respect session override for [MCP].active when present
+    try:
+        override_active = session.get_option('MCP', 'active', fallback=None)
+    except Exception:
+        override_active = None
+    if override_active is not None:
+        try:
+            active_val = _coerce_bool(override_active, False)
+        except Exception:
+            active_val = False
+    else:
+        active_val = _coerce_bool(global_sec.get('active'), False)
+    if not active_val:
         return
 
     # Set global client knobs into session overrides for MCPClient
@@ -257,31 +269,27 @@ def autoload_mcp(session) -> None:
             continue
 
     # Optional: auto-register tools discovered on app-side connections (http & stdio)
-    try:
-        global_auto_register = _coerce_bool(global_sec.get('auto_register'), True)
-    except Exception:
-        global_auto_register = True
+    # Compute alias preference (global default true; per-server override)
     try:
         global_auto_alias = _coerce_bool(global_sec.get('auto_alias'), True)
     except Exception:
         global_auto_alias = True
 
-    # Record autoload/registration summary for UI commands
+    # Record autoload summary for UI commands
     try:
-        summary = session.get_user_data('__mcp_autoreg__') or {}
+        summary = session.get_user_data('__mcp_autoload__') or {}
         for name, s in list(app_http.items()) + list(app_stdio.items()):
             try:
-                sr = s.get('auto_register')
                 sa = s.get('auto_alias')
-                do_register = global_auto_register if sr is None else bool(sr)
                 do_alias = global_auto_alias if sa is None else bool(sa)
-                summary[name] = {'auto_register': do_register, 'auto_alias': do_alias}
+                summary[name] = {'autoload': True, 'alias': do_alias}
             except Exception:
-                summary[name] = {'auto_register': False, 'auto_alias': False}
-        session.set_user_data('__mcp_autoreg__', summary)
+                summary[name] = {'autoload': True, 'alias': True}
+        session.set_user_data('__mcp_autoload__', summary)
     except Exception:
         pass
 
+    # Register tools for all autoloaded app-side connections
     try:
         registrar = session.get_action('mcp_register_tools')
     except Exception:
@@ -289,12 +297,8 @@ def autoload_mcp(session) -> None:
     if registrar:
         for name, s in list(app_http.items()) + list(app_stdio.items()):
             try:
-                sr = s.get('auto_register')
                 sa = s.get('auto_alias')
-                do_register = global_auto_register if sr is None else bool(sr)
                 do_alias = global_auto_alias if sa is None else bool(sa)
-                if not do_register:
-                    continue
                 args = [name]
                 # If per-server allowed_tools are set, restrict registration
                 try:

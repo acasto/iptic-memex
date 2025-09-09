@@ -58,7 +58,6 @@ def test_autoreg_http_with_allowed_tools_and_alias(monkeypatch):
     base.set('MCP', 'active', 'true')
     base.set('MCP', 'mcp_servers', 'shttp')
     base.set('MCP', 'autoload', 'shttp')
-    base.set('MCP', 'auto_register', 'true')
     base.set('MCP', 'auto_alias', 'true')
 
     sec_name = 'MCP.shttp'
@@ -83,8 +82,8 @@ def test_autoreg_http_with_allowed_tools_and_alias(monkeypatch):
     assert 'baz' not in canon
 
     # Summary flags recorded
-    auto = sess.get_user_data('__mcp_autoreg__') or {}
-    assert auto.get('shttp') == {'auto_register': True, 'auto_alias': True}
+    auto = sess.get_user_data('__mcp_autoload__') or {}
+    assert auto.get('shttp') == {'autoload': True, 'alias': True}
 
 
 def test_autoreg_stdio_with_allowed_tools_and_alias(monkeypatch):
@@ -128,7 +127,6 @@ def test_autoreg_stdio_with_allowed_tools_and_alias(monkeypatch):
     base.set('MCP', 'active', 'true')
     base.set('MCP', 'mcp_servers', 'sio')
     base.set('MCP', 'autoload', 'sio')
-    base.set('MCP', 'auto_register', 'true')
     base.set('MCP', 'auto_alias', 'true')
 
     sec_name = 'MCP.sio'
@@ -148,5 +146,5 @@ def test_autoreg_stdio_with_allowed_tools_and_alias(monkeypatch):
     assert 'beta' in names
     assert 'gamma' not in names
 
-    auto = sess.get_user_data('__mcp_autoreg__') or {}
-    assert auto.get('sio') == {'auto_register': True, 'auto_alias': True}
+    auto = sess.get_user_data('__mcp_autoload__') or {}
+    assert auto.get('sio') == {'autoload': True, 'alias': True}

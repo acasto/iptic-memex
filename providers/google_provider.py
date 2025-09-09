@@ -404,7 +404,15 @@ class GoogleProvider(APIProvider):
                                 name = getattr(fc, 'name', None) if hasattr(fc, 'name') else fc.get('name')
                                 args = getattr(fc, 'args', None) if hasattr(fc, 'args') else (fc.get('args') or {})
                                 if name:
-                                    out.append({'id': None, 'name': str(name).strip().lower(), 'arguments': args or {}})
+                                    n = str(name).strip().lower()
+                                    # Map API-safe tool names back to canonical names when available
+                                    try:
+                                        mapping = self.session.get_user_data('__tool_api_to_cmd__') or {}
+                                        if isinstance(mapping, dict) and n in mapping:
+                                            n = mapping.get(n, n)
+                                    except Exception:
+                                        pass
+                                    out.append({'id': None, 'name': n, 'arguments': args or {}})
                 if out:
                     return out
             # Some SDKs expose response.function_calls
@@ -414,7 +422,14 @@ class GoogleProvider(APIProvider):
                     name = getattr(fc, 'name', None) if hasattr(fc, 'name') else (fc.get('name') if isinstance(fc, dict) else None)
                     args = getattr(fc, 'args', None) if hasattr(fc, 'args') else (fc.get('args') if isinstance(fc, dict) else {})
                     if name:
-                        out.append({'id': None, 'name': str(name).strip().lower(), 'arguments': args or {}})
+                        n = str(name).strip().lower()
+                        try:
+                            mapping = self.session.get_user_data('__tool_api_to_cmd__') or {}
+                            if isinstance(mapping, dict) and n in mapping:
+                                n = mapping.get(n, n)
+                        except Exception:
+                            pass
+                        out.append({'id': None, 'name': n, 'arguments': args or {}})
             return out
         except Exception:
             return []

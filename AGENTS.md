@@ -582,15 +582,15 @@ max_completion_tokens = 4096
   - CLI: `mcp provider`, `mcp status` show whether the current provider supports pass‑through, whether MCP is active, and list configured servers with hints.
 
 - App‑Side MCP (http & stdio)
-  - `[MCP]` defaults: `mcp_servers` (optional), `autoload`, `auto_register`, `auto_alias`, `debug`.
+  - `[MCP]` defaults: `mcp_servers` (optional), `autoload`, `auto_alias`, `debug`.
   - Per‑server: `[MCP.<name>]` with `transport = provider|http|stdio`, target `url|command`, `headers` (supports `${env:VAR}`), and provider hints (`allowed_tools`, `require_approval`).
-  - Per‑server overrides: `autoload`, `auto_register`, `auto_alias`. Omitted keys inherit the global defaults.
-  - `allowed_tools` also filters app‑side auto‑registration (only the listed tool names are registered for that server).
-  - Auto‑registration exposes app‑side tools to the assistant as `mcp:<server>/<tool>` with fixed args; optional aliases create short names when no conflicts exist.
+  - Per‑server overrides: `autoload`, `auto_alias`. Omitted keys inherit the global defaults.
+  - `allowed_tools` also filters app‑side registration (only the listed tool names are registered for that server).
+  - Autoload connects and registers app‑side tools for the session. Tools are exposed as `mcp:<server>/<tool>` with fixed args; optional aliases create short names when no conflicts exist.
 
 - CLI Helpers
   - `mcp status`, `mcp provider`, `mcp tools`, `mcp resources` for visibility.
-  - `discover mcp tools <server>`; `register mcp tools <server> [--tools t1,t2] [--alias]`; `unregister mcp tools [pattern]`.
+  - `mcp load <server>`; `mcp unload <server>`; `discover mcp tools <server>`; `register mcp tools <server> [--tools t1,t2] [--alias]`; `unregister mcp tools [pattern]`.
   - `show tools` lists assistant‑visible tools (deduped) and annotates MCP entries with `(server)` for clarity.
 
 - Noise Control

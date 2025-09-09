@@ -269,6 +269,16 @@ class UserCommandsAction(InteractionAction):
                     'resources':  {'type': 'action', 'name': 'mcp', 'args': ['resources']},
                     'provider':   {'type': 'action', 'name': 'mcp', 'args': ['provider-mcp']},
                     'status':     {'type': 'action', 'name': 'mcp', 'args': ['status']},
+                    'on':         {
+                        'type': 'action', 'name': 'mcp_toggle', 'args': ['on'],
+                        'gate': {'type': 'action_can_run', 'name': 'mcp_toggle', 'args': ['on']},
+                    },
+                    'off':        {
+                        'type': 'action', 'name': 'mcp_toggle', 'args': ['off'],
+                        'gate': {'type': 'action_can_run', 'name': 'mcp_toggle', 'args': ['off']},
+                    },
+                    'load':       {'type': 'action', 'name': 'mcp_load'},
+                    'unload':     {'type': 'action', 'name': 'mcp_unload'},
                     'register-tools':   {'type': 'action', 'name': 'mcp_register_tools'},
                     'unregister-tools': {'type': 'action', 'name': 'mcp_unregister_tools'},
                     'discover':   {'type': 'action', 'name': 'mcp_discover'},

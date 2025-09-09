@@ -680,12 +680,13 @@ class OpenAIResponsesProvider(APIProvider):
             cmd = self.session.get_action('assistant_commands')
             if not cmd or not hasattr(cmd, 'get_tool_specs'):
                 return []
-            # AssistantCommands returns API-safe names and may record a mapping
+            # Build specs first (this call records the fresh API→canonical mapping in session)
+            canonical = cmd.get_tool_specs() or []
+            # Refresh mapping after building specs so it reflects this turn's tool list
             try:
                 self._tool_api_to_cmd = self.session.get_user_data('__tool_api_to_cmd__') or {}
             except Exception:
                 self._tool_api_to_cmd = {}
-            canonical = cmd.get_tool_specs() or []
             out = []
             # Config: allow optional properties to be explicitly null
             try:

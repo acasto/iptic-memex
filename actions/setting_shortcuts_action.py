@@ -26,7 +26,7 @@ class SettingShortcutsAction(StepwiseAction):
         self.session = session
 
     @classmethod
-    def can_run(cls, session, shortcut: Optional[str] = None):
+    def can_run(cls, session, shortcut: Optional[str] = None, value: Optional[str] = None):
         """Return True/False (or (bool, reason)) for shortcut applicability.
 
         - stream: always applicable

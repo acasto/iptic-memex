@@ -506,9 +506,10 @@ class AnthropicProvider(APIProvider):
             cmd = self.session.get_action('assistant_commands')
             if not cmd or not hasattr(cmd, 'get_tool_specs'):
                 return []
-            # AssistantCommands returns API-safe names and stores a mapping
-            self._tool_api_to_cmd = self.session.get_user_data('__tool_api_to_cmd__') or {}
+            # Build specs first (this call records the fresh API→canonical mapping in session)
             canonical = cmd.get_tool_specs() or []
+            # Refresh mapping after building specs so it reflects this turn's tool list
+            self._tool_api_to_cmd = self.session.get_user_data('__tool_api_to_cmd__') or {}
             tools = []
             for spec in canonical:
                 try:

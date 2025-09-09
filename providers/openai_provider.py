@@ -558,6 +558,13 @@ class OpenAIProvider(APIProvider):
                     args_obj = args
                 else:
                     args_obj = {}
+                # Map API-safe tool names back to canonical names when available
+                try:
+                    mapping = self.session.get_user_data('__tool_api_to_cmd__') or {}
+                    if isinstance(mapping, dict) and isinstance(name, str) and name in mapping:
+                        name = mapping.get(name, name)
+                except Exception:
+                    pass
                 out.append({
                     'id': getattr(tc, 'id', None),
                     'name': name,

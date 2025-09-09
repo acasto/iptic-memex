@@ -424,14 +424,42 @@ class TurnRunner:
                             content = args.pop('content') or ''
                         spec = commands_map.get(name)
                         if not spec:
+                            # Fallback: map API-safe tool names back to canonical using stored mapping
                             try:
-                                self.session.add_context('assistant', {
-                                    'name': 'command_error',
-                                    'content': f"Unsupported tool call: {name}"
-                                })
+                                mapping = self.session.get_user_data('__tool_api_to_cmd__') or {}
                             except Exception:
-                                pass
-                            continue
+                                mapping = {}
+                            mapped = None
+                            if isinstance(mapping, dict):
+                                # Direct hit
+                                mapped = mapping.get(name)
+                                if not mapped:
+                                    # Case-insensitive scan as a safety net
+                                    try:
+                                        for k, v in mapping.items():
+                                            if isinstance(k, str) and k.lower() == name:
+                                                mapped = v
+                                                break
+                                    except Exception:
+                                        mapped = None
+                            if mapped:
+                                spec = commands_map.get(str(mapped).lower())
+                            if not spec:
+                                try:
+                                    # Emit a tool_result stub so providers see a response for this call_id
+                                    chat_ctx = self.session.get_context('chat') or self.session.add_context('chat')
+                                    extra = {'tool_call_id': call_id} if call_id else None
+                                    chat_ctx.add(f"Unsupported tool call: {name}", role='tool', extra=extra)
+                                except Exception:
+                                    pass
+                                try:
+                                    self.session.add_context('assistant', {
+                                        'name': 'command_error',
+                                        'content': f"Unsupported tool call: {name}"
+                                    })
+                                except Exception:
+                                    pass
+                                continue
 
                         handler = spec.get('function') or {}
                         # Merge fixed_args (for dynamic tools) before running; fixed override user-provided
@@ -580,6 +608,13 @@ class TurnRunner:
                             except Exception:
                                 pass
                         except Exception as e:
+                            # Make sure to emit a tool_result with the call_id even on error
+                            try:
+                                chat_ctx = self.session.get_context('chat') or self.session.add_context('chat')
+                                extra = {'tool_call_id': call_id} if call_id else None
+                                chat_ctx.add(f"Error: {e}", role='tool', extra=extra)
+                            except Exception:
+                                pass
                             try:
                                 self.session.add_context('assistant', {
                                     'name': 'tool_error',

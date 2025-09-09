@@ -90,20 +90,20 @@ class McpAction(InteractionAction):
     def _list_tools(self):
         client = get_or_create_client(self.session)
         data = client.list_tools()
-        # Annotate with auto-register/alias flags when available
-        auto = {}
+        # Annotate with autoload/alias flags when available
+        info = {}
         try:
-            auto = self.session.get_user_data('__mcp_autoreg__') or {}
+            info = self.session.get_user_data('__mcp_autoload__') or {}
         except Exception:
-            auto = {}
+            info = {}
         # Build display with per-server flags
         titled = {}
         for server, tools in (data or {}).items():
             try:
-                flags = auto.get(server) or {}
-                ar = 'yes' if flags.get('auto_register') else 'no'
-                aa = 'yes' if flags.get('auto_alias') else 'no'
-                display = f"{server} [auto_register={ar} alias={aa}]"
+                flags = info.get(server) or {}
+                al = 'yes' if flags.get('autoload') else 'no'
+                aa = 'yes' if flags.get('alias') else 'no'
+                display = f"{server} [autoload={al} alias={aa}]"
             except Exception:
                 display = server
             titled[display] = [t.name for t in (tools or [])]

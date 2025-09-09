@@ -7,7 +7,7 @@ This package contains the app-side Model Context Protocol (MCP) integration for 
 - SDK-first: the client prefers the official MCP Python SDK (`mcp`) and supports streamable HTTP sessions. A minimal HTTP fallback is available behind a flag.
 
 Key behaviors
-- Autoload + auto-register: if `[MCP].active=true` and `autoload = name1,name2`, the bootstrap connects those servers and registers discovered tools for this session. Defaults: `auto_register=true`, `auto_alias=true`.
+- Autoload: if `[MCP].active=true` and `autoload = name1,name2`, the bootstrap connects those servers and registers discovered tools for this session. Aliases default to on (`auto_alias=true`) and can be overridden per server.
 - API-safe tool names: dynamic tools are exposed to providers with API-safe names (^[A-Za-z0-9_-]+$), preferring a valid alias and otherwise sanitizing. The registry records a mapping `__tool_api_to_cmd__` so providers can map tool calls back to their canonical command keys.
 - Fixed args: dynamic tool specs include `function.fixed_args` (e.g., `{server, tool}`), and the TurnRunner merges them into provider tool calls before executing the action.
 - Result formatting: MCP tool outputs (SDK `CallToolResult` or dict results) are formatted into readable text for tool role messages (text/json/resource stubs). No raw object dumping.
@@ -19,8 +19,7 @@ Config options (config.ini → [MCP])
 - `debug = true|false`: emit one-line client diagnostics for suppressed errors.
 - `http_fallback = true|false`: enable generic HTTP JSON endpoints (/tools,/call,/resource,/resources).
 - `mcp_servers = name1,name2` (optional): declare known server subsections `[MCP.<name>]`. If omitted, all defined `[MCP.<name>]` are considered.
-- `autoload = name1,name2`: autoload these servers on session build.
-- `auto_register = true|false`: register discovered tools for the session.
+- `autoload = name1,name2`: autoload these servers on session build (connect + register).
 - `auto_alias = true|false`: add pretty aliases when no conflicts exist.
 
 Server definitions (config.ini → [MCP.<name>])
@@ -33,8 +32,12 @@ Server definitions (config.ini → [MCP.<name>])
 - `allowed_tools`, `require_approval`: optional pass-through hints for supporting providers.
 - `allowed_tools`: also filters app-side auto-registration when set (only listed tool names will be registered for that server).
 - `autoload = true|false`: per-server flag to autoload this server.
-- `auto_register = true|false`: per-server override of global; when true, registers this server’s tools after connect (works for http and stdio).
 - `auto_alias = true|false`: per-server override of global alias creation.
+
+Commands
+- `/mcp load <server>`: connect a configured server and register its tools (honors `allowed_tools` and `auto_alias`).
+- `/mcp unload <server>`: disconnect and remove dynamic tools for that server (also updates provider pass-through).
+- `/mcp on|off`: enable/disable MCP for the session; `on` autoloads configured servers, `off` unloads and disables.
 
 Notes
 - The official MCP SDK surfaces client/session functions (e.g., `ClientSession`, `streamablehttp_client`). The client adapts to SDK layouts across versions and logs import attempts in debug mode.
