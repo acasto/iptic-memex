@@ -61,27 +61,18 @@ async def handle_api_stream(app, request: Request):
     matched_action = None
     matched_info = None
     matched_args: List[str] = []
-    if user_cmds and hasattr(user_cmds, 'commands') and len(message.split()) <= 4:
+    if user_cmds and message.lstrip().startswith('/'):
         try:
-            sorted_commands = sorted(user_cmds.commands.keys(), key=len, reverse=True)  # type: ignore[attr-defined]
-            for cmd in sorted_commands:
-                if message.lower() == cmd or message.lower().startswith(cmd + ' '):
-                    info = user_cmds.commands[cmd]  # type: ignore[attr-defined]
-                    fn = info.get('function', {})
-                    matched_kind = fn.get('type')
-                    matched_info = info
-                    if matched_kind == 'action':
-                        matched_action = fn.get('name')
-                    user_tail = message[len(cmd):].strip().split()
-                    predefined = fn.get('args', [])
-                    if isinstance(predefined, str):
-                        predefined = [predefined]
-                    matched_args = list(predefined) + user_tail
-                    break
+            parsed = user_cmds.match(message)  # type: ignore[attr-defined]
         except Exception:
-            matched_kind = None
+            parsed = None
+        if isinstance(parsed, dict) and parsed.get('kind') in ('action', 'builtin'):
+            matched_kind = parsed.get('kind')
+            matched_action = parsed.get('action') if matched_kind == 'action' else None
+            matched_info = parsed
+            matched_args = parsed.get('args') or []
 
-    if matched_kind in ('action', 'method'):
+    if matched_kind in ('action', 'builtin'):
         utils = app.session.utils
         original_output = utils.output
         web_output = WebOutput()
@@ -107,10 +98,14 @@ async def handle_api_stream(app, request: Request):
                 if matched_kind == 'action' and matched_action:
                     action = app.session.get_action(matched_action)
                     if action:
-                        fn = matched_info.get('function', {}) if matched_info else {}
-                        if 'method' in fn:
-                            meth = getattr(action.__class__, fn['method'])
-                            meth(app.session, *matched_args if matched_args else [])
+                        method_name = matched_info.get('method') if matched_info else None
+                        if method_name:
+                            inst_fn = getattr(action, method_name, None)
+                            if callable(inst_fn):
+                                inst_fn(*matched_args if matched_args else [])
+                            else:
+                                meth = getattr(action.__class__, method_name)
+                                meth(app.session, *matched_args if matched_args else [])
                         else:
                             try:
                                 action.run(matched_args)
@@ -139,9 +134,8 @@ async def handle_api_stream(app, request: Request):
                                 else:
                                     # Re-raise to be handled by outer finally
                                     raise
-                elif matched_kind == 'method':
-                    fn = matched_info.get('function', {}) if matched_info else {}
-                    method_name = fn.get('name')
+                elif matched_kind == 'builtin':
+                    method_name = matched_info.get('method') if matched_info else None
                     if method_name:
                         method = getattr(user_cmds, method_name)
                         method(*matched_args)
@@ -164,7 +158,7 @@ async def handle_api_stream(app, request: Request):
         render_text = '\n'.join([ln for ln in text_lines if ln])
 
         async def one_shot():
-            yield f"event: done\ndata: {json.dumps({'text': render_text, 'handled': True, 'updates': emitted, 'command': (matched_action or (matched_info.get('function', {}).get('name') if matched_info else None))})}\n\n"
+            yield f"event: done\ndata: {json.dumps({'text': render_text, 'handled': True, 'updates': emitted, 'command': (matched_action or (matched_info.get('method') if matched_info else None))})}\n\n"
         headers = {"Cache-Control": "no-cache", "Connection": "keep-alive"}
         return StreamingResponse(one_shot(), media_type="text/event-stream", headers=headers)
 

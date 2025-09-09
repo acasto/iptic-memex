@@ -25,7 +25,7 @@
 - Convenience: `scripts/chat` (interactive) and `scripts/ask "your question"` wrappers.
 
 ### Default Model Selection (Unified Rule)
-- Interactive modes (`chat`, `tui`, `web`) use `[DEFAULT].default_model` unless a model is explicitly provided (CLI `-m/--model` or `set model`).
+- Interactive modes (`chat`, `tui`, `web`) use `[DEFAULT].default_model` unless a model is explicitly provided (CLI `-m/--model` or `/set model`).
 - Non‑interactive modes (`completion`, internal runs via `core.mode_runner`, and Agent Mode) use `[AGENT].default_model` when no explicit model is provided.
 - Explicit model always wins. This logic is centralized in `core/session_builder.SessionBuilder.build(mode=...)` to avoid per‑caller or per‑action duplication.
 
@@ -188,7 +188,11 @@ Gating and CLI‑only flows
   - Web search override uses `[TOOLS].websearch_tool` (legacy `search_tool` removed).
 - Pseudo-tool blocks remain supported and are now case-insensitive; names are normalized to lowercase.
 - Register new assistant commands by returning a dict from `actions/register_assistant_commands_action.py` (or user override in `examples/user_actions/`): `{ "MY_TOOL": { "args": ["foo"], "function": {"type":"action","name":"my_tool"}}}`.
-- User commands are matched in `user_commands_action.py` and invoke actions with positional args or call a specific class method via `{"method": "set_search_model"}`. Provide concise descriptions and keep names short (e.g., `load file`, `save chat`).
+- User commands use explicit slash syntax and are matched in `user_commands_action.py`.
+  - Shape: `/<command> [<subcommand>] [args]` (e.g., `/load file`, `/save chat`, `/set model gpt-4o`).
+  - Registry-driven parsing/dispatch; subcommand-level gating honors `Action.can_run(session)` and supports fine-grained gates via `gate: {type: 'action_can_run', name: '<action>', args: [...]}`.
+  - Completions are hierarchical: `/` → commands, `/load ` → subs, `/load file ` → file paths, `/set model ` → model names.
+  - Provide concise descriptions and keep names short (e.g., `/load file`, `/save chat`).
 - Gating: expose `@classmethod can_run(cls, session)` on an action to hide commands when prerequisites (APIs, tools) are missing.
 - Auto-submit: if a command sets `auto_submit: true` and `TOOLS.allow_auto_submit` is enabled, the next prompt is skipped after execution.
 
@@ -331,7 +335,7 @@ Gating and CLI‑only flows
   - Input items: send a list of typed items instead of a single `messages[]` array.
   - Tools: function tools are first‑class; tool calls appear as `function_call` items and tool results as `function_call_output` items.
   - Token cap: use `max_output_tokens`.
-  - Reasoning: use nested `reasoning: {effort: "minimal|low|medium|high"}`.
+  - Reasoning: use nested `reasoning: {effort: "low|medium|high"}` for OpenAIResponses (minimal not supported). For classic OpenAI Chat Completions, pass `reasoning_effort = minimal|low|medium|high` via `extra_body`.
   - Stateful chaining: opt‑in via `store` and `previous_response_id`.
 
 - Streaming + state:
@@ -383,7 +387,7 @@ price_in = 2.0
 price_out = 10.0
 # reasoning controls
 reasoning = true
-reasoning_effort = minimal
+reasoning_effort = low
 # token cap (mapped to max_output_tokens)
 max_completion_tokens = 4096
 ```
@@ -435,7 +439,7 @@ max_completion_tokens = 4096
 
 ## Web/TUI Runner Notes
 - Endpoints: `/api/action/start|resume` for stepwise actions; `/api/chat` (non-stream) and `/api/stream` (SSE).
-- Command handling: `/api/chat` first matches `user_commands_action` to run actions/methods (e.g., `set model ...`) without contacting the LLM.
+- Command handling: `/api/chat` first matches `user_commands_action` to run actions/builtins (e.g., `/set model ...`) without contacting the LLM. Only slash-prefixed inputs are considered commands.
 - Interactions: `InteractionNeeded` yields `{needs_interaction, state_token}`; the client renders a widget and resumes via `/api/action/resume`. A cancel endpoint marks the token used.
 - Streaming: `TurnRunner` powers SSE. If a tool requests interaction mid‑stream, the server sends a terminal `done` event with `{needs_interaction, state_token}`; the client resumes via JSON.
   - Official tools: the provider detects function-call deltas during streaming and the runner executes tools after the stream completes; status updates appear in the updates panel.

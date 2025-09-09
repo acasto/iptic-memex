@@ -23,33 +23,21 @@ async def handle_api_chat(app, request: Request):
         user_cmds = None
 
     matched_action: Optional[str] = None
-    matched_kind: Optional[str] = None  # 'action' or 'method'
+    matched_kind: Optional[str] = None  # 'action' or 'builtin'
     matched_info: Optional[Dict[str, Any]] = None
     matched_args: List[str] = []
-    if user_cmds and hasattr(user_cmds, 'commands') and len(message.split()) <= 4:
+    if user_cmds and message.lstrip().startswith('/'):
         try:
-            # Sort by length (longest first) as in CLI
-            sorted_commands = sorted(user_cmds.commands.keys(), key=len, reverse=True)  # type: ignore[attr-defined]
-            for cmd in sorted_commands:
-                if message.lower() == cmd or message.lower().startswith(cmd + ' '):
-                    info = user_cmds.commands[cmd]  # type: ignore[attr-defined]
-                    fn = info.get('function', {})
-                    matched_kind = fn.get('type')
-                    matched_info = info
-                    if matched_kind == 'action':
-                        matched_action = fn['name']
-                    # prepare args the same way (predefined and user tail)
-                    user_tail = message[len(cmd):].strip().split()
-                    predefined = fn.get('args', [])
-                    if isinstance(predefined, str):
-                        predefined = [predefined]
-                    matched_args = list(predefined) + user_tail
-                    break
+            parsed = user_cmds.match(message)  # type: ignore[attr-defined]
         except Exception:
-            matched_action = None
-            matched_kind = None
+            parsed = None
+        if isinstance(parsed, dict) and parsed.get('kind') in ('action', 'builtin'):
+            matched_kind = parsed.get('kind')
+            matched_action = parsed.get('action') if matched_kind == 'action' else None
+            matched_info = parsed
+            matched_args = parsed.get('args') or []
 
-    if matched_kind in ('action', 'method'):
+    if matched_kind in ('action', 'builtin'):
         # Execute command (action or method) with event capture and no LLM call
         from web.output_sink import WebOutput
         from contextlib import redirect_stdout
@@ -82,10 +70,15 @@ async def handle_api_chat(app, request: Request):
                         return JSONResponse({'ok': False, 'error': {'recoverable': False, 'message': f"Unknown action '{matched_action}'"}}, status_code=404)
                     try:
                         # Allow special method-on-action if declared
-                        fn = matched_info.get('function', {}) if matched_info else {}
-                        if 'method' in fn:
-                            meth = getattr(action.__class__, fn['method'])
-                            meth(app.session, *matched_args if matched_args else [])
+                        method_name = matched_info.get('method') if matched_info else None
+                        if method_name:
+                            # Prefer instance method; fallback to class
+                            inst_fn = getattr(action, method_name, None)
+                            if callable(inst_fn):
+                                inst_fn(*matched_args if matched_args else [])
+                            else:
+                                meth = getattr(action.__class__, method_name)
+                                meth(app.session, *matched_args if matched_args else [])
                         else:
                             action.run(matched_args)
                     except Exception as need_exc:
@@ -115,11 +108,10 @@ async def handle_api_chat(app, request: Request):
                             })
                         # otherwise, real error
                         return JSONResponse({'ok': False, 'error': {'recoverable': True, 'message': str(need_exc)}}, status_code=500)
-                elif matched_kind == 'method':
-                    # Call method on the user commands action instance
+                elif matched_kind == 'builtin':
+                    # Call builtin on the user commands action instance
                     try:
-                        fn = matched_info.get('function', {}) if matched_info else {}
-                        method_name = fn.get('name')
+                        method_name = matched_info.get('method') if matched_info else None
                         if not method_name:
                             return JSONResponse({'ok': False, 'error': {'recoverable': False, 'message': 'Invalid command mapping'}}, status_code=500)
                         method = getattr(user_cmds, method_name)
@@ -144,7 +136,7 @@ async def handle_api_chat(app, request: Request):
             if ev.get('type') in ('status', 'warning', 'error') and ev.get('message'):
                 text_lines.append(str(ev.get('message')))
         render_text = '\n'.join(text_lines) if text_lines else ''
-        return JSONResponse({'ok': True, 'done': True, 'handled': True, 'updates': emitted, 'command': matched_action or (matched_info.get('function', {}).get('name') if matched_info else None), 'text': render_text})
+        return JSONResponse({'ok': True, 'done': True, 'handled': True, 'updates': emitted, 'command': matched_action or (matched_info.get('method') if matched_info else None), 'text': render_text})
 
     # Non-stream path via TurnRunner
     provider = app.session.get_provider()

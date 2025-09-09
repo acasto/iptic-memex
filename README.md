@@ -19,7 +19,7 @@ envisioned a device that would compress and store all of their knowledge. https:
   - **Web/TUI (MVP)**: Stepwise interactions backed by a shared TurnRunner. Actions prompt via UI adapters (ask_*), and the server handles `needs_interaction` handoffs.
 
 - **Default Model Selection (by interaction style)**
-  - **Interactive (chat/tui/web)**: uses `[DEFAULT].default_model` unless you specify `-m/--model` or `set model`.
+  - **Interactive (chat/tui/web)**: uses `[DEFAULT].default_model` unless you specify `-m/--model` or `/set model`.
   - **Non‑interactive (completion, internal runs, agent)**: uses `[AGENT].default_model` when no model is provided.
   - **Explicit model always wins** in every mode.
   - Internal actions that run headless completions inherit this behavior automatically (no per‑action overrides needed).
@@ -218,8 +218,8 @@ See [INSTALL.md](INSTALL.md) for details on how to adjust requirements.txt as ne
 
 ```bash
    python main.py --help
-   python main.py <subcommand> --help
-   <within chat mode> help
+  python main.py <subcommand> --help
+  <within chat mode> /help
    ```
 ---
 
@@ -288,31 +288,32 @@ Persona Review quickstart
     echo "Refactor the code and list changes" | python main.py --steps 2 -f -
     ```
 
-  - **Chat Mode Quick Reference**
+  - **Chat Mode Quick Reference (slash commands)**
+  - Type `/help` to see commands; tab-completion shows `/…` suggestions at the prompt.
   - **Context Loading**
-    - `load file`, `load code`, `load multiline` Import content from files (auto-detects pdf/docx/xlsx/images) or multiline text.
-    - `load web`, `load soup`, `load search`  Add web content or perform a web search with summarized results.
-    - `load raw` Load unformatted text into your conversation, useful for loading saved 'full' conversations to avoid double formatting.
-    - `clear context` Clear the current turn context.
+    - `/load file`, `/load code`, `/load multiline` Import content from files (auto-detects pdf/docx/xlsx/images) or multiline text.
+    - `/load web`, `/load search` Add web content or perform a web search with summarized results.
+    - `/load raw` Load unformatted text; useful for loading saved 'full' conversations to avoid double formatting.
+    - `/clear context` Clear the current turn context.
   - **Chat Management**
-    - `save chat`, `save last`, `save full` Save the current conversation or specific parts of it.
-    - `load chat` or `list chats` Manage saved chat sessions.
-    - `export chat` Export the chat to a chosen format (Markdown, TXT, PDF).
-    - `clear chat` Reset the current chat session.  
-      Remove specific items or reset the complete conversation context.
-    - `clear last`, `clear last n`, `clear first`, `clear first n`  
-      Clear the last or first n messages from the chat history.
-    - `reprint` Redisplay the entire chat history.
-  - **Settings & Utility**
-    - `show settings`, `show settings tools`, `show models`, `show messages`, `show usage`, `show cost` Inspect current configuration, active models, message history, token usage, and costs.
-    - `set option`, `set option tools` Dynamically modify core settings and tool settings. 
+    - `/save chat`, `/save last`, `/save full` Save the current conversation or specific parts of it.
+    - `/load chat` Manage saved chat sessions; `/show chats` lists saved chats.
+    - `/export chat` Export the chat to a chosen format (Markdown, TXT, PDF).
+    - `/clear chat` Reset the current chat session.  
+      `/clear last [n]`, `/clear first [n]` trim from chat history.
+    - `/reprint`, `/reprint all`, `/reprint raw` Redisplay chat history.
+  - **Settings & Shortcuts**
+    - `/show settings`, `/show tool-settings`, `/show models`, `/show messages`, `/show usage`, `/show cost`
+    - `/set model <name>` Switch models interactively (supports completion).
+    - `/set option <key> <value>`, `/set option-tools <key> <value>` Modify core/tool options.
+    - Shortcuts: `/set stream <on|off>`, `/set reasoning <minimal|low|medium|high>` (provider-aware; prompts if omitted), `/set temperature <0..1>`, `/set top_p <0..1>`.
   - **Integrated Tools**
-   - `run code` Extract and execute code blocks (Python or Bash) from the assistant’s response (requires confirmation).
-   - `save code` Save code blocks from the assistant’s response to a file.
-   - `run command` Run an arbitrary shell command from the user side to include the output for the assistant.
-   - `load rag` Query configured RAG indexes and load a result summary into context.
-   - `rag update` Build or refresh RAG indexes from configured folders.
-   - `rag status` Show per-index status (paths, counts, vector dim, last updated) and consistency checks.
+   - `/run code` Extract and execute code blocks (Python or Bash) from the assistant’s response (requires confirmation).
+   - `/save code` Save code blocks from the assistant’s response to a file.
+   - `/run command` Run an arbitrary shell command from the user side to include the output for the assistant.
+   - `/load rag` Query configured RAG indexes and load a result summary into context.
+   - `/rag update` Build or refresh RAG indexes from configured folders.
+   - `/rag status` Show per-index status (paths, counts, vector dim, last updated) and consistency checks.
 
 RAG quickstart
 - Configure indexes in `[RAG]` (new layout):
@@ -321,9 +322,9 @@ RAG quickstart
   - `[RAG.research]\npath = ~/Research`
 - Set `[RAG].vector_db` (default in repo config is `~/.config/iptic-memex/vector_store`).
 - Choose an embedding model via `[TOOLS].embedding_model` (e.g., `text-embedding-3-small`). Optional: `embedding_provider` to override which provider performs embeddings.
-- Build indexes: `rag update` (prompts for which index if not specified).
-- Query: `load rag` (interactive prompt) or `load rag <index>`; results are summarized and added to context.
- - Inspect: `rag status` to see index health and artifact details.
+- Build indexes: `/rag update` (prompts for which index if not specified).
+- Query: `/load rag` (interactive prompt) or `/load rag <index>`; results are summarized and added to context.
+ - Inspect: `/rag status` to see index health and artifact details.
 - Internals and format details live in `rag/README.md`.
   
 Notes:

@@ -26,7 +26,8 @@ class TabCompletionHandler:
         """
         if sys.platform in ['linux', 'darwin']:
             import readline
-            readline.set_completer_delims('\t\n')
+            # Treat spaces as token boundaries so we complete the current token only
+            readline.set_completer_delims(' \t\n')
             completer_method = getattr(self, f"{completer}_completer", None)
             if completer_method:
                 readline.set_completer(completer_method)
@@ -42,12 +43,46 @@ class TabCompletionHandler:
             readline.parse_and_bind('tab: self-insert')
 
     def chat_completer(self, text: str, state: int) -> Optional[str]:
-        """Tab completion for chat commands"""
+        """
+        Command-aware completion:
+          - If the current line starts with '/', delegate to user_commands_action.complete()
+            to get command/subcommand/arg suggestions.
+          - Otherwise fallback to legacy command list startswith matching.
+        """
         if not self._session:
             return None
-        options = self._session.get_action('user_commands').get_commands()
         try:
-            return [x for x in options if x.startswith(text)][state]
+            import readline
+            line = readline.get_line_buffer()
+            cursor = readline.get_endidx()
+        except Exception:
+            line, cursor = text, len(text)
+
+        # Slash-aware completions
+        try:
+            uca = self._session.get_action('user_commands')
+        except Exception:
+            uca = None
+
+        if line.lstrip().startswith('/') and uca and hasattr(uca, 'complete'):
+            try:
+                options = uca.complete(line, cursor, text) or []
+            except Exception:
+                options = []
+            try:
+                return options[state]
+            except IndexError:
+                return None
+
+        # Fallback: complete top-level commands; show leading slash to hint command usage
+        try:
+            options = self._session.get_action('user_commands').get_commands()
+        except Exception:
+            options = []
+        # Keep slash; also match typed text against either '/cmd' or 'cmd'
+        opts = options
+        try:
+            return [x for x in opts if (x.startswith(text) or x.lstrip('/').startswith(text))][state]
         except IndexError:
             return None
 
