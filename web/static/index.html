@@ -4,7 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Iptic Memex - Web</title>
-    <link rel="stylesheet" href="/static/css/main.css?v=2" />
+    <link rel="stylesheet" href="/static/css/main.css?v=3" />
+    <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" id="prism-dark-theme" disabled>
   </head>
   <body>
     <div class="panel-overlay" id="panelOverlay"></div>
@@ -56,6 +58,11 @@
 
     <div id="panel"></div>
 
-    <script type="module" src="/static/js/main.js?v=2"></script>
+    <!-- Markdown and syntax highlighting -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    
+    <script type="module" src="/static/js/main.js?v=3"></script>
   </body>
 </html>

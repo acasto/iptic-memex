@@ -18,6 +18,40 @@ const optionsBtn = document.getElementById('options');
 const darkToggle = document.getElementById('darkmode');
 const stopBtn = document.getElementById('stop');
 
+// Configure marked.js for better code block handling
+if (typeof marked !== 'undefined') {
+  marked.setOptions({
+    highlight: function(code, lang) {
+      if (typeof Prism !== 'undefined' && lang && Prism.languages[lang]) {
+        try {
+          return Prism.highlight(code, Prism.languages[lang], lang);
+        } catch (e) {
+          console.warn('Prism highlighting failed:', e);
+        }
+      }
+      return code;
+    },
+    breaks: true,
+    gfm: true
+  });
+}
+
+// Theme switching for Prism
+function updatePrismTheme(isDark) {
+  const lightTheme = document.querySelector('link[href*="prism.min.css"]');
+  const darkTheme = document.querySelector('#prism-dark-theme');
+  
+  if (lightTheme && darkTheme) {
+    if (isDark) {
+      lightTheme.disabled = true;
+      darkTheme.disabled = false;
+    } else {
+      lightTheme.disabled = false;
+      darkTheme.disabled = true;
+    }
+  }
+}
+
 // Auto-expanding textarea
 function updateTextareaHeight() {
   if (!msg) return;
@@ -29,13 +63,27 @@ function updateTextareaHeight() {
 
 msg?.addEventListener('input', updateTextareaHeight);
 
-// Store-backed message rendering with modern chat bubbles
+// Store-backed message rendering with modern chat bubbles and markdown support
 const _nodes = new Map(); // id -> content span
 let _typingIndicator = null;
 
-function isAtBottom(el) { return (el.scrollHeight - el.scrollTop - el.clientHeight) < 8; }
-function scrollToBottom(el) { try { el.scrollTop = el.scrollHeight; } catch {} }
-function updateJumpVisibility() { if (!jumpBtn) return; jumpBtn.style.display = isAtBottom(log) ? 'none' : 'inline-block'; }
+function isAtBottom(el) { 
+  // More generous threshold - consider "at bottom" if within 50px
+  return (el.scrollHeight - el.scrollTop - el.clientHeight) < 50; 
+}
+
+function scrollToBottom(el) { 
+  try { 
+    el.scrollTop = el.scrollHeight; 
+    updateJumpVisibility();
+  } catch {} 
+}
+
+function updateJumpVisibility() { 
+  if (!jumpBtn) return; 
+  const atBottom = isAtBottom(log);
+  jumpBtn.style.display = atBottom ? 'none' : 'inline-block'; 
+}
 
 function showTypingIndicator() {
   if (_typingIndicator) return;
@@ -104,6 +152,56 @@ function showToast(message) {
   }, 2000);
 }
 
+function processMarkdown(text) {
+  if (typeof marked === 'undefined') {
+    return text;
+  }
+  
+  try {
+    // First convert markdown to HTML
+    let html = marked.parse(text);
+    
+    // Post-process to add copy buttons to code blocks
+    html = html.replace(/<pre><code class="language-(\w+)">([\s\S]*?)<\/code><\/pre>/g, (match, lang, code) => {
+      const cleanCode = code.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+      return `
+        <pre>
+          <div class="code-block-header">
+            <span class="code-language">${lang || 'text'}</span>
+            <button class="code-copy-btn" onclick="copyCodeBlock(this)">Copy</button>
+          </div>
+          <code class="language-${lang}">${code}</code>
+        </pre>
+      `;
+    });
+    
+    // Handle code blocks without language specification
+    html = html.replace(/<pre><code>([\s\S]*?)<\/code><\/pre>/g, (match, code) => {
+      return `
+        <pre>
+          <div class="code-block-header">
+            <span class="code-language">text</span>
+            <button class="code-copy-btn" onclick="copyCodeBlock(this)">Copy</button>
+          </div>
+          <code>${code}</code>
+        </pre>
+      `;
+    });
+    
+    return html;
+  } catch (e) {
+    console.warn('Markdown processing failed:', e);
+    return text;
+  }
+}
+
+// Global function for code block copy buttons
+window.copyCodeBlock = function(button) {
+  const codeBlock = button.closest('pre').querySelector('code');
+  const text = codeBlock.textContent;
+  copyToClipboard(text);
+};
+
 function clearMessagesDOM() {
   const kids = Array.from(log.childNodes);
   for (const k of kids) {
@@ -120,7 +218,18 @@ function renderMessageNode(msg) {
   let contentSpan = _nodes.get(msg.id);
   
   if (contentSpan) {
-    contentSpan.textContent = (msg.text || '');
+    const text = msg.text || '';
+    // Check if the message contains code blocks or markdown
+    if (text.includes('```') || text.includes('`') || text.includes('##') || text.includes('**')) {
+      contentSpan.innerHTML = processMarkdown(text);
+      // Re-run Prism highlighting on new content
+      if (typeof Prism !== 'undefined') {
+        Prism.highlightAllUnder(contentSpan);
+      }
+    } else {
+      contentSpan.textContent = text;
+    }
+    
     if (auto) scrollToBottom(log); 
     else updateJumpVisibility();
     return contentSpan;
@@ -136,7 +245,18 @@ function renderMessageNode(msg) {
   
   const content = document.createElement('div');
   content.className = 'content';
-  content.textContent = (msg.text || '');
+  
+  const text = msg.text || '';
+  // Check if the message contains code blocks or markdown
+  if (text.includes('```') || text.includes('`') || text.includes('##') || text.includes('**')) {
+    content.innerHTML = processMarkdown(text);
+    // Run Prism highlighting
+    if (typeof Prism !== 'undefined') {
+      Prism.highlightAllUnder(content);
+    }
+  } else {
+    content.textContent = text;
+  }
   
   // Add message actions
   const actions = document.createElement('div');
@@ -148,7 +268,7 @@ function renderMessageNode(msg) {
   copyBtn.title = 'Copy message';
   copyBtn.onclick = (e) => {
     e.stopPropagation();
-    copyToClipboard(content.textContent);
+    copyToClipboard(content.textContent || content.innerText);
   };
   
   actions.appendChild(copyBtn);
@@ -213,10 +333,16 @@ function sendStream(text) {
   const offToken = on('sse:token', (ev) => {
     const d = ev && ev.detail; if (!d || d.messageId !== messageId) return;
     hideTypingIndicator(); // Hide typing indicator on first token
-    const auto = isAtBottom(log);
+    const wasAtBottom = isAtBottom(log);
     appender.append(d && d.text ? d.text : '');
-    if (auto) requestAnimationFrame(() => { scrollToBottom(log); updateJumpVisibility(); });
-    else updateJumpVisibility();
+    // Auto-scroll if we were at bottom before new content
+    if (wasAtBottom) {
+      requestAnimationFrame(() => { 
+        scrollToBottom(log); 
+      });
+    } else {
+      updateJumpVisibility();
+    }
   });
   
   const offDone = on('sse:done', (ev) => {
@@ -225,8 +351,24 @@ function sendStream(text) {
       hideTypingIndicator();
       if (d && d.updates) setPanelUpdates(d.updates);
       if (d && d.needs_interaction && d.state_token) renderInteraction(d.needs_interaction, d.state_token);
-      if (!target.textContent) target.textContent = (d && d.text) ? d.text : '';
-      appendMessage(msgId, target.textContent || '');
+      
+      const finalText = target.textContent || '';
+      if (!finalText && d && d.text) {
+        target.textContent = d.text;
+      }
+      
+      // Process final message for markdown/code blocks
+      if (finalText || d.text) {
+        const text = finalText || d.text;
+        if (text.includes('```') || text.includes('`') || text.includes('##') || text.includes('**')) {
+          target.innerHTML = processMarkdown(text);
+          if (typeof Prism !== 'undefined') {
+            Prism.highlightAllUnder(target);
+          }
+        }
+      }
+      
+      appendMessage(msgId, target.textContent || target.innerText || '');
     } finally { offToken(); offDone(); offErr(); }
   });
   
@@ -337,6 +479,12 @@ subscribe((state, patch) => {
       else { renderUpdates(ups); }
     } catch {}
   }
+  if ('theme' in (patch || {})) {
+    applyTheme(state.theme || 'light');
+    updatePrismTheme(state.theme === 'dark');
+    if (darkToggle) darkToggle.checked = (state.theme === 'dark');
+    try { localStorage.setItem('theme', state.theme || 'light'); } catch {}
+  }
 });
 
 // Reflect UI toggle back into the store
@@ -351,7 +499,11 @@ if (jumpBtn) {
   jumpBtn.addEventListener('click', () => { scrollToBottom(log); updateJumpVisibility(); });
 }
 if (log) {
-  log.addEventListener('scroll', () => updateJumpVisibility());
+  log.addEventListener('scroll', () => {
+    // Debounce the visibility update
+    clearTimeout(log._scrollTimeout);
+    log._scrollTimeout = setTimeout(updateJumpVisibility, 100);
+  });
   updateJumpVisibility();
 }
 
@@ -646,14 +798,6 @@ function initTheme() {
 }
 
 initTheme();
-
-subscribe((state, patch) => {
-  if ('theme' in (patch || {})) {
-    applyTheme(state.theme || 'light');
-    if (darkToggle) darkToggle.checked = (state.theme === 'dark');
-    try { localStorage.setItem('theme', state.theme || 'light'); } catch {}
-  }
-});
 
 if (darkToggle) {
   darkToggle.addEventListener('change', () => setState({ theme: darkToggle.checked ? 'dark' : 'light' }));
