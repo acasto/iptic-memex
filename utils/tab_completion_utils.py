@@ -53,6 +53,7 @@ class TabCompletionHandler:
             return None
         try:
             import readline
+            import shlex
             line = readline.get_line_buffer()
             cursor = readline.get_endidx()
         except Exception:
@@ -69,6 +70,23 @@ class TabCompletionHandler:
                 options = uca.complete(line, cursor, text) or []
             except Exception:
                 options = []
+            # Heuristic: when completing the top-level '/command', append a trailing
+            # space so users can immediately see subcommand/arg candidates with Tab.
+            try:
+                before = (line or '')[:cursor]
+                end_with_space = (len(before) > 0 and before[-1].isspace())
+                s = before.lstrip()
+                tokens: list[str] = []
+                if s.startswith('/'):
+                    try:
+                        tokens = shlex.split(s[1:], posix=True)
+                    except Exception:
+                        tokens = s[1:].strip().split()
+                in_first_token = (len(tokens) <= 1) and not end_with_space
+                if in_first_token:
+                    options = [o + ' ' if isinstance(o, str) and o.startswith('/') else o for o in options]
+            except Exception:
+                pass
             try:
                 return options[state]
             except IndexError:
@@ -82,7 +100,10 @@ class TabCompletionHandler:
         # Keep slash; also match typed text against either '/cmd' or 'cmd'
         opts = options
         try:
-            return [x for x in opts if (x.startswith(text) or x.lstrip('/').startswith(text))][state]
+            matches = [x for x in opts if (x.startswith(text) or x.lstrip('/').startswith(text))]
+            # Always append a space for top-level command completions in fallback
+            matches = [m + ' ' for m in matches]
+            return matches[state]
         except IndexError:
             return None
 

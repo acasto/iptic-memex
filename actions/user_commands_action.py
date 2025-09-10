@@ -182,6 +182,14 @@ class UserCommandsAction(InteractionAction):
                     'mcp-resource': {'type': 'action', 'name': 'mcp_fetch_resource'},
                 },
             },
+            # Shortcut: `/file` behaves like `/load file`
+            'file': {
+                'help': 'Load file into context',
+                'sub': {
+                    # Default subcommand accepts file patterns directly and offers path completion
+                    '': {'type': 'action', 'name': 'load_file', 'complete': self._complete_file_paths},
+                },
+            },
             'clear': {
                 'help': 'Clear chat, context, or screen',
                 'sub': {
@@ -385,8 +393,18 @@ class UserCommandsAction(InteractionAction):
 
         subs = spec.get('sub', {})
 
-        # If we just typed the command and a space, list subcommands (honor gating)
+        # If we just typed the command and a space:
+        # - Prefer default ('') handler completion if provided (e.g., `/file <paths>`)
+        # - Otherwise, list available subcommands (honor gating)
         if len(tokens) == 1 and end_with_space:
+            default_handler = subs.get('')
+            if default_handler:
+                completer = default_handler.get('complete')
+                if callable(completer):
+                    return [c for c in completer(fragment or '') if c.startswith(fragment or '')]
+                if isinstance(completer, dict) and completer.get('type') == 'action_method':
+                    opts = self._invoke_action_completion(completer, fragment or '')
+                    return [o for o in (opts or []) if isinstance(o, str) and (o.startswith(fragment or ''))]
             gated = []
             for sname in sorted(list(subs.keys())):
                 ok, _ = self._evaluate_gate(cmd, sname, [], subs.get(sname))
@@ -394,8 +412,25 @@ class UserCommandsAction(InteractionAction):
                     gated.append(sname)
             return [s for s in gated if s.startswith(fragment or '')]
 
-        # Completing subcommand name (filter by gating)
+        # Completing subcommand name (filter by gating). If there's a default handler with
+        # a completer, treat the second token as an argument to that default (e.g., `/file <path>`).
         if len(tokens) == 2 and not end_with_space:
+            if tokens[1] in subs:
+                gated = []
+                for sname in sorted(list(subs.keys())):
+                    ok, _ = self._evaluate_gate(cmd, sname, [], subs.get(sname))
+                    if ok:
+                        gated.append(sname)
+                return [s for s in gated if s.startswith(fragment or '')]
+            default_handler = subs.get('')
+            if default_handler:
+                completer = default_handler.get('complete')
+                if callable(completer):
+                    return [c for c in completer(fragment or '') if c.startswith(fragment or '')]
+                if isinstance(completer, dict) and completer.get('type') == 'action_method':
+                    opts = self._invoke_action_completion(completer, fragment or '')
+                    return [o for o in (opts or []) if isinstance(o, str) and (o.startswith(fragment or ''))]
+            # Otherwise, suggest subcommands
             gated = []
             for sname in sorted(list(subs.keys())):
                 ok, _ = self._evaluate_gate(cmd, sname, [], subs.get(sname))
@@ -409,7 +444,16 @@ class UserCommandsAction(InteractionAction):
             if tokens[1] in subs:
                 sub = tokens[1]
             else:
-                # Unknown sub; suggest
+                # Unknown sub; if a default handler provides completion, use it.
+                default_handler = subs.get('')
+                if default_handler:
+                    completer = default_handler.get('complete')
+                    if callable(completer):
+                        return [c for c in completer(fragment or '') if c.startswith(fragment or '')]
+                    if isinstance(completer, dict) and completer.get('type') == 'action_method':
+                        opts = self._invoke_action_completion(completer, fragment or '')
+                        return [o for o in (opts or []) if isinstance(o, str) and (o.startswith(fragment or ''))]
+                # Fallback: suggest subcommands
                 sub_opts = sorted(list(subs.keys()))
                 return [s for s in sub_opts if s.startswith(fragment or '')]
 
