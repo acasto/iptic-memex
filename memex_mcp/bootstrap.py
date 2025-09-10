@@ -5,6 +5,7 @@ import os
 import shlex
 import subprocess
 from typing import Any, Dict, Tuple
+import time
 
 
 def _coerce_bool(val: Any, default: bool = False) -> bool:
@@ -191,6 +192,39 @@ def autoload_mcp(session) -> None:
     if not active_val:
         return
 
+    # Non-interactive gating: only enable MCP when [AGENT].use_mcp is true
+    # Non-interactive = Agent mode or Completion mode
+    non_interactive = False
+    try:
+        non_interactive = bool(getattr(session, 'in_agent_mode', lambda: False)() or session.get_flag('completion_mode', False))
+    except Exception:
+        non_interactive = False
+    if non_interactive:
+        try:
+            use_mcp = bool(session.get_option('AGENT', 'use_mcp', fallback=False))
+        except Exception:
+            use_mcp = False
+        if not use_mcp:
+            return
+        # Optional startup delay to allow managed servers to initialize quietly
+        try:
+            sd = session.get_option('MCP', 'startup_delay', fallback=None)
+            delay_s = None
+            if sd is not None:
+                s = str(sd).strip().lower()
+                if s.endswith('ms'):
+                    delay_s = float(s[:-2]) / 1000.0
+                elif s.endswith('s'):
+                    delay_s = float(s[:-1])
+                elif s.endswith('m'):
+                    delay_s = float(s[:-1]) * 60.0
+                else:
+                    delay_s = float(s)
+            if delay_s and delay_s > 0:
+                time.sleep(delay_s)
+        except Exception:
+            pass
+
     # Set global client knobs into session overrides for MCPClient
     for key in (
         'use_sdk', 'connect_timeout', 'call_timeout', 'retries',
@@ -219,6 +253,15 @@ def autoload_mcp(session) -> None:
     for name, s in servers.items():
         if s.get('autoload') and name not in [x.split(':', 1)[0] for x in autoload_items]:
             autoload_items.append(name)
+
+    # If in non-interactive and [AGENT].available_mcp is set, restrict autoload set
+    if non_interactive:
+        try:
+            avail = [x.strip() for x in str(session.get_option('AGENT', 'available_mcp', fallback='') or '').split(',') if x.strip()]
+        except Exception:
+            avail = []
+        if avail:
+            autoload_items = [x for x in autoload_items if (str(x).split(':', 1)[0].strip() in set(avail))]
 
     if not autoload_items:
         return

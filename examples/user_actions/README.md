@@ -95,7 +95,7 @@ class RegisterAssistantCommandsAction(InteractionAction):
 - Show/hide tools:
   - Allowlist wins: `[TOOLS].active_tools = cmd,file,websearch,ragsearch,youtrack,ask_ai`
   - Denylist only applies when no allowlist: `[TOOLS].inactive_tools = math`
-  - Agent overrides: `[TOOLS].active_tools_agent` / `[TOOLS].inactive_tools_agent`
+- Non-interactive (Agent/Completion): `[AGENT].active_tools` sets the default tool set; `[AGENT].blocked_tools` is a hard blocklist. CLI `--tools` overrides the default set.
 
 - Choose implementation (handler) per tool:
   - `[TOOLS].<tool>_tool = action_name`
@@ -137,4 +137,3 @@ Tips:
 - `register_assistant_commands_action.py` — shows how to inject/override tool specs programmatically.
 
 That’s it! With these patterns you can add and iterate on your own tools safely without touching core.
-

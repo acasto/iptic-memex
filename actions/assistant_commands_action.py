@@ -45,17 +45,46 @@ class AssistantCommandsAction(InteractionAction):
             except Exception:
                 return []
 
-        # Resolve allow/deny lists
+        # Resolve allow/block lists with interactive vs non-interactive split
+        # Interactive (chat/web/tui): use [TOOLS] allow/deny unchanged
+        # Non-interactive (agent/completion): allow = CLI --tools (active_tools_agent) → [AGENT].active_tools → [TOOLS].active_tools
+        # and always subtract [AGENT].blocked_tools (hard block)
+        non_interactive = False
+        try:
+            non_interactive = bool(getattr(self.session, 'in_agent_mode', lambda: False)() or self.session.get_flag('completion_mode', False))
+        except Exception:
+            non_interactive = False
+
         active = _parse_list(self.session.get_option('TOOLS', 'active_tools', fallback=None))
         inactive = _parse_list(self.session.get_option('TOOLS', 'inactive_tools', fallback=None))
-        if getattr(self.session, 'in_agent_mode', lambda: False)():
-            a_active = _parse_list(self.session.get_option('TOOLS', 'active_tools_agent', fallback=None))
-            a_inactive = _parse_list(self.session.get_option('TOOLS', 'inactive_tools_agent', fallback=None))
-            if a_active:
-                active = a_active
-                inactive = []
-            elif a_inactive:
-                inactive = a_inactive
+        blocked: list[str] = []
+
+        if non_interactive:
+            # CLI override uses a distinct key so it doesn't affect interactive runs
+            override_raw = self.session.get_option('AGENT', 'active_tools_agent', fallback=None)
+            override_none = False
+            if isinstance(override_raw, str) and override_raw.strip().lower() == '__none__':
+                override_none = True
+                a_allow: list[str] = []
+            else:
+                a_allow = _parse_list(override_raw)
+
+            if override_none:
+                active = []  # Force no tools
+            elif a_allow:
+                active = a_allow
+            else:
+                a_active = _parse_list(self.session.get_option('AGENT', 'active_tools', fallback=None))
+                if a_active:
+                    active = a_active
+                else:
+                    # Fallback to interactive defaults if agent defaults unset
+                    active = _parse_list(self.session.get_option('TOOLS', 'active_tools', fallback=None))
+
+            # Hard blocklist for non-interactive
+            blocked = _parse_list(self.session.get_option('AGENT', 'blocked_tools', fallback=None))
+            # Non-interactive path ignores [TOOLS].inactive_tools; use [AGENT].blocked_tools instead
+            inactive = []
 
         # Discover all available assistant tool action classes
         try:
@@ -92,6 +121,10 @@ class AssistantCommandsAction(InteractionAction):
                     continue
 
                 # Respect allow/deny filters
+                # Apply non-interactive hard block first
+                if non_interactive and blocked and name in set(blocked):
+                    continue
+                # Apply allow/deny logic
                 if active and name not in active:
                     continue
                 if not active and inactive and name in set(inactive):
@@ -111,6 +144,8 @@ class AssistantCommandsAction(InteractionAction):
                     for alias in (aliases or []):
                         alias_key = str(alias).strip().lower()
                         if not alias_key:
+                            continue
+                        if non_interactive and blocked and alias_key in set(blocked):
                             continue
                         if active and alias_key not in active:
                             continue
@@ -152,10 +187,14 @@ class AssistantCommandsAction(InteractionAction):
                     name = str(key).strip().lower()
                     if not name or not isinstance(cfg, dict):
                         continue
-                    # Dynamic tools are user/session-registered; include them regardless of
-                    # global allow/deny filters so models can see them immediately.
                     # Accept as-is, but ensure a function mapping exists
                     if 'function' not in cfg:
+                        continue
+                    # For non-interactive, still respect the hard blocklist
+                    if non_interactive and blocked and name in set(blocked):
+                        continue
+                    # When an explicit allow-list is set, include only if present
+                    if non_interactive and active and name not in set(active):
                         continue
                     tools[name] = dict(cfg)
         except Exception:

@@ -1,4 +1,3 @@
-```
 """
 Mock provider for testing iptic-memex without requiring API keys.
 This provider gives simple responses to test the chat functionality.
@@ -89,4 +88,3 @@ class MockProvider(APIProvider):
             'completion_cost': 0.002,
             'total_cost': 0.003
         }
-```

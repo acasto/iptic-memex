@@ -110,9 +110,9 @@ Tools are now discovered dynamically from action files and exposed to providers 
   - `@classmethod tool_aliases() -> list[str]`: optional aliases (e.g., `['rag']`).
   - `@classmethod tool_spec(session) -> dict`: returns `{args, description, required, schema:{properties}, auto_submit}`.
 - Gating: control exposed tools without code changes via config.
-  - `[TOOLS].active_tools = cmd,file,websearch,ragsearch,youtrack` (allowlist wins if set)
-  - `[TOOLS].inactive_tools = math` (denylist used only when no allowlist)
-  - Agent overrides: `[TOOLS].active_tools_agent` / `[TOOLS].inactive_tools_agent`.
+  - `[TOOLS].active_tools = cmd,file,websearch,ragsearch,youtrack` (interactive defaults)
+  - `[TOOLS].inactive_tools = math` (interactive denylist when no allowlist)
+  - Non-interactive (Agent/Completion): `[AGENT].active_tools` provides the default tool set; `[AGENT].blocked_tools` is a hard blocklist. CLI `--tools` overrides the default set.
 - Implementation overrides:
   - Per tool: `[TOOLS].<tool>_tool = action_name` selects the handler class to run.
   - Shell: keep `[TOOLS].cmd_tool = assistant_cmd_tool | assistant_docker_tool` to choose local vs Docker.

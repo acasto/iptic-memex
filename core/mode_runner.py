@@ -61,6 +61,16 @@ def run_completion(
     - If capture='raw' and provider exposes get_full_response, include raw
     """
     sess = _build_subsession(builder, overrides=overrides)
+    # Disable official tools for single-shot internal completion to save tokens
+    try:
+        sess.set_option('tool_mode', 'none')
+    except Exception:
+        pass
+    # Mark as non-interactive completion (no MCP autoload to avoid overhead)
+    try:
+        sess.set_flag('completion_mode', True)
+    except Exception:
+        pass
     _attach_contexts(sess, contexts)
 
     # Ensure chat context exists
@@ -163,6 +173,13 @@ def run_agent(
         sess.enter_agent_mode(policy)
         if output:
             sess.set_option('agent_output_mode', output)
+    except Exception:
+        pass
+
+    # Autoload MCP now that agent mode is active (non-interactive gating applies inside)
+    try:
+        from memex_mcp.bootstrap import autoload_mcp
+        autoload_mcp(sess)
     except Exception:
         pass
 

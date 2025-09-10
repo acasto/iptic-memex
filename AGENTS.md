@@ -203,7 +203,7 @@ Gating and CLI‑only flows
 - Optional: `goal`, `notes`, `artifact_type`, `panel`, `files`, `model`. Supplemental files are read as plain text and attached under a `[Guidelines]` section for each internal run.
 - Personas file formats supported: `## Personas` with `### <Name>` subsections; top-level headings (##/###); or a bulleted list `- Name: one-liner`.
 - Prompts: `prompts/personas/review.md` and `prompts/personas/panel.md` are resolved via the standard prompt resolver (supports `.txt` and `.md`).
-- Enable by listing `persona_review` in `[TOOLS].active_tools`. In Agent Mode, `[TOOLS].active_tools_agent` overrides if set.
+- Enable by listing `persona_review` in `[TOOLS].active_tools`. For non-interactive runs (Agent/Completion), the default tool set comes from `[AGENT].active_tools` and a hard blocklist from `[AGENT].blocked_tools`. CLI `--tools` overrides the default set and remains subject to the blocklist.
 
 ### Official Tool Calling (OpenAI-compatible)
 - Settings:

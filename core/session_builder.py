@@ -119,9 +119,12 @@ class SessionBuilder:
             print(f"Warning: Could not load prompt context: {e}")
 
         # MCP autoload/bootstrap based on [MCP]
+        # Only autoload for interactive modes here. Non-interactive (completion/internal)
+        # will trigger autoload from their respective runners to apply correct gating.
         try:
-            from memex_mcp.bootstrap import autoload_mcp
-            autoload_mcp(session)
+            if ui_mode in ('chat', 'web', 'tui'):
+                from memex_mcp.bootstrap import autoload_mcp
+                autoload_mcp(session)
         except Exception:
             pass
 

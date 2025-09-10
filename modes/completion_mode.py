@@ -10,6 +10,11 @@ class CompletionMode(InteractionMode):
 
     def __init__(self, session):
         self.session = session
+        # Disable official tools for one-shot completion to save tokens
+        try:
+            self.session.set_option('tool_mode', 'none')
+        except Exception:
+            pass
         self.session.set_flag('completion_mode', True)
 
         # Get all contexts using the process_contexts action

@@ -18,9 +18,12 @@ from session import SessionBuilder
 @click.option('--no-agent-status-tags', is_flag=True, default=False, help='Disable per-turn <status> tag injection')
 @click.option('--agent-output', type=click.Choice(['final', 'full', 'none']), default=None, help='Agent output mode: final (default), full, or none')
 @click.option('--tools', default=None, help='Agent tools allowlist (CSV). Use "None" to disable all tools.')
+@click.option('--mcp', 'mcp_enable', is_flag=True, default=False, help='Enable MCP for non-interactive runs (Agent/Completion)')
+@click.option('--no-mcp', 'mcp_disable', is_flag=True, default=False, help='Disable MCP for non-interactive runs (Agent/Completion)')
+@click.option('--mcp-servers', default=None, help='Limit MCP servers in non-interactive runs (CSV labels)')
 @click.option('--base-dir', default=None, help='Override [TOOLS].base_directory (workspace root) for file/cmd tools')
 @click.pass_context
-def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw, file, steps, agent_writes, no_agent_status_tags, agent_output, tools, base_dir):
+def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw, file, steps, agent_writes, no_agent_status_tags, agent_output, tools, mcp_enable, mcp_disable, mcp_servers, base_dir):
     """
     the main entry point for the CLI click interface
     """
@@ -70,6 +73,13 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw,
             options['active_tools_agent'] = '__none__'
         elif tval:
             options['active_tools_agent'] = tval
+    # MCP gating for non-interactive runs
+    if mcp_enable and not mcp_disable:
+        options['use_mcp'] = True
+    elif mcp_disable and not mcp_enable:
+        options['use_mcp'] = False
+    if mcp_servers:
+        options['available_mcp'] = str(mcp_servers).strip()
     # Filesystem base dir override for tools (maps to [TOOLS].base_directory)
     if base_dir:
         options['base_directory'] = base_dir
