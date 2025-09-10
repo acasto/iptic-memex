@@ -4,30 +4,58 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Iptic Memex - Web</title>
-    <link rel="stylesheet" href="/static/css/main.css" />
-
+    <link rel="stylesheet" href="/static/css/main.css?v=2" />
   </head>
   <body>
-    <h1>Iptic Memex - Web</h1>
-    <div id="status">Loading status...</div>
-    <div id="log">
-      <button id="jumpLatest" title="Jump to latest">↓ New</button>
-    </div>
-    <div id="panel" style="margin:0.75rem 0;"></div>
-    <div style="margin-top:1rem;">
-      <div class="toolbar">
-        <button id="newchat" title="New chat" style="padding:.25rem .5rem;">＋ New</button>
-        <button id="attach" title="Load file" style="padding:.25rem .5rem;">📎 Attach</button>
-        <button id="options" title="Set option" style="padding:.25rem .5rem;">⚙️ Options</button>
-        <button id="stop" title="Stop streaming" style="padding:.25rem .5rem; display:none;">■ Stop</button>
-        <label><input id="stream" type="checkbox" /> Stream</label>
-        <span class="spacer"></span>
-        <label title="Toggle dark mode"><input id="darkmode" type="checkbox" /> Dark</label>
+    <div class="panel-overlay" id="panelOverlay"></div>
+    
+    <div class="app-container">
+      <div class="header">
+        <h1>Iptic Memex</h1>
+        <div class="status-indicator">
+          <div class="status-dot"></div>
+          <span id="status">Loading...</span>
+        </div>
       </div>
-      <textarea id="msg" placeholder="Type a message..."></textarea>
-      <div><button id="send">Send</button></div>
+
+      <div id="log">
+        <button id="jumpLatest" title="Jump to latest">↓ New messages</button>
+      </div>
+
+      <div class="input-section">
+        <div class="toolbar">
+          <div class="toolbar-group">
+            <button id="newchat" title="New chat">＋ New</button>
+            <button id="options" title="Set option">⚙️ Options</button>
+            <button id="stop" title="Stop streaming" style="display:none;">■ Stop</button>
+          </div>
+          
+          <div class="spacer"></div>
+          
+          <div class="toggle-group">
+            <label>
+              <input id="stream" type="checkbox" />
+              Stream
+            </label>
+            <label title="Toggle dark mode">
+              <input id="darkmode" type="checkbox" />
+              Dark
+            </label>
+          </div>
+        </div>
+
+        <div class="input-container">
+          <textarea id="msg" placeholder="Type your message..." rows="1"></textarea>
+          <div class="input-actions">
+            <button id="attach" title="Attach files">📎</button>
+            <button id="send" title="Send message">→</button>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <script type="module" src="/static/js/main.js"></script>
+    <div id="panel"></div>
+
+    <script type="module" src="/static/js/main.js?v=2"></script>
   </body>
-  </html>
+</html>

@@ -1,6 +1,19 @@
 // Minimal shared state store with subscribe/notify and bus bridge
 import { emit } from './bus.js';
 
+// Fallback UUID generator for non-secure contexts
+function generateUUID() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // Fallback for non-secure contexts
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c == 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
 let state = {
   messages: [], // [{id, role, text}]
   stream: false,
@@ -33,7 +46,7 @@ export function subscribe(fn) {
 
 // Convenience helpers for messages
 export function addMessage(msg) {
-  const m = { id: msg.id || crypto.randomUUID(), role: msg.role, text: msg.text || '' };
+  const m = { id: msg.id || generateUUID(), role: msg.role, text: msg.text || '' };
   state = { ...state, messages: [...state.messages, m] };
   emit('store:change', { state, patch: { messages: state.messages } });
   return m.id;
