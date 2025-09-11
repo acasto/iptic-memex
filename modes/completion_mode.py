@@ -65,9 +65,15 @@ class CompletionMode(InteractionMode):
             if hasattr(provider, 'get_full_response'):
                 self.session.utils.output.write(provider.get_full_response(), end='')
         else:
-            # Normal completion: stream only if CLI flag used
-            stream = params.get('stream_completion', False)
-            # Set stream option in session for this completion
+            # Normal completion: non-stream by default for completion mode.
+            # Stream only if user explicitly passed -s/--stream via CLI overrides.
+            try:
+                overrides = getattr(self.session, 'config').overrides or {}
+            except Exception:
+                overrides = {}
+            stream = bool(overrides.get('stream', False))
+
+            # Apply the request-time stream flag for the provider call
             self.session.set_option('stream', stream)
 
             if stream:

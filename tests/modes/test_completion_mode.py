@@ -49,7 +49,8 @@ class Provider:
 class Session:
     def __init__(self, with_stdin=True):
         self.utils = FakeInputUtils()
-        self._params = {"stream_completion": False, "raw_completion": False}
+        # Default non-stream, non-raw
+        self._params = {"raw_completion": False}
         self._contexts = {}
         self._actions = {"process_contexts": FakeProcessContexts(with_stdin)}
         self._provider = Provider()

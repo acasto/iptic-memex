@@ -46,7 +46,7 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw,
     if max_tokens:
         options['max_tokens'] = max_tokens
     if stream:
-        options['cli_stream'] = True  # differentiate from config stream option
+        # Explicit CLI override to stream; modes can detect this via overrides
         options['stream'] = True
     if verbose:
         ctx.obj['VERBOSE'] = verbose
