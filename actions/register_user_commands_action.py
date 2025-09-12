@@ -8,7 +8,7 @@ class RegisterUserCommandsAction(InteractionAction):
 
     How it works
     - Return a dict mapping user command strings (what the user types) to configs.
-    - Your returned dict is shallow-merged into the built‑ins from actions/user_commands_action.py,
+    - Your returned dict is shallow-merged into the built‑ins from actions/user_commands_registry_action.py,
       so you can override just the description or function target without redefining everything.
 
     Command entry shape

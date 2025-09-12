@@ -74,7 +74,7 @@ class FakeProcessContexts:
         return []
 
 
-class FakeUserCommands:
+class FakeChatCommands:
     def run(self, text):
         return False
 
@@ -91,7 +91,7 @@ class Session:
         }
         self._flags = {}
         self._contexts = {}
-        self._actions = {"process_contexts": FakeProcessContexts(), "user_commands": FakeUserCommands()}
+        self._actions = {"process_contexts": FakeProcessContexts(), "chat_commands": FakeChatCommands()}
 
     def get_params(self): return dict(self._params)
     def set_option(self, k, v): self._params[k] = v
@@ -123,4 +123,3 @@ def test_chat_mode_single_turn_non_stream_captures_output():
     out = "".join(m + e for (m, e) in sess.utils.output.lines)
     assert "Assistant:" in out
     assert "assistant reply" in out
-

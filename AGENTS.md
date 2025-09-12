@@ -188,7 +188,7 @@ Gating and CLI‑only flows
   - Web search override uses `[TOOLS].websearch_tool` (legacy `search_tool` removed).
 - Pseudo-tool blocks remain supported and are now case-insensitive; names are normalized to lowercase.
 - Register new assistant commands by returning a dict from `actions/register_assistant_commands_action.py` (or user override in `examples/user_actions/`): `{ "MY_TOOL": { "args": ["foo"], "function": {"type":"action","name":"my_tool"}}}`.
-- User commands use explicit slash syntax and are matched in `user_commands_action.py`.
+- User commands use explicit slash syntax and are matched by `chat_commands_action.py` (CLI) using a shared registry in `user_commands_registry_action.py`.
   - Shape: `/<command> [<subcommand>] [args]` (e.g., `/load file`, `/save chat`, `/set model gpt-4o`).
   - Registry-driven parsing/dispatch; subcommand-level gating honors `Action.can_run(session)` and supports fine-grained gates via `gate: {type: 'action_can_run', name: '<action>', args: [...]}`.
   - Completions are hierarchical: `/` → commands, `/load ` → subs, `/load file ` → file paths, `/set model ` → model names.

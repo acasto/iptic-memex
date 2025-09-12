@@ -54,7 +54,7 @@ async def handle_api_stream(app, request: Request):
 
     # Early: command handling parity with /api/chat (do not open stream when handled)
     try:
-        user_cmds = app.session.get_action('user_commands')
+        user_cmds = app.session.get_action('chat_commands')
     except Exception:
         user_cmds = None
     matched_kind = None

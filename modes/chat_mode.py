@@ -100,7 +100,7 @@ class ChatMode(InteractionMode):
                 self.utils.output.write()
 
                 # Safe action call with None check
-                user_commands_action = self.session.get_action('user_commands')
+                user_commands_action = self.session.get_action('chat_commands')
                 if user_commands_action and user_commands_action.run(user_input):
                     continue
 

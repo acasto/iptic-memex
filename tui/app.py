@@ -148,7 +148,7 @@ if TEXTUAL_AVAILABLE:
             chat_log.write(f"[bold blue]You:[/bold blue] {message}")
             
             # Check if it's a command first
-            user_commands = self.session.get_action('user_commands')
+            user_commands = self.session.get_action('chat_commands')
             if user_commands and user_commands.run(message):
                 # Command was handled
                 chat_log.write("[dim]Command executed.[/dim]")

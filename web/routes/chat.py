@@ -18,7 +18,7 @@ async def handle_api_chat(app, request: Request):
 
     # Check for user command first (CLI parity: handle before adding to chat/LLM)
     try:
-        user_cmds = app.session.get_action('user_commands')
+        user_cmds = app.session.get_action('chat_commands')
     except Exception:
         user_cmds = None
 

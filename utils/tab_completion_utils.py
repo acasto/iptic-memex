@@ -61,7 +61,7 @@ class TabCompletionHandler:
 
         # Slash-aware completions
         try:
-            uca = self._session.get_action('user_commands')
+            uca = self._session.get_action('chat_commands')
         except Exception:
             uca = None
 
@@ -94,7 +94,7 @@ class TabCompletionHandler:
 
         # Fallback: complete top-level commands; show leading slash to hint command usage
         try:
-            options = self._session.get_action('user_commands').get_commands()
+            options = self._session.get_action('chat_commands').get_commands()
         except Exception:
             options = []
         # Keep slash; also match typed text against either '/cmd' or 'cmd'

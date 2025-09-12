@@ -24,9 +24,9 @@ def test_mcp_on_off_gating(monkeypatch):
 
     sess = builder.build(mode='chat')
 
-    from actions.user_commands_action import UserCommandsAction
+    from actions.chat_commands_action import ChatCommandsAction
 
-    act = UserCommandsAction(sess)
+    act = ChatCommandsAction(sess)
     # Completion after '/mcp ' should list only valid subs
     subs = set(act.complete('/mcp ', len('/mcp '), ''))
     assert 'on' in subs
@@ -37,7 +37,7 @@ def test_mcp_on_off_gating(monkeypatch):
     McpToggleAction(sess).run(['on'])
 
     # Rebuild commands to refresh gating
-    act2 = UserCommandsAction(sess)
+    act2 = ChatCommandsAction(sess)
     subs2 = set(act2.complete('/mcp ', len('/mcp '), ''))
     assert 'off' in subs2
     assert 'on' not in subs2

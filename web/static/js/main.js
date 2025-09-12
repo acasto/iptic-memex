@@ -760,7 +760,7 @@ if (newChatBtn) {
       }
       clearMessagesDOM();
       setState({ updates: [] });
-      emit('controller:chat:send', { text: 'clear chat' });
+      emit('controller:chat:send', { text: '/clear chat' });
     });
   });
 }
