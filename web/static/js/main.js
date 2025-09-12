@@ -5,6 +5,7 @@ import { RafTextAppender } from './raf_batch.js';
 import { getState, setState, subscribe, addMessage, appendMessage, clearMessages } from './store.js';
 
 const log = document.getElementById('log');
+const emptyState = document.getElementById('emptyState');
 const jumpBtn = document.getElementById('jumpLatest');
 const msg = document.getElementById('msg');
 const sendBtn = document.getElementById('send');
@@ -14,9 +15,12 @@ const panelOverlay = document.getElementById('panelOverlay');
 const streamEl = document.getElementById('stream');
 const newChatBtn = document.getElementById('newchat');
 const attachBtn = document.getElementById('attach');
+const previewsEl = document.getElementById('previews');
 const optionsBtn = document.getElementById('options');
 const darkToggle = document.getElementById('darkmode');
 const stopBtn = document.getElementById('stop');
+
+let _attachedFiles = [];
 
 // Configure marked.js for better code block handling
 if (typeof marked !== 'undefined') {
@@ -64,8 +68,15 @@ function updateTextareaHeight() {
 msg?.addEventListener('input', updateTextareaHeight);
 
 // Store-backed message rendering with modern chat bubbles and markdown support
-const _nodes = new Map(); // id -> content span
+const _nodes = new Map(); // id -> { el, msg }
 let _typingIndicator = null;
+
+function updateEmptyState() {
+  if (!log || !emptyState) return;
+  const hasMessages = Array.from(log.children).some(el => el.classList.contains('msg'));
+  log.classList.toggle('empty', !hasMessages);
+  emptyState.style.display = hasMessages ? 'none' : 'flex';
+}
 
 function isAtBottom(el) { 
   // More generous threshold - consider "at bottom" if within 50px
@@ -203,21 +214,19 @@ window.copyCodeBlock = function(button) {
 };
 
 function clearMessagesDOM() {
-  const kids = Array.from(log.childNodes);
-  for (const k of kids) {
-    if (k.nodeType === 1 && (k.id === 'jumpLatest' || k.classList?.contains('typing-indicator'))) continue;
-    log.removeChild(k);
-  }
+  log.innerHTML = ''; // Clear all children
   _nodes.clear();
   updateJumpVisibility();
+  updateEmptyState();
 }
 
 function renderMessageNode(msg) {
   const auto = isAtBottom(log);
   const hadAny = _nodes.size > 0;
-  let contentSpan = _nodes.get(msg.id);
+  let node = _nodes.get(msg.id);
   
-  if (contentSpan) {
+  if (node) {
+    const contentSpan = node.el.querySelector('.content');
     const text = msg.text || '';
     // Check if the message contains code blocks or markdown
     if (text.includes('```') || text.includes('`') || text.includes('##') || text.includes('**')) {
@@ -238,10 +247,12 @@ function renderMessageNode(msg) {
   // Create new message bubble
   const messageEl = document.createElement('div');
   messageEl.className = `msg ${msg.role}`;
+  messageEl.setAttribute('role', 'logitem');
   
   const avatar = document.createElement('div');
   avatar.className = 'avatar';
   avatar.textContent = msg.role === 'user' ? 'U' : 'AI';
+  avatar.setAttribute('aria-hidden', 'true');
   
   const content = document.createElement('div');
   content.className = 'content';
@@ -258,22 +269,6 @@ function renderMessageNode(msg) {
     content.textContent = text;
   }
   
-  // Add message actions
-  const actions = document.createElement('div');
-  actions.className = 'message-actions';
-  
-  const copyBtn = document.createElement('button');
-  copyBtn.className = 'action-btn';
-  copyBtn.innerHTML = '📋';
-  copyBtn.title = 'Copy message';
-  copyBtn.onclick = (e) => {
-    e.stopPropagation();
-    copyToClipboard(content.textContent || content.innerText);
-  };
-  
-  actions.appendChild(copyBtn);
-  content.appendChild(actions);
-  
   messageEl.appendChild(avatar);
   messageEl.appendChild(content);
   
@@ -287,7 +282,8 @@ function renderMessageNode(msg) {
   if (auto && hadAny) scrollToBottom(log); 
   else updateJumpVisibility();
   
-  _nodes.set(msg.id, content);
+  _nodes.set(msg.id, { el: messageEl, msg });
+  updateEmptyState();
   return content;
 }
 
@@ -316,23 +312,23 @@ async function refreshStatus() {
 }
 
 function sendNonStream(text) { 
+  showTypingIndicator();
   emit('controller:chat:send', { text }); 
 }
 
 function sendStream(text) {
-  // Show typing indicator
-  showTypingIndicator();
-  
-  // Create assistant message and a rAF-batched appender
+  // Create an empty message bubble immediately for streaming
   const msgId = addAndRenderMessage('assistant', '');
-  const target = _nodes.get(msgId);
+  const node = _nodes.get(msgId);
+  const target = node.el.querySelector('.content');
+  node.el.classList.add('streaming');
+  
   const appender = new RafTextAppender(target);
   const messageId = Math.random().toString(36).slice(2);
 
   // Wire bus listeners scoped by messageId
   const offToken = on('sse:token', (ev) => {
     const d = ev && ev.detail; if (!d || d.messageId !== messageId) return;
-    hideTypingIndicator(); // Hide typing indicator on first token
     const wasAtBottom = isAtBottom(log);
     appender.append(d && d.text ? d.text : '');
     // Auto-scroll if we were at bottom before new content
@@ -348,7 +344,7 @@ function sendStream(text) {
   const offDone = on('sse:done', (ev) => {
     const d = ev && ev.detail; if (!d || d.messageId !== messageId) return;
     try {
-      hideTypingIndicator();
+      node.el.classList.remove('streaming');
       if (d && d.updates) setPanelUpdates(d.updates);
       if (d && d.needs_interaction && d.state_token) renderInteraction(d.needs_interaction, d.state_token);
       
@@ -375,7 +371,7 @@ function sendStream(text) {
   const offErr = on('sse:error', (ev) => {
     const d = ev && ev.detail; if (!d || d.messageId !== messageId) return;
     try {
-      hideTypingIndicator();
+      node.el.classList.remove('streaming');
       target.textContent += ' [error] ' + (d && d.message ? d.message : '');
       appendMessage(msgId, target.textContent || '');
     } finally { offToken(); offDone(); offErr(); }
@@ -435,16 +431,23 @@ on('upload:error', (ev) => {
 // Send button and enter key handling
 function handleSend() {
   const text = (msg.value || '').trim();
-  if (!text) return;
+  if (!text && _attachedFiles.length === 0) return;
   
-  addAndRenderMessage('user', text);
-  msg.value = '';
-  updateTextareaHeight();
+  // Handle file uploads if any files are attached
+  if (_attachedFiles.length > 0) {
+    emit('controller:upload', { files: _attachedFiles });
+    clearPreviews();
+  }
   
-  if (getState().stream) sendStream(text); 
-  else {
-    showTypingIndicator();
-    sendNonStream(text);
+  if (text) {
+    addAndRenderMessage('user', text);
+    msg.value = '';
+    updateTextareaHeight();
+    
+    if (getState().stream) sendStream(text); 
+    else {
+      sendNonStream(text);
+    }
   }
 }
 
@@ -513,6 +516,9 @@ if (stopBtn) {
   const hide = () => { 
     stopBtn.style.display = 'none';
     hideTypingIndicator();
+    // Remove streaming class from any active message
+    const streamingNode = document.querySelector('.msg.streaming');
+    if (streamingNode) streamingNode.classList.remove('streaming');
   };
   on('sse:done', hide);
   on('sse:error', hide);
@@ -675,6 +681,55 @@ function renderInteraction(needs, stateToken) {
 }
 
 // ---- Attach (upload) ----
+function renderPreviews() {
+  if (!previewsEl) return;
+  previewsEl.innerHTML = '';
+  if (_attachedFiles.length === 0) {
+    previewsEl.style.display = 'none';
+    return;
+  }
+  
+  previewsEl.style.display = 'flex';
+  
+  _attachedFiles.forEach((file, index) => {
+    const item = document.createElement('div');
+    item.className = 'preview-item';
+    
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'preview-remove';
+    removeBtn.innerHTML = '&times;';
+    removeBtn.onclick = () => {
+      _attachedFiles.splice(index, 1);
+      renderPreviews();
+    };
+    
+    if (file.type.startsWith('image/')) {
+      const img = document.createElement('img');
+      img.src = URL.createObjectURL(file);
+      img.onload = () => URL.revokeObjectURL(img.src);
+      item.appendChild(img);
+    } else {
+      const info = document.createElement('div');
+      info.className = 'preview-info';
+      info.textContent = file.name;
+      item.appendChild(info);
+    }
+    
+    item.appendChild(removeBtn);
+    previewsEl.appendChild(item);
+  });
+}
+
+function clearPreviews() {
+  _attachedFiles = [];
+  renderPreviews();
+}
+
+function addFilesToPreview(fileList) {
+  _attachedFiles.push(...Array.from(fileList));
+  renderPreviews();
+}
+
 if (attachBtn) {
   attachBtn.addEventListener('click', () => {
     const picker = document.createElement('input'); 
@@ -688,7 +743,7 @@ if (attachBtn) {
         picker.remove(); 
         return; 
       }
-      emit('controller:upload', { files: picker.files });
+      addFilesToPreview(picker.files);
       picker.remove();
     });
     picker.click();
@@ -806,7 +861,7 @@ if (darkToggle) {
 // ---- Drag & drop upload ----
 function handleFilesDrop(fileList) {
   if (!fileList || !fileList.length) return;
-  emit('controller:upload', { files: fileList });
+  addFilesToPreview(fileList);
 }
 
 let dragDepth = 0;
@@ -870,3 +925,6 @@ function confirmPanel(message) {
     };
   });
 }
+
+// Focus the input field on initial load
+msg?.focus();

@@ -204,6 +204,53 @@ body {
   border-bottom-left-radius: 4px;
 }
 
+.msg.assistant.streaming .content::after {
+  content: '▋';
+  display: inline-block;
+  animation: blink 1s step-end infinite;
+  margin-left: 0.25rem;
+  font-size: 1.1em;
+  color: var(--muted);
+}
+
+#emptyState {
+  display: none; /* Hidden by default */
+  text-align: center;
+  margin: auto;
+  padding: 2rem;
+  color: var(--muted);
+}
+
+#emptyState .empty-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+  display: inline-block;
+  background: var(--assistant-bubble);
+  border-radius: 50%;
+  width: 80px;
+  height: 80px;
+  line-height: 80px;
+  border: 1px solid var(--panel-border);
+}
+
+#emptyState h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--fg);
+  margin: 0 0 0.5rem 0;
+}
+
+#emptyState p {
+  font-size: 1rem;
+  max-width: 300px;
+  margin: 0 auto;
+}
+
+#log:empty + #emptyState,
+#log.empty #emptyState {
+  display: block;
+}
+
 /* Code block styling */
 .content pre {
   margin: 0.75rem 0;
@@ -355,6 +402,63 @@ body {
   border-top: 1px solid var(--panel-border);
   padding: 1rem 0;
   background: var(--bg);
+}
+
+#previews {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  overflow-x: auto;
+  padding: 0.25rem 0;
+}
+
+.preview-item {
+  position: relative;
+  flex-shrink: 0;
+  width: 80px;
+  height: 80px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--panel-border);
+  background: var(--panel-bg);
+}
+
+.preview-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.preview-item .preview-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 0.5rem;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.preview-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.5);
+  color: white;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  line-height: 1;
 }
 
 .input-container {
@@ -713,6 +817,16 @@ body.dragover {
 :root[data-theme="dark"] .token.doctype,
 :root[data-theme="dark"] .token.cdata {
   color: #94a3b8;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+@keyframes pulse {
+  50% {
+    opacity: .5;
+  }
 }
 
 @keyframes fadeIn {
