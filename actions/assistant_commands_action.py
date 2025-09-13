@@ -343,7 +343,28 @@ class AssistantCommandsAction(InteractionAction):
                         from contextlib import nullcontext
                         spinner_cm = nullcontext()
                     else:
-                        spinner_cm = self.session.utils.output.spinner("Running command...")
+                        # Try to provide a helpful one-line summary for the spinner
+                        try:
+                            summary = None
+                            a = cmd.get('args') or {}
+                            d = a.get('desc') if isinstance(a, dict) else None
+                            if isinstance(d, str):
+                                d = d.strip()
+                            if not d and isinstance(a, dict):
+                                if (command_name or '').lower() == 'cmd':
+                                    c = a.get('command') or ''
+                                    s = a.get('arguments') or ''
+                                    joined = (f"{c} {s}" if c else '').strip()
+                                    if not joined:
+                                        joined = (cmd.get('content') or '').strip()
+                                    if joined:
+                                        d = joined
+                            if isinstance(d, str) and len(d) > 120:
+                                d = d[:117] + '...'
+                            msg = f"Tool calling: {(command_name or '').lower()}" + (f" — {d}" if d else "")
+                        except Exception:
+                            msg = f"Tool calling: {(command_name or '').lower()}"
+                        spinner_cm = self.session.utils.output.spinner(msg)
 
                     with spinner_cm:
                         if handler["type"] == "method":

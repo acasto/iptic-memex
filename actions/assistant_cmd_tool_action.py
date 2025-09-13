@@ -65,7 +65,7 @@ class AssistantCmdToolAction(InteractionAction):
     @classmethod
     def tool_spec(cls, session) -> dict:
         return {
-            'args': ['command', 'arguments'],
+            'args': ['command', 'arguments', 'desc'],
             'description': (
                 "Execute a local shell command. Provide the program in 'command' and an "
                 "optional space-delimited string in 'arguments'."
@@ -75,7 +75,8 @@ class AssistantCmdToolAction(InteractionAction):
                 'properties': {
                     'command': {"type": "string", "description": "Program to execute (e.g., 'echo', 'grep')."},
                     'arguments': {"type": "string", "description": "Space-delimited arguments string (quoted as needed)."},
-                    'content': {"type": "string", "description": "Unused for CMD; include arguments in 'arguments'."}
+                    'content': {"type": "string", "description": "Unused for CMD; include arguments in 'arguments'."},
+                    'desc': {"type": "string", "description": "Optional short description for UI/status; ignored by execution.", "default": ""}
                 }
             },
             'auto_submit': True,

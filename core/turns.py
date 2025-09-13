@@ -482,7 +482,26 @@ class TurnRunner:
                             self.session.utils.output.stop_spinner()
                             spinner_cm = nullcontext()
                             if not self.session.in_agent_mode():
-                                spinner_cm = self.session.utils.output.spinner(f"Tool calling: {name}")
+                                # Prefer a user-provided short description (args.desc) when available
+                                try:
+                                    desc = args.get('desc') if isinstance(args, dict) else None
+                                    if isinstance(desc, str):
+                                        desc = desc.strip()
+                                    # Fallback summary for common tools
+                                    if not desc:
+                                        if name == 'cmd':
+                                            cmd = (args.get('command') or '') if isinstance(args, dict) else ''
+                                            arg_s = (args.get('arguments') or '') if isinstance(args, dict) else ''
+                                            content_s = content or ''
+                                            joined = (f"{cmd} {arg_s}" if cmd else content_s).strip()
+                                            if joined:
+                                                desc = joined
+                                    if isinstance(desc, str) and len(desc) > 120:
+                                        desc = desc[:117] + '...'
+                                    msg = f"Tool calling: {name}" + (f" — {desc}" if desc else "")
+                                except Exception:
+                                    msg = f"Tool calling: {name}"
+                                spinner_cm = self.session.utils.output.spinner(msg)
                         except Exception:
                             from contextlib import nullcontext
                             spinner_cm = nullcontext()

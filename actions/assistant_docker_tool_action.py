@@ -37,7 +37,7 @@ class AssistantDockerToolAction(InteractionAction):
     def tool_spec(cls, session) -> dict:
         # Command schema is the same as the local CMD tool
         return {
-            'args': ['command', 'arguments'],
+            'args': ['command', 'arguments', 'desc'],
             'description': (
                 "Execute a shell command inside Docker (ephemeral or persistent). Provide the program in 'command' "
                 "and optional 'arguments'. Controlled via [TOOLS].docker_env."
@@ -47,7 +47,8 @@ class AssistantDockerToolAction(InteractionAction):
                 'properties': {
                     'command': {"type": "string", "description": "Program to execute (e.g., 'echo', 'grep')."},
                     'arguments': {"type": "string", "description": "Space-delimited arguments string (quoted as needed)."},
-                    'content': {"type": "string", "description": "Optional command string (alternative to args)."}
+                    'content': {"type": "string", "description": "Optional command string (alternative to args)."},
+                    'desc': {"type": "string", "description": "Optional short description for UI/status; ignored by execution.", "default": ""}
                 }
             },
             'auto_submit': True,
