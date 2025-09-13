@@ -32,7 +32,7 @@ class AssistantFileToolAction(StepwiseAction):
     @classmethod
     def tool_spec(cls, session) -> dict:
         return {
-            'args': ['mode', 'file', 'new_name', 'recursive', 'block'],
+            'args': ['mode', 'file', 'new_name', 'recursive', 'block', 'desc'],
             'description': (
                 "Read or modify files in the workspace. Modes: read, write, append, edit, summarize, delete, "
                 "rename, copy. Use 'content' for write/append/edit."
@@ -47,7 +47,8 @@ class AssistantFileToolAction(StepwiseAction):
                     'new_name': {"type": "string", "description": "New name/path for rename or copy."},
                     'recursive': {"type": "boolean", "description": "When deleting, remove directories recursively if true."},
                     'block': {"type": "string", "description": "Identifier of a %BLOCK:...% to append to 'content'."},
-                    'content': {"type": "string", "description": "Content to write/append or edit instructions (for edit mode)."}
+                    'content': {"type": "string", "description": "Content to write/append or edit instructions (for edit mode)."},
+                    'desc': {"type": "string", "description": "Optional short description for UI/status; ignored by execution.", "default": ""}
                 }
             },
             'auto_submit': True,

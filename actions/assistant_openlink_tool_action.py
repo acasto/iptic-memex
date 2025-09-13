@@ -61,7 +61,7 @@ class AssistantOpenlinkToolAction(InteractionAction):
     @classmethod
     def tool_spec(cls, session) -> dict:
         return {
-            'args': ['url', 'urls'],
+            'args': ['url', 'urls', 'desc'],
             'description': (
                 "Open one or more HTTP/HTTPS links in the user's default browser. Provide a single 'url', "
                 "a comma-separated 'urls', or list URLs on separate lines in content."
@@ -71,7 +71,8 @@ class AssistantOpenlinkToolAction(InteractionAction):
                 'properties': {
                     'url': {"type": "string", "description": "Single URL to open; protocol auto-added if missing."},
                     'urls': {"type": "string", "description": "Comma-separated list of URLs to open."},
-                    'content': {"type": "string", "description": "Optional newline-separated URLs to open; lines starting with # are ignored."}
+                    'content': {"type": "string", "description": "Optional newline-separated URLs to open; lines starting with # are ignored."},
+                    'desc': {"type": "string", "description": "Optional short description for UI/status; ignored by execution.", "default": ""}
                 }
             },
             'auto_submit': True,

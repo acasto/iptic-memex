@@ -100,7 +100,7 @@ class AssistantWebsearchToolAction(InteractionAction):
     @classmethod
     def tool_spec(cls, session) -> dict:
         return {
-            'args': ['query', 'recency', 'domains', 'mode'],
+            'args': ['query', 'recency', 'domains', 'mode', 'desc'],
             'description': "Search the web. Provide 'query'. Optional 'mode' can be 'basic' or 'advanced'.",
             'required': ['query'],
             'schema': {
@@ -109,7 +109,8 @@ class AssistantWebsearchToolAction(InteractionAction):
                     'recency': {"type": "string", "description": "Recency filter (e.g., 'day', 'week', 'month')."},
                     'domains': {"type": "string", "description": "Comma-separated domain filter list (e.g., 'example.com,another.com')."},
                     'mode': {"type": "string", "enum": ["basic", "advanced"], "description": "Search mode: 'basic' for simple queries or 'advanced' for deeper analysis."},
-                    'content': {"type": "string", "description": "Additional terms appended to the query."}
+                    'content': {"type": "string", "description": "Additional terms appended to the query."},
+                    'desc': {"type": "string", "description": "Optional short description for UI/status; ignored by execution.", "default": ""}
                 }
             },
             'auto_submit': True,

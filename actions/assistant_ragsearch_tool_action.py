@@ -40,7 +40,7 @@ class AssistantRagsearchToolAction(InteractionAction):
     def tool_spec(cls, session) -> dict:
         return {
             'args': [
-                'query', 'index', 'indexes', 'k', 'preview_lines', 'per_index_cap', 'threshold'
+                'query', 'index', 'indexes', 'k', 'preview_lines', 'per_index_cap', 'threshold', 'desc'
             ],
             'description': (
                 "Search local RAG indexes and attach a consolidated results block to context. "
@@ -56,7 +56,8 @@ class AssistantRagsearchToolAction(InteractionAction):
                     'preview_lines': {"type": "integer", "description": "Preview lines per hit in the summary."},
                     'per_index_cap': {"type": "integer", "description": "Cap results per index."},
                     'threshold': {"type": "number", "description": "Minimum cosine similarity threshold (0.0–1.0)."},
-                    'content': {"type": "string", "description": "Fallback for 'query' when omitted."}
+                    'content': {"type": "string", "description": "Fallback for 'query' when omitted."},
+                    'desc': {"type": "string", "description": "Optional short description for UI/status; ignored by execution.", "default": ""}
                 }
             },
             'auto_submit': True,

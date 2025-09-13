@@ -50,7 +50,7 @@ class AssistantMemoryToolAction(InteractionAction):
     @classmethod
     def tool_spec(cls, session) -> dict:
         return {
-            'args': ['action', 'memory', 'project', 'id'],
+            'args': ['action', 'memory', 'project', 'id', 'desc'],
             'description': (
                 "Save, read, or clear short memories in a local store. Use action=save|read|clear with optional "
                 "'project' scope and 'id' for specific records."
@@ -62,7 +62,8 @@ class AssistantMemoryToolAction(InteractionAction):
                     'memory': {"type": "string", "description": "Memory text to save (or use 'content')."},
                     'project': {"type": "string", "description": "Project scope (use 'all' with action=read|clear)."},
                     'id': {"type": "string", "description": "Specific memory ID for read/clear."},
-                    'content': {"type": "string", "description": "Memory text fallback when 'memory' is not set."}
+                    'content': {"type": "string", "description": "Memory text fallback when 'memory' is not set."},
+                    'desc': {"type": "string", "description": "Optional short description for UI/status; ignored by execution.", "default": ""}
                 }
             },
             'auto_submit': True,

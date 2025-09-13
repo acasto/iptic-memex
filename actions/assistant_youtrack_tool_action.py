@@ -59,7 +59,7 @@ class AssistantYoutrackToolAction(InteractionAction):
     def tool_spec(cls, session) -> dict:
         return {
             'args': [
-                'mode', 'project_id', 'issue_id', 'block', 'summary', 'query', 'assignee', 'state', 'priority', 'type'
+                'mode', 'project_id', 'issue_id', 'block', 'summary', 'query', 'assignee', 'state', 'priority', 'type', 'desc'
             ],
             'description': (
                 "Interact with YouTrack: list projects/issues, fetch details, create and update issues, or add comments. "
@@ -83,6 +83,7 @@ class AssistantYoutrackToolAction(InteractionAction):
                     'type': {"type": "string", "description": "New type value."},
                     'block': {"type": "string", "description": "Identifier of a %BLOCK:...% to append to 'content'."},
                     'content': {"type": "string", "description": "Optional freeform content (e.g., description/comment text)."},
+                    'desc': {"type": "string", "description": "Optional short description for UI/status; ignored by execution.", "default": ""},
                 }
             },
             'auto_submit': True,

@@ -32,7 +32,7 @@ class AssistantPersonaReviewToolAction(StepwiseAction):
     @classmethod
     def tool_spec(cls, session) -> dict:
         return {
-            'args': ['content', 'personas', 'goal', 'notes', 'artifact_type', 'panel', 'files', 'model'],
+            'args': ['content', 'personas', 'goal', 'notes', 'artifact_type', 'panel', 'files', 'model', 'desc'],
             'description': (
                 'Run a persona review over content, ideas, or features. Personas may be provided as names or as a '
                 'Markdown file describing personas. Returns concise feedback per persona and an optional panel synthesis. '
@@ -52,6 +52,7 @@ class AssistantPersonaReviewToolAction(StepwiseAction):
                     'panel': {"type": "boolean", "description": "If true, run a synthesis pass across personas."},
                     'files': {"type": "string", "description": "Supplemental file paths (CSV/list) with guidelines and related info."},
                     'model': {"type": "string", "description": "Optional model override; otherwise [AGENT].default_model is used."},
+                    'desc': {"type": "string", "description": "Optional short description for UI/status; ignored by execution.", "default": ""},
                 }
             },
             'auto_submit': True,

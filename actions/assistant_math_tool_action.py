@@ -22,7 +22,7 @@ class AssistantMathToolAction(InteractionAction):
     @classmethod
     def tool_spec(cls, session) -> dict:
         return {
-            'args': ['bc_flags', 'expression'],
+            'args': ['bc_flags', 'expression', 'desc'],
             'description': (
                 "Evaluate arithmetic with the 'bc' calculator. Provide the expression; optional 'bc_flags' like '-l' "
                 "enable math library or scale."
@@ -32,7 +32,8 @@ class AssistantMathToolAction(InteractionAction):
                 'properties': {
                     'bc_flags': {"type": "string", "description": "Flags for bc (e.g., '-l' for math library)."},
                     'expression': {"type": "string", "description": "Expression to evaluate; if omitted, 'content' is used."},
-                    'content': {"type": "string", "description": "Expression fallback when 'expression' is not set."}
+                    'content': {"type": "string", "description": "Expression fallback when 'expression' is not set."},
+                    'desc': {"type": "string", "description": "Optional short description for UI/status; ignored by execution.", "default": ""}
                 }
             },
             'auto_submit': True,
