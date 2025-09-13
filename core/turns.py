@@ -80,7 +80,13 @@ class TurnRunner:
         self._add_user_message("" if initial_auto else (input_text or ""), contexts)
         self._clear_temp_contexts()
 
-        safety_cap = 6
+        # Limit assistant follow-ups (auto-submit loops). Configurable via [TOOLS].auto_submit_max_turns.
+        try:
+            safety_cap = int(self.session.get_option("TOOLS", "auto_submit_max_turns", fallback=6))
+        except Exception:
+            safety_cap = 6
+        if safety_cap <= 0:
+            safety_cap = 1
         for _ in range(safety_cap):
             raw, display, sanitized = self._assistant_turn(stream=stream, output_mode=None)
             turns_executed += 1

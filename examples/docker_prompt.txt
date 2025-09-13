@@ -1,4 +1,3 @@
-Supplemental Information
 * SURGICAL EDITING TOOLKIT: Your Docker environment includes modern tools for precise file edits. Prefer these over rewriting entire files:
   - Search/discovery: rg (ripgrep), fd (fast find)
   - Text edits: sd (modern sed), sponge (safe pipeline writes)
