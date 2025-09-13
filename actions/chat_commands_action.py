@@ -61,12 +61,41 @@ class ChatCommandsAction(InteractionAction):
         subs = {s['sub']: s for s in (spec.get('subs') or [])}
         # If just typed the command and a space
         if len(tokens) == 1 and end_with_space:
-            subnames = [s for s in subs.keys()]
+            # If there is a default subcommand (''), treat this as argument completion
+            # for that default handler (e.g., `/file ` should complete file paths).
+            default_handler = subs.get('')
+            if default_handler:
+                ui = default_handler.get('ui') or {}
+                choices = ui.get('choices') if isinstance(ui.get('choices'), list) else []
+                if choices:
+                    return [c for c in choices if str(c).startswith(fragment or '')]
+                comp = default_handler.get('complete')
+                if isinstance(comp, dict):
+                    if comp.get('type') == 'action_method':
+                        opts = self._invoke_action_completion(comp, fragment or '')
+                        return [o for o in (opts or []) if isinstance(o, str) and o.startswith(fragment or '')]
+                    if comp.get('type') == 'builtin':
+                        name = comp.get('name')
+                        if name == 'file_paths':
+                            return [c for c in self._complete_file_paths(fragment or '') if c.startswith(fragment or '')]
+                        if name == 'chat_paths':
+                            return [c for c in self._complete_chat_paths(fragment or '') if c.startswith(fragment or '')]
+                        if name == 'models':
+                            return [c for c in self._complete_models(fragment or '') if c.startswith(fragment or '')]
+                        if name == 'options':
+                            return [c for c in self._complete_options(fragment or '') if c.startswith(fragment or '')]
+                        if name == 'tools':
+                            return [c for c in self._complete_tools(fragment or '') if c.startswith(fragment or '')]
+                # No specific arg completion; fall back to listing subcommands (excluding empty)
+            # Fall back: list available subcommands (exclude the default empty one)
+            subnames = [s for s in subs.keys() if s]
             return [s for s in sorted(subnames) if s.startswith(fragment or '')]
 
         # Completing subcommand name
         if len(tokens) == 2 and not end_with_space:
-            return [s for s in sorted(subs.keys()) if s.startswith(fragment or '')]
+            # When completing a subcommand name, append a trailing space so the
+            # next Tab immediately moves into argument completion for that sub.
+            return [s + ' ' for s in sorted(subs.keys()) if s and s.startswith(fragment or '')]
 
         # args: try UI hints, then handler-provided completion specs
         if len(tokens) >= 2:

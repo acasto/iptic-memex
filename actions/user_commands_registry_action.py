@@ -257,6 +257,8 @@ class UserCommandsRegistryAction(InteractionAction):
                     'action': sub_info.get('name'),
                     'method': sub_info.get('method'),
                     'args': sub_info.get('args') or [],
+                    # Preserve completion metadata so chat/web can offer arg completions
+                    'complete': sub_info.get('complete'),
                     'ui': self._resolve_ui_hints(sub_info),
                 }
                 subs_spec.append(entry)
