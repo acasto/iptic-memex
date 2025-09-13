@@ -99,14 +99,14 @@ on('controller:action:start', async (ev) => {
   try {
     const res = await actionStart(action, args, content);
     if (res && res.done) {
-      emit('action:done', { payload: res.payload, updates: res.updates || [], text: res.text || '' });
+      emit('action:done', { action, args, payload: res.payload, updates: res.updates || [], text: res.text || '' });
     } else if (res && res.needs_interaction && res.state_token) {
-      emit('action:needs', { needs: res.needs_interaction, stateToken: res.state_token, updates: res.updates || [], text: res.text || '' });
+      emit('action:needs', { action, args, needs: res.needs_interaction, stateToken: res.state_token, updates: res.updates || [], text: res.text || '' });
     } else {
-      emit('action:error', { message: 'Unexpected action start result' });
+      emit('action:error', { action, args, message: 'Unexpected action start result' });
     }
   } catch (e) {
-    emit('action:error', { message: e && e.message ? e.message : String(e) });
+    emit('action:error', { action, args, message: e && e.message ? e.message : String(e) });
   }
 });
 
@@ -119,14 +119,14 @@ on('controller:action:resume', async (ev) => {
   try {
     const res = await actionResume(token, response);
     if (res && res.done) {
-      emit('action:done', { payload: res.payload, updates: res.updates || [], text: res.text || '' });
+      emit('action:done', { action: d.action || null, args: d.args || null, payload: res.payload, updates: res.updates || [], text: res.text || '' });
     } else if (res && res.needs_interaction && res.state_token) {
-      emit('action:needs', { needs: res.needs_interaction, stateToken: res.state_token, updates: res.updates || [], text: res.text || '' });
+      emit('action:needs', { action: d.action || null, args: d.args || null, needs: res.needs_interaction, stateToken: res.state_token, updates: res.updates || [], text: res.text || '' });
     } else {
-      emit('action:error', { message: 'Unexpected action resume result' });
+      emit('action:error', { action: d.action || null, args: d.args || null, message: 'Unexpected action resume result' });
     }
   } catch (e) {
-    emit('action:error', { message: e && e.message ? e.message : String(e) });
+    emit('action:error', { action: d.action || null, args: d.args || null, message: e && e.message ? e.message : String(e) });
   }
 });
 

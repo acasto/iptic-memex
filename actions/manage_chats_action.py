@@ -8,6 +8,25 @@ from reportlab.lib.styles import getSampleStyleSheet
 
 
 class ManageChatsAction(InteractionAction):
+    """Manage saving, listing, loading chats (CLI + headless Web/TUI).
+
+    Notes on Web/TUI headless branch (temporary design):
+    - Web/TUI UIs are non-blocking; we avoid interactive prompts here and accept
+      a dict of args instead (see run(args: dict)). This is a lightweight shim
+      so the Web UI can call `manage_chats` without adopting the full stepwise
+      start/resume pattern across all actions.
+    - Headless modes supported via args: {mode: 'list'|'save'|'load', ...}.
+      - list → { ok, chats: [{name, filename, path}] }
+      - save → { ok, saved, filename, path }
+      - load → { ok, loaded, filename, path, messages: [{role, text}] }
+        For Web, `messages` are included so the frontend can rebuild the chat
+        bubbles directly without going through reprint_chat (which is CLI‑oriented).
+    - CLI behavior remains unchanged: when args is not a dict, we run the
+      existing interactive flows (prompts, printing).
+
+    This is intentionally scoped to this action to keep existing actions stable
+    while we evaluate a unified stepwise pattern or a small web adapter layer.
+    """
     def __init__(self, session):
         self.session = session
         self.tc = session.utils.tab_completion
@@ -15,12 +34,113 @@ class ManageChatsAction(InteractionAction):
         self.chat = session.get_context('chat')
 
     def run(self, args=None):
+        """Entry point for both CLI and Web/TUI.
+
+        - When args is a dict: treat as headless Web/TUI call. No prompts; return
+          structured dict payloads as described in the class docstring. The Web UI
+          uses these to render without relying on CLI printers.
+        - Otherwise: fall back to the original interactive CLI flows (prompts and
+          printing). This preserves behavior in Chat/CLI mode.
+        """
+        # Headless API for non-blocking UIs when args is a dict
+        if isinstance(args, dict):
+            mode = str(args.get('mode') or '').strip().lower()
+            if mode == 'save':
+                params = self.session.get_params()
+                chats_directory = params.get('chats_directory', 'chats')
+                os.makedirs(chats_directory, exist_ok=True)
+
+                include_context = bool(args.get('include_context', False))
+                turns = args.get('turns')
+                chat_format = params.get('chat_format', 'md')
+
+                filename = args.get('filename') or args.get('file')
+                if not filename:
+                    filename = f"chat_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.{chat_format}"
+                # Respect explicit extension if provided and supported; otherwise use chat_format
+                allowed_exts = {'md', 'txt', 'pdf'}
+                provided_ext = None
+                try:
+                    if '.' in str(filename):
+                        provided_ext = str(filename).rsplit('.', 1)[-1].lower()
+                except Exception:
+                    provided_ext = None
+                if provided_ext in allowed_exts:
+                    chat_format = provided_ext
+                # Ensure the filename ends with the selected chat_format
+                if not str(filename).lower().endswith(f".{chat_format}"):
+                    filename = f"{filename}.{chat_format}"
+
+                full_path = os.path.join(chats_directory, filename)
+                # Overwrite protection unless explicitly allowed
+                if os.path.exists(full_path) and not bool(args.get('overwrite')):
+                    return {'ok': False, 'error': 'exists', 'exists': True, 'filename': filename, 'path': full_path}
+                try:
+                    self._save_chat_to_file(full_path, include_context, turns)
+                    try:
+                        self.session.ui.emit('status', {'message': f'Chat saved to {full_path}'})
+                    except Exception:
+                        pass
+                    return {'ok': True, 'saved': True, 'filename': filename, 'path': full_path}
+                except Exception as e:
+                    return {'ok': False, 'error': str(e)}
+            if mode == 'list':
+                return {'ok': True, 'chats': self._list_chats()}
+            if mode == 'load':
+                params = self.session.get_params()
+                chats_directory = params.get('chats_directory', 'chats')
+                file_arg = args.get('file') or args.get('filename')
+                if not file_arg:
+                    return {'ok': False, 'error': 'missing_file'}
+                full_path = file_arg if os.path.isabs(file_arg) else os.path.join(chats_directory, str(file_arg))
+                if not os.path.isfile(full_path):
+                    return {'ok': False, 'error': 'not_found', 'filename': file_arg}
+                try:
+                    self._load_chat_from_file(full_path)
+                    # Prepare messages for Web to rebuild the conversation log
+                    # Prefer a fresh parse from file to avoid any rolling-window limits.
+                    msgs = []
+                    try:
+                        chat_format = os.path.splitext(full_path)[1][1:]
+                        if chat_format in ['md', 'txt']:
+                            with open(full_path, "r", encoding="utf-8") as f:
+                                content = f.read()
+                            parsed = self._parse_chat_content(content, chat_format) or []
+                            for m in parsed:
+                                role = (m.get('role') or 'user').lower()
+                                text = m.get('content') or ''
+                                msgs.append({'role': role, 'text': text})
+                        else:
+                            # Fallback to chat context if format unsupported
+                            turns = self.chat.get('all') or []
+                            for t in turns:
+                                role = t.get('role') or 'user'
+                                text = t.get('message') or ''
+                                msgs.append({'role': role, 'text': text})
+                    except Exception:
+                        try:
+                            turns = self.chat.get('all') or []
+                            for t in turns:
+                                role = t.get('role') or 'user'
+                                text = t.get('message') or ''
+                                msgs.append({'role': role, 'text': text})
+                        except Exception:
+                            msgs = []
+                    try:
+                        self.session.ui.emit('status', {'message': f'Chat loaded from {full_path}'})
+                    except Exception:
+                        pass
+                    return {'ok': True, 'loaded': True, 'filename': os.path.basename(full_path), 'path': full_path, 'messages': msgs}
+                except Exception as e:
+                    return {'ok': False, 'error': str(e)}
+            return {'ok': False, 'error': 'invalid_mode'}
+
         if not getattr(self.session.ui.capabilities, 'blocking', False):
             try:
                 self.session.ui.emit('warning', {'message': 'manage_chats is only available in CLI mode for now.'})
             except Exception:
                 pass
-            return
+            return {'ok': False, 'error': 'unsupported_ui'}
         if not args:
             print("Please specify a command: save, load, or list")
             return
@@ -301,3 +421,26 @@ class ManageChatsAction(InteractionAction):
         else:
             for file in chat_files:
                 print(f"- {file}")
+
+    # Helper for web list mode
+    def _list_chats(self):
+        params = self.session.get_params()
+        chats_directory = params.get('chats_directory', 'chats')
+        if not os.path.isdir(chats_directory):
+            return []
+        items = []
+        for f in os.listdir(chats_directory):
+            if f.endswith(('.md', '.txt', '.pdf')):
+                p = os.path.join(chats_directory, f)
+                try:
+                    mtime = os.path.getmtime(p)
+                except Exception:
+                    mtime = 0.0
+                items.append({'name': f, 'filename': f, 'path': p, 'mtime': mtime})
+        # Sort by filename descending (newest pattern often by timestamp in name)
+        try:
+            # Default: newest first if mtime present; fallback to name desc
+            items.sort(key=lambda x: (x.get('mtime') or 0.0, x.get('name') or ''), reverse=True)
+        except Exception:
+            pass
+        return items

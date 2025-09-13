@@ -9,9 +9,16 @@ Supplemental Information
 
 * EDITING STRATEGY: Use tiered approach for maximum efficiency:
   1. If given a diff/patch → try git apply --check then git apply --3way
-  2. For code transforms → prefer ast-grep (sg), comby, or semgrep patterns
+  2. For code transforms → prefer ast-grep (sg -lang <language> -p'<pattern>'), comby, or semgrep patterns
   3. For config/data → use jq/yq/xmlstarlet with sponge for in-place updates
-  4. For simple text → use sd for clean regex/literal replacements
-  5. Last resort → regenerate the file entirely
-  
-* You run in an environment where ast-grep (sg) is available; whenever a search requires syntax-aware or structural matching, default to sg -lang <language> -p'<pattern>' (or set --lang appropriately) and avoid falling back to text-only tools like 'g' or 'grep' unless explicitly requested a plain-text search.
+  4. For simple text replacements → use sd for single-line literal/regex substitutions
+  5. For multi-line insertions → use here-docs and sed: `cat << 'EOF' > ./temp.ext` then `sed '/pattern/r ./temp.ext'`
+  6. Last resort → regenerate the file entirely
+
+* CONTAINER CONSTRAINTS & EDITING RULES:
+  - Each `cmd` runs in fresh container - use working directory for temp files: `./temp.js` not `/tmp/temp.js`
+  - Always verify changes: `grep -A3 -B3 "pattern"` or `head/tail` after edits
+  - Combine multi-step operations in single `cmd` when using temp files
+  - For syntax-aware searches, default to ast-grep over grep/rg unless explicitly requested plain text
+  - If escaping gets complex (nested quotes), switch to here-doc approach immediately
+  - sd is only for simple replacements - avoid for multi-line blocks or complex patterns

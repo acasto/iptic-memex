@@ -5,6 +5,7 @@ sessions/*
 !sessions/.gitkeep
 venv
 temp
+*.backup
 user-config
 uv.lock
 pyproject.toml

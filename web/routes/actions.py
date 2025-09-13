@@ -61,15 +61,30 @@ async def handle_api_action_start(app, request: Request):
     try:
         if original_emit:
             original_ui.emit = _capture_emit  # type: ignore[attr-defined]
-        try:
-            res = action.start(args, content)
-        except InteractionNeeded as need:
-            token = app._issue_token(action_name, 1, need.kind, {"args": args, "content": content})
-            spec = dict(need.spec)
-            spec['state_token'] = token
-            return JSONResponse({"ok": True, "done": False, "needs_interaction": {"kind": need.kind, "spec": spec}, "state_token": token, "updates": emitted})
-        except Exception as e:
-            return JSONResponse({"ok": False, "error": {"recoverable": False, "message": str(e)}}, status_code=500)
+        # Prefer stepwise start() if available; otherwise, fall back to run()
+        if hasattr(action, 'start') and callable(getattr(action, 'start')):
+            try:
+                res = action.start(args, content)
+            except InteractionNeeded as need:
+                token = app._issue_token(action_name, 1, need.kind, {"args": args, "content": content})
+                spec = dict(need.spec)
+                spec['state_token'] = token
+                return JSONResponse({"ok": True, "done": False, "needs_interaction": {"kind": need.kind, "spec": spec}, "state_token": token, "updates": emitted})
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": {"recoverable": False, "message": str(e)}}, status_code=500)
+        else:
+            # Compatibility: call run() directly for legacy actions
+            try:
+                result = action.run(args)
+                # Normalize payload: return the raw result under 'result' and best-effort ok flag
+                payload = {'result': result}
+                if isinstance(result, dict) and 'ok' in result:
+                    # Preserve explicit ok when provided
+                    payload = result
+                status = True if result is None else bool(result)
+                return JSONResponse({"ok": status, "done": True, "payload": payload, "updates": emitted})
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": {"recoverable": False, "message": str(e)}}, status_code=500)
     finally:
         # restore ui.emit
         try:
@@ -231,4 +246,3 @@ async def handle_api_action_cancel(app, request: Request):
         return JSONResponse({"ok": False, "error": {"recoverable": True, "message": err or 'Invalid token'}}, status_code=400)
     st.used = True
     return JSONResponse({"ok": True, "done": True, "cancelled": True})
-

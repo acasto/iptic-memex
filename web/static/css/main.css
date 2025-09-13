@@ -876,3 +876,54 @@ body.dragover {
     bottom: 120px;
   }
 }
+.empty-state, .error-state {
+  padding: 1rem;
+  text-align: center;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.error-state {
+  color: var(--error);
+}
+
+.chats-list {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  background: var(--input-bg);
+}
+
+.chat-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.chat-item:last-child {
+  border-bottom: none;
+}
+
+.chat-item:hover {
+  background: var(--panel-border);
+}
+
+.chat-name {
+  font-family: "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, "Courier New", monospace;
+  font-size: 0.9em;
+  flex-grow: 1;
+  color: var(--fg);
+}
+
+.chat-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.btn-sm {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.8em;
+}

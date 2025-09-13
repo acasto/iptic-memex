@@ -30,4 +30,3 @@ class WebCommandsAction(InteractionAction):
             ok, err = self.registry.execute(path, a, interactivity='no_prompts')
             return Completed({'ok': ok, 'error': err})
         return Completed({'ok': False, 'error': 'Invalid op'})
-

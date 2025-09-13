@@ -1,4 +1,4 @@
-import { apiStatus, apiParams } from './api.js';
+import { apiStatus, apiParams, actionStart } from './api.js';
 import './controller.js';
 import { on, emit } from './bus.js';
 import { RafTextAppender } from './raf_batch.js';
@@ -17,6 +17,8 @@ const newChatBtn = document.getElementById('newchat');
 const attachBtn = document.getElementById('attach');
 const previewsEl = document.getElementById('previews');
 const optionsBtn = document.getElementById('options');
+const chatsBtn = document.getElementById('chats');
+const saveChatBtn = document.getElementById('savechat');
 const darkToggle = document.getElementById('darkmode');
 const stopBtn = document.getElementById('stop');
 
@@ -220,6 +222,10 @@ function clearMessagesDOM() {
   updateEmptyState();
 }
 
+function stripAnsi(str) {
+  try { return String(str).replace(/\u001b\[[0-9;]*m/g, ''); } catch { return str; }
+}
+
 function renderMessageNode(msg) {
   const auto = isAtBottom(log);
   const hadAny = _nodes.size > 0;
@@ -407,6 +413,18 @@ on('action:needs', (ev) => {
 on('action:done', (ev) => {
   const d = ev && ev.detail; if (!d) return;
   hideTypingIndicator();
+  // For reprint_chat, prefer rendering the conversation in the chat log,
+  // and avoid opening the updates panel.
+  if (d.action === 'reprint_chat') {
+    let textOut = d.text || '';
+    if (!textOut && Array.isArray(d.updates)) {
+      const parts = d.updates.filter(u => u && u.type === 'status' && u.message).map(u => String(u.message));
+      if (parts.length) textOut = parts.join('\n');
+    }
+    if (textOut) addAndRenderMessage('assistant', stripAnsi(textOut));
+    return;
+  }
+  // No special handling for manage_chats here; load flow uses direct API in window.loadChat
   if (d.updates) setPanelUpdates(d.updates);
   if (d.text) addAndRenderMessage('assistant', d.text);
   if (d.payload && d.payload.cleared === true) {
@@ -478,8 +496,7 @@ subscribe((state, patch) => {
   if ('updates' in (patch || {})) {
     try {
       const ups = state.updates || [];
-      if (!ups.length) { closePanel(); }
-      else { renderUpdates(ups); }
+      renderUpdates(ups);
     } catch {}
   }
   if ('theme' in (patch || {})) {
@@ -537,6 +554,7 @@ function closePanel() {
   panelOverlay.style.display = 'none';
   document.body.style.overflow = '';
   panel.innerHTML = '';
+  try { delete panel.dataset.kind; } catch {}
 }
 
 // Close panel when clicking overlay
@@ -550,11 +568,21 @@ function renderStatus(message, level='info') {
 }
 
 function renderUpdates(updates) {
+  // Only manage the panel if we own it (kind === 'updates')
+  const isUpdatesPanel = panel.dataset && panel.dataset.kind === 'updates';
+  if (!updates || !updates.length) {
+    if (isUpdatesPanel) closePanel();
+    return;
+  }
+  // If another panel is open, do not steal it
+  if (panel.style.display === 'block' && !isUpdatesPanel) {
+    return;
+  }
+  // Open/refresh updates panel
   closePanel();
-  if (!updates || !updates.length) return;
-  
   openPanel();
-  
+  panel.dataset.kind = 'updates';
+
   const header = document.createElement('div');
   header.className = 'panel-header';
   header.innerHTML = `
@@ -577,6 +605,7 @@ function setPanelUpdates(updates) {
 function renderInteraction(needs, stateToken) {
   closePanel();
   openPanel();
+  panel.dataset.kind = 'interaction';
   
   const container = document.createElement('div');
   container.innerHTML = `
@@ -776,6 +805,279 @@ on('upload:done', (ev) => {
   emit('controller:action:start', { action: 'load_file', args: { files: paths }, content: null });
 });
 
+// ---- Chat management panel ----
+if (chatsBtn) {
+  chatsBtn.addEventListener('click', async () => {
+    await renderChatsPanel();
+  });
+}
+
+if (saveChatBtn) {
+  saveChatBtn.addEventListener('click', async () => {
+    await openSaveDialog();
+  });
+}
+
+async function renderChatsPanel() {
+  closePanel();
+  openPanel();
+  panel.dataset.kind = 'chats';
+  
+  const container = document.createElement('div');
+  container.innerHTML = `
+    <div class="panel-header">
+      <h3 class="panel-title">Load Chat</h3>
+      <button class="panel-close" onclick="document.getElementById('panelOverlay').click()">×</button>
+    </div>
+    
+    <div class="form-actions" style="margin-bottom: 1rem;">
+      <button class="btn btn-secondary" id="refreshChatsList">🔄 Refresh</button>
+    </div>
+    
+    <div class="form-group">
+      <label class="form-label">Saved Chats</label>
+      <div style="display:flex; gap:.5rem; align-items:center; margin:.25rem 0 .5rem 0;">
+        <input class="form-input" id="chatsSearch" type="text" placeholder="Filter by name..." style="flex:1;" />
+        <select class="form-select" id="chatsSort" title="Sort">
+          <option value="newest">Newest</option>
+          <option value="oldest">Oldest</option>
+          <option value="az">A–Z</option>
+          <option value="za">Z–A</option>
+        </select>
+      </div>
+      <div id="chatsList" class="chats-list">Loading...</div>
+    </div>
+  `;
+  
+  panel.appendChild(container);
+  
+  // Wire up handlers
+  document.getElementById('refreshChatsList').onclick = async () => {
+    await loadChatsList();
+  };
+  document.getElementById('chatsSearch').addEventListener('input', updateChatsListUI);
+  document.getElementById('chatsSort').addEventListener('change', updateChatsListUI);
+  
+  // Initial load
+  await loadChatsList();
+}
+
+async function openSaveDialog() {
+  closePanel();
+  openPanel();
+  panel.dataset.kind = 'save';
+  
+  // Fetch default format from params (fallback to md)
+  let defaultFormat = 'md';
+  try {
+    const p = await apiParams();
+    if (p && p.params && typeof p.params.chat_format === 'string') {
+      defaultFormat = (p.params.chat_format || 'md').toLowerCase();
+    }
+  } catch {}
+  const ts = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const defName = `chat_${ts.getFullYear()}-${pad(ts.getMonth()+1)}-${pad(ts.getDate())}_${pad(ts.getHours())}-${pad(ts.getMinutes())}-${pad(ts.getSeconds())}.${defaultFormat}`;
+
+  const container = document.createElement('div');
+  container.innerHTML = `
+    <div class="panel-header">
+      <h3 class="panel-title">Save Chat</h3>
+      <button class="panel-close" onclick="document.getElementById('panelOverlay').click()">×</button>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="saveFilename">Filename</label>
+      <input class="form-input" id="saveFilename" type="text" value="${defName}" />
+    </div>
+    <div class="form-group">
+      <label class="form-label">Options</label>
+      <label><input type="checkbox" id="saveIncludeCtx" /> Include contexts</label>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-secondary" id="saveCancel">Cancel</button>
+      <button class="btn btn-primary" id="saveConfirm">Save</button>
+    </div>
+  `;
+  panel.appendChild(container);
+  setTimeout(() => document.getElementById('saveFilename')?.select(), 50);
+
+  document.getElementById('saveCancel').onclick = () => closePanel();
+  document.getElementById('saveConfirm').onclick = async () => {
+    const filename = (document.getElementById('saveFilename').value || '').trim();
+    const includeCtx = !!document.getElementById('saveIncludeCtx').checked;
+    if (!filename) { showToast('Please enter a filename'); return; }
+
+    const attemptSave = async (overwrite) => {
+      const res = await actionStart('manage_chats', { mode: 'save', filename, include_context: includeCtx, overwrite: !!overwrite }, null);
+      if (res && res.done && res.payload && res.payload.saved) {
+        closePanel();
+        showToast(`Saved to ${res.payload.path || res.payload.filename || filename}`);
+        // Optionally refresh the load list if open, or prefetch in background
+        try { await maybeRefreshChatsList(); } catch {}
+        return true;
+      }
+      // If exists without overwrite, prompt
+      if (res && res.done && res.payload && (res.payload.exists || res.payload.error === 'exists')) {
+        const ok = await confirmPanel(`File '${filename}' exists. Overwrite?`);
+        if (ok) return attemptSave(true);
+        return false;
+      }
+      // Generic failure
+      showToast('Save failed: ' + ((res && res.error && res.error.message) || 'unknown error'));
+      return false;
+    };
+
+    await attemptSave(false);
+  };
+}
+
+async function maybeRefreshChatsList() {
+  // If load panel is currently open, refresh it; otherwise, prefetch the list so it feels instant
+  const kind = panel?.dataset?.kind || '';
+  if (kind === 'chats') {
+    await loadChatsList();
+  } else {
+    try {
+      const res = await actionStart('manage_chats', { mode: 'list' }, null);
+      if (res && res.done && res.payload && Array.isArray(res.payload.chats)) {
+        window._chatsData = res.payload.chats;
+      }
+    } catch {}
+  }
+}
+
+async function loadChatsList() {
+  const listEl = document.getElementById('chatsList');
+  if (!listEl) return;
+  
+  listEl.innerHTML = 'Loading...';
+  
+  try {
+    // Make a direct API call for simplicity and reliability here
+    const res = await actionStart('manage_chats', { mode: 'list' }, null);
+    if (res && res.done && res.payload && Array.isArray(res.payload.chats)) {
+      window._chatsData = res.payload.chats;
+      updateChatsListUI();
+    } else if (res && res.text) {
+      renderChatsList(res.text);
+    } else {
+      listEl.innerHTML = '<div class="empty-state">No saved chats found</div>';
+    }
+  } catch (e) {
+    listEl.innerHTML = '<div class="error-state">Error loading chats: ' + (e.message || e) + '</div>';
+  }
+}
+
+function updateChatsListUI() {
+  const listEl = document.getElementById('chatsList');
+  if (!listEl) return;
+  const q = (document.getElementById('chatsSearch')?.value || '').toLowerCase();
+  const sort = (document.getElementById('chatsSort')?.value || 'newest');
+  const data = Array.isArray(window._chatsData) ? window._chatsData.slice() : [];
+  let arr = data;
+  if (q) arr = arr.filter(x => String(x.name || x.filename || x.path || '').toLowerCase().includes(q));
+  // Sort
+  try {
+    if (sort === 'newest') {
+      arr.sort((a,b) => (b.mtime||0) - (a.mtime||0));
+    } else if (sort === 'oldest') {
+      arr.sort((a,b) => (a.mtime||0) - (b.mtime||0));
+    } else if (sort === 'az') {
+      arr.sort((a,b) => String(a.name||'').localeCompare(String(b.name||'')));
+    } else if (sort === 'za') {
+      arr.sort((a,b) => String(b.name||'').localeCompare(String(a.name||'')));
+    }
+  } catch {}
+  renderChatsListFromData(arr);
+}
+
+function renderChatsList(chatsText) {
+  const listEl = document.getElementById('chatsList');
+  if (!listEl) return;
+  
+  // Parse the chats text - typically shows chat files
+  const lines = chatsText.split('\n').filter(line => line.trim());
+  
+  if (lines.length === 0) {
+    listEl.innerHTML = '<div class="empty-state">No saved chats found</div>';
+    return;
+  }
+  
+  const chatItems = [];
+  lines.forEach(line => {
+    // Look for chat file patterns
+    const match = line.match(/([^\/]+\\.(?:chat|md|txt))(?:\\s|$)/);
+    if (match) {
+      chatItems.push(match[1]);
+    }
+  });
+  
+  if (chatItems.length === 0) {
+    listEl.innerHTML = '<div class="empty-state">No chat files found</div>';
+    return;
+  }
+  
+  const itemsHtml = chatItems.map(chatFile => `
+    <div class="chat-item">
+      <span class="chat-name">${chatFile}</span>
+      <div class="chat-actions">
+        <button class="btn btn-sm btn-primary" onclick="loadChat('${chatFile}')" title="Load this chat">📂 Load</button>
+      </div>
+    </div>
+  `).join('');
+  
+  listEl.innerHTML = itemsHtml;
+}
+
+function renderChatsListFromData(chatsArray) {
+  const listEl = document.getElementById('chatsList');
+  if (!listEl) return;
+  
+  if (!Array.isArray(chatsArray) || chatsArray.length === 0) {
+    listEl.innerHTML = '<div class="empty-state">No saved chats found</div>';
+    return;
+  }
+  
+  const itemsHtml = chatsArray.map(chat => {
+    const displayName = chat.name || chat.filename || chat.path || 'Unknown';
+    const chatFile = chat.filename || chat.name || chat.path || displayName;
+    
+    return `
+      <div class="chat-item">
+        <span class="chat-name">${displayName}</span>
+        <div class="chat-actions">
+          <button class="btn btn-sm btn-primary" onclick="loadChat('${chatFile}')" title="Load this chat">📂 Load</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+  
+  listEl.innerHTML = itemsHtml;
+}
+
+// Global function for loading chats
+window.loadChat = async function(chatFile) {
+  try {
+    closePanel();
+    showToast(`Loading chat: ${chatFile}`);
+    const res = await (await import('./api.js')).actionStart('manage_chats', { mode: 'load', file: chatFile }, null);
+    if (res && res.done && res.payload && res.payload.loaded) {
+      const msgs = Array.isArray(res.payload.messages) ? res.payload.messages : [];
+      clearMessages();
+      clearMessagesDOM();
+      for (const m of msgs) {
+        const role = (m && m.role) === 'assistant' ? 'assistant' : 'user';
+        const text = stripAnsi((m && (m.text || m.message)) || '');
+        addAndRenderMessage(role, text);
+      }
+    } else {
+      showToast('Loaded chat, but no messages found');
+    }
+  } catch (e) {
+    showToast('Error loading chat: ' + (e.message || e));
+  }
+};
+
 // ---- Options panel ----
 if (optionsBtn) {
   optionsBtn.addEventListener('click', async () => {
@@ -894,6 +1196,7 @@ function confirmPanel(message) {
   return new Promise(resolve => {
     closePanel();
     openPanel();
+    panel.dataset.kind = 'confirm';
     
     const container = document.createElement('div');
     container.innerHTML = `
