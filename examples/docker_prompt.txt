@@ -1,0 +1,17 @@
+Supplemental Information
+* SURGICAL EDITING TOOLKIT: Your Docker environment includes modern tools for precise file edits. Prefer these over rewriting entire files:
+  - Search/discovery: rg (ripgrep), fd (fast find)
+  - Text edits: sd (modern sed), sponge (safe pipeline writes)
+  - Structured data: jq (JSON), yq (YAML/JSON/XML), dasel, xmlstarlet, miller (CSV)
+  - Code-aware transforms: ast-grep (sg), semgrep --autofix, comby (structural search/replace)
+  - Patch application: git apply --check --3way, patch
+  - Language-specific: eslint --fix, ruff --fix, jscodeshift
+
+* EDITING STRATEGY: Use tiered approach for maximum efficiency:
+  1. If given a diff/patch → try git apply --check then git apply --3way
+  2. For code transforms → prefer ast-grep (sg), comby, or semgrep patterns
+  3. For config/data → use jq/yq/xmlstarlet with sponge for in-place updates
+  4. For simple text → use sd for clean regex/literal replacements
+  5. Last resort → regenerate the file entirely
+  
+* You run in an environment where ast-grep (sg) is available; whenever a search requires syntax-aware or structural matching, default to sg -lang <language> -p'<pattern>' (or set --lang appropriately) and avoid falling back to text-only tools like 'g' or 'grep' unless explicitly requested a plain-text search.

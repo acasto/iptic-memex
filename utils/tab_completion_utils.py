@@ -112,8 +112,20 @@ class TabCompletionHandler:
         if not self._session:
             return None
 
-        if text.startswith('~'):
-            text = os.path.expanduser(text)
+        raw = text
+        if raw.startswith('~') and raw in ('~', '~/'):
+            try:
+                home = os.path.expanduser('~')
+                files_and_dirs = [os.path.join(home, x) for x in os.listdir(home)]
+                options = [x if not os.path.isdir(x) else f"{x}/" for x in files_and_dirs]
+                options = [o.replace(home, '~', 1) for o in options]
+                return options[state]
+            except Exception:
+                return None
+        if raw.startswith('~'):
+            text = os.path.expanduser(raw)
+        else:
+            text = raw
 
         chats_directory = self._session.get_params().get('chats_directory', 'chats')
         chats_directory = os.path.expanduser(chats_directory)
@@ -127,6 +139,12 @@ class TabCompletionHandler:
                               if x.startswith(os.path.basename(text))]
 
         options = [x for x in files_and_dirs if x.endswith(('.md', '.txt', '.pdf')) or os.path.isdir(x)]
+        if raw.startswith('~'):
+            try:
+                home = os.path.expanduser('~')
+                options = [o.replace(home, '~', 1) if o.startswith(home) else o for o in options]
+            except Exception:
+                pass
 
         try:
             return options[state]
@@ -189,17 +207,35 @@ class TabCompletionHandler:
     @staticmethod
     def file_path_completer(text: str, state: int) -> Optional[str]:
         """Tab completion for file paths"""
-        if text.startswith('~'):
-            text = os.path.expanduser(text)
+        raw = text
+        if raw.startswith('~') and raw in ('~', '~/'):
+            try:
+                home = os.path.expanduser('~')
+                files_and_dirs = [str(Path(home) / x) for x in os.listdir(home)]
+                options = [f"{x}/" if os.path.isdir(x) else x for x in files_and_dirs]
+                options = [o.replace(home, '~', 1) for o in options]
+                return options[state]
+            except Exception:
+                return None
+
+        if raw.startswith('~'):
+            text = os.path.expanduser(raw)
+        else:
+            text = raw
 
         if os.path.isdir(os.path.dirname(text)):
-            files_and_dirs = [str(Path(os.path.dirname(text)) / x)
-                              for x in os.listdir(os.path.dirname(text))]
+            files_and_dirs = [str(Path(os.path.dirname(text)) / x) for x in os.listdir(os.path.dirname(text))]
         else:
             files_and_dirs = os.listdir(os.getcwd())
 
         options = [x for x in files_and_dirs if x.startswith(text)]
         options = [f"{x}/" if os.path.isdir(x) else x for x in options]
+        if raw.startswith('~'):
+            try:
+                home = os.path.expanduser('~')
+                options = [o.replace(home, '~', 1) if isinstance(o, str) and o.startswith(home) else o for o in options]
+            except Exception:
+                pass
 
         try:
             return options[state]

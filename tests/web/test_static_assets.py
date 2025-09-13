@@ -30,7 +30,8 @@ def test_static_assets_and_index():
     r = client.get('/')
     assert r.status_code == 200
     body = r.text
-    assert '<script type="module" src="/static/js/main.js"></script>' in body
+    # Allow optional cache-busting query string (e.g., ?v=3)
+    assert '<script type="module" src="/static/js/main.js' in body
 
     # New JS modules should be served by StaticFiles
     for path in [
@@ -47,7 +48,8 @@ def test_static_assets_and_index():
         assert len(rr.text) > 20
 
     # Index links stylesheet and includes jump-to-latest control
-    assert '<link rel="stylesheet" href="/static/css/main.css"' in body
+    # Allow optional version query on CSS as well
+    assert '<link rel="stylesheet" href="/static/css/main.css' in body
     assert 'id="jumpLatest"' in body
     assert 'id="newchat"' in body
 
@@ -56,6 +58,6 @@ def test_static_assets_and_index():
     assert css.status_code == 200
     assert '#log' in css.text and ('overflow-y: auto' in css.text or 'overflow-y:auto' in css.text)
 
-    # Main.js exposes an Updates header (close button) for the panel
+    # Main.js exposes an Updates header (implementation evolved to use panel-title)
     mj = client.get('/static/js/main.js').text
-    assert "title.textContent = 'Updates'" in mj
+    assert ("title.textContent = 'Updates'" in mj) or ('panel-title">Updates<' in mj)

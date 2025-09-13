@@ -91,11 +91,21 @@ class ChatCommandsAction(InteractionAction):
             subnames = [s for s in subs.keys() if s]
             return [s for s in sorted(subnames) if s.startswith(fragment or '')]
 
-        # Completing subcommand name
+        # Completing subcommand name (only when there are named subcommands)
+        # Note: Commands like '/file' that only have a default handler ('')
+        # should NOT route here when the user starts typing an argument
+        # (e.g., '/file s'). Instead, they should fall through to the args
+        # completion block below.
         if len(tokens) == 2 and not end_with_space:
-            # When completing a subcommand name, append a trailing space so the
-            # next Tab immediately moves into argument completion for that sub.
-            return [s + ' ' for s in sorted(subs.keys()) if s and s.startswith(fragment or '')]
+            named_subs = [s for s in subs.keys() if s]
+            if named_subs:
+                # When completing a subcommand name, append a trailing space so the
+                # next Tab immediately moves into argument completion for that sub.
+                matches = [s + ' ' for s in sorted(named_subs) if s.startswith(fragment or '')]
+                if matches:
+                    return matches
+            # If there are no named subcommands or no matches, fall through to
+            # argument completion so defaults like '/file <path>' work while typing.
 
         # args: try UI hints, then handler-provided completion specs
         if len(tokens) >= 2:
@@ -235,7 +245,18 @@ class ChatCommandsAction(InteractionAction):
     def _complete_file_paths(self, prefix: str) -> List[str]:
         import os
         from pathlib import Path
-        text = prefix or ''
+        raw = prefix or ''
+        if raw.startswith('~') and raw in ('~', '~/'):
+            try:
+                home = os.path.expanduser('~')
+                entries = [str(Path(home) / x) for x in os.listdir(home)]
+            except Exception:
+                return []
+            opts = [e + ('/' if os.path.isdir(e) else '') for e in entries]
+            opts = [e.replace(home, '~', 1) if e.startswith(home) else e for e in opts]
+            return sorted(opts)
+
+        text = raw
         if text.startswith('~'):
             text = os.path.expanduser(text)
         dirname = os.path.dirname(text) or '.'
@@ -244,6 +265,12 @@ class ChatCommandsAction(InteractionAction):
         except Exception:
             return []
         opts = [e + ('/' if os.path.isdir(e) else '') for e in entries if e.startswith(text)]
+        if raw.startswith('~'):
+            try:
+                home = os.path.expanduser('~')
+                opts = [e.replace(home, '~', 1) if e.startswith(home) else e for e in opts]
+            except Exception:
+                pass
         return sorted(opts)
 
     def _complete_chat_paths(self, prefix: str) -> List[str]:
