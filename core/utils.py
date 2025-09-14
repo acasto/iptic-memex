@@ -4,6 +4,7 @@ from utils.stream_utils import StreamHandler
 from utils.filesystem_utils import FileSystemHandler
 from utils.storage_utils import StorageHandler
 from utils.tab_completion_utils import TabCompletionHandler
+from utils.logging_utils import LoggingHandler
 
 
 class UtilsHandler:
@@ -19,6 +20,7 @@ class UtilsHandler:
         self._fs = None
         self._storage = None
         self._tab_completion = None
+        self._logger = None
 
     @property
     def output(self):
@@ -59,3 +61,9 @@ class UtilsHandler:
             self._tab_completion = TabCompletionHandler(self.config, self.output)
         return self._tab_completion
 
+    @property
+    def logger(self):
+        if self._logger is None:
+            # Pass output handler so logger can mirror to console if enabled
+            self._logger = LoggingHandler(self.config, self.output)
+        return self._logger

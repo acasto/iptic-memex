@@ -366,6 +366,11 @@ class AssistantCommandsAction(InteractionAction):
                             msg = f"Tool calling: {(command_name or '').lower()}"
                         spinner_cm = self.session.utils.output.spinner(msg)
 
+                    # Log pseudo-tool begin
+                    try:
+                        self.session.utils.logger.tool_begin(name=(command_name or '').lower(), call_id=None, args_summary=cmd.get('args') or {}, source='pseudo')
+                    except Exception:
+                        pass
                     with spinner_cm:
                         if handler["type"] == "method":
                             method = getattr(self, handler["name"])
@@ -386,7 +391,16 @@ class AssistantCommandsAction(InteractionAction):
                                         need_exc.spec = spec
                                     except Exception:
                                         pass
+                                try:
+                                    self.session.utils.logger.tool_end(name=(command_name or '').lower(), call_id=None, status='error', result_meta={'error': str(need_exc)})
+                                except Exception:
+                                    pass
                                 raise
+                    # Successful end
+                    try:
+                        self.session.utils.logger.tool_end(name=(command_name or '').lower(), call_id=None, status='success')
+                    except Exception:
+                        pass
                 except KeyboardInterrupt:
                     self.session.utils.output.stop_spinner()
                     self.session.utils.output.write()

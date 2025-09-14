@@ -13,3 +13,4 @@ pyproject.toml
 CLAUDE.md
 .aiexclude
 PLAN.md
+logs/*

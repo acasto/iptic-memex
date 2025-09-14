@@ -72,6 +72,26 @@ class SessionBuilder:
             except Exception:
                 session.ui = None
 
+        # Initialize logging early and warn if enabled but not writable
+        try:
+            log_enabled = bool(session.get_option('LOG', 'active', fallback=False))
+        except Exception:
+            log_enabled = False
+        if log_enabled:
+            try:
+                # Force logger initialization
+                _ = session.utils.logger
+                if not session.utils.logger.active():
+                    try:
+                        session.utils.output.warning("Logging is enabled but the log file could not be opened; check [LOG].dir or permissions.")
+                    except Exception:
+                        print("Warning: Logging is enabled but the log file could not be opened; check [LOG].dir or permissions.")
+            except Exception as e:
+                try:
+                    session.utils.output.warning(f"Logging is enabled but failed to initialize: {e}")
+                except Exception:
+                    print(f"Warning: Logging is enabled but failed to initialize: {e}")
+
         # Provider instantiation (with UX for long startups in chat-like modes)
         model = options.get('model')
         provider_name = session_config.get_params(model).get('provider')

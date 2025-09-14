@@ -322,6 +322,20 @@ class OpenAIResponsesProvider(APIProvider):
             if will_chain and bool(p.get('chain_minimize_input', True)):
                 chain_minimize = True
             input_items = self._assemble_input(chain_minimize=chain_minimize)
+            # Provider-specific start log (additional metadata)
+            try:
+                meta = {
+                    'provider': 'OpenAIResponses',
+                    'model': p.get('model'),
+                    'model_name': p.get('model_name'),
+                    'stream': bool(p.get('stream', False)),
+                    'store': bool(p.get('store', False)),
+                    'use_previous_response': bool(p.get('use_previous_response', False)),
+                    'chain_minimize_input': bool(p.get('chain_minimize_input', False)),
+                }
+                self.session.utils.logger.provider_start(meta, component='providers.openairesponses')
+            except Exception:
+                pass
             # Auto-approval for MCP (optional): if enabled and we have any pending
             # approval requests from the prior response, append mcp_approval_response
             # items and force chaining with previous_response_id.
@@ -480,6 +494,18 @@ class OpenAIResponsesProvider(APIProvider):
             self._last_response = None
             return f"An error occurred in OpenAIResponsesProvider: {e}"
         finally:
+            try:
+                elapsed_ms = int((time() - start) * 1000)
+            except Exception:
+                elapsed_ms = None
+            try:
+                meta = {
+                    'response_id': self._last_response_id,
+                    'elapsed_ms': elapsed_ms,
+                }
+                self.session.utils.logger.provider_done(meta, component='providers.openairesponses')
+            except Exception:
+                pass
             self.running_usage['total_time'] += time() - start
 
     def stream_chat(self) -> Generator[Any, None, None]:
@@ -576,6 +602,13 @@ class OpenAIResponsesProvider(APIProvider):
                             # Capture MCP approvals for the next request
                             try:
                                 self._capture_mcp_approvals(outputs)
+                            except Exception:
+                                pass
+                            # Emit MCP summary event for logging
+                            try:
+                                summary_text = self._summarize_mcp_outputs(outputs)
+                                if summary_text:
+                                    self.session.utils.logger.mcp_event('summary', {'text': summary_text}, component='providers.openairesponses')
                             except Exception:
                                 pass
                             # If we didn't stream any text, emit a short MCP summary at the end

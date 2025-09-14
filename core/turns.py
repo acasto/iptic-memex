@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Callable, List, Optional, Tuple, Literal
+import time
 
 
 @dataclass
@@ -282,6 +283,17 @@ class TurnRunner:
         provider = self.session.get_provider()
         if not provider:
             return "", "", ""
+        # Log provider start
+        try:
+            meta = {
+                'model': (self.session.get_params() or {}).get('model'),
+                'provider': provider.__class__.__name__,
+                'stream': bool(stream),
+                'output_mode': output_mode or 'raw',
+            }
+            self.session.utils.logger.provider_start(meta, component='core.turns')
+        except Exception:
+            pass
 
         if stream:
             out_action = self.session.get_action("assistant_output")
@@ -304,12 +316,20 @@ class TurnRunner:
                     sanitized = (getattr(out_action, "get_sanitized_output", None) or (lambda: None))() or raw
                 except Exception:
                     sanitized = raw
+                try:
+                    self.session.utils.logger.provider_done({'result': 'ok', 'bytes': len(raw or '')}, component='core.turns')
+                except Exception:
+                    pass
                 return raw, str(display), str(sanitized)
             try:
                 for chunk in (stream_iter or []):
                     self.utils.output.write(chunk, end="", flush=True)
                     raw += chunk
                 self.utils.output.write("")
+            except Exception:
+                pass
+            try:
+                self.session.utils.logger.provider_done({'result': 'ok', 'bytes': len(raw or '')}, component='core.turns')
             except Exception:
                 pass
             return raw, raw, raw
@@ -322,6 +342,7 @@ class TurnRunner:
                     self.session.set_option('stream', False)
             except Exception:
                 pass
+            _st = time.time()
             raw_text = provider.chat()
         except Exception as e:
             raw_text = f"[error] {e}"
@@ -333,6 +354,19 @@ class TurnRunner:
                 pass
         if raw_text is None:
             raw_text = ""
+
+        # Log provider done (non-stream)
+        try:
+            duration_ms = int((time.time() - _st) * 1000) if '_st' in locals() and _st else None
+        except Exception:
+            duration_ms = None
+        try:
+            payload = {'result': 'ok', 'bytes': len(raw_text or '')}
+            if duration_ms is not None:
+                payload['duration_ms'] = duration_ms
+            self.session.utils.logger.provider_done(payload, component='core.turns')
+        except Exception:
+            pass
 
         try:
             from actions.assistant_output_action import AssistantOutputAction
@@ -428,6 +462,11 @@ class TurnRunner:
                         content = ''
                         if 'content' in args:
                             content = args.pop('content') or ''
+                        # Log tool begin (official)
+                        try:
+                            self.session.utils.logger.tool_begin(name=name, call_id=call_id, args_summary=args, source='official')
+                        except Exception:
+                            pass
                         spec = commands_map.get(name)
                         if not spec:
                             # Fallback: map API-safe tool names back to canonical using stored mapping
@@ -565,6 +604,10 @@ class TurnRunner:
                                         })
                                     except Exception:
                                         pass
+                                    try:
+                                        self.session.utils.logger.tool_end(name=name, call_id=call_id, status='cancelled')
+                                    except Exception:
+                                        pass
                                     cancelled_during_tools = True
                                     break
                                 except Exception:
@@ -594,6 +637,10 @@ class TurnRunner:
                                                 'name': 'command_error',
                                                 'content': f"Tool '{name}' cancelled by user"
                                             })
+                                        except Exception:
+                                            pass
+                                        try:
+                                            self.session.utils.logger.tool_end(name=name, call_id=call_id, status='cancelled')
                                         except Exception:
                                             pass
                                         cancelled_during_tools = True
@@ -632,6 +679,13 @@ class TurnRunner:
                                 self.session.set_flag('auto_submit', True)
                             except Exception:
                                 pass
+                            # Log successful tool execution summary
+                            try:
+                                after_ctx2 = list(self.session.get_contexts('assistant') or [])
+                                delta = max(0, len(after_ctx2) - (before_len if 'before_len' in locals() else 0))
+                                self.session.utils.logger.tool_end(name=name, call_id=call_id, status='success', result_meta={'assistant_additions': delta})
+                            except Exception:
+                                pass
                         except Exception as e:
                             # Make sure to emit a tool_result with the call_id even on error
                             try:
@@ -645,6 +699,14 @@ class TurnRunner:
                                     'name': 'tool_error',
                                     'content': f"Tool '{name}' failed: {e}"
                                 })
+                            except Exception:
+                                pass
+                            try:
+                                self.session.utils.logger.tool_end(name=name, call_id=call_id, status='error', result_meta={'error': str(e)})
+                            except Exception:
+                                pass
+                            try:
+                                self.session.utils.logger.tool_end(name=name, call_id=call_id, status='error', result_meta={'error': str(e)})
                             except Exception:
                                 pass
                     # If cancelled during any tool call, emit tool_result stubs for remaining calls

@@ -236,6 +236,15 @@ class Session:
                 self.utils.output.info(f"Switched to {normalized} (provider {new_provider_name}).")
             except Exception:
                 pass
+            # Log effective settings
+            try:
+                self.utils.logger.settings({
+                    'model': normalized,
+                    'provider': new_provider_name,
+                    'tool_mode': getattr(self, 'get_effective_tool_mode', lambda: 'none')(),
+                })
+            except Exception:
+                pass
             return True
 
         # Same provider; update its params if supported
@@ -246,6 +255,14 @@ class Session:
                 pass
         try:
             self.utils.output.info(f"Switched to {normalized}.")
+        except Exception:
+            pass
+        try:
+            self.utils.logger.settings({
+                'model': normalized,
+                'provider': self.params.get('provider'),
+                'tool_mode': getattr(self, 'get_effective_tool_mode', lambda: 'none')(),
+            })
         except Exception:
             pass
         return False

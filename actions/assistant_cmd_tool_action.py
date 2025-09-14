@@ -3,6 +3,7 @@ import subprocess
 import shlex
 import os
 from typing import Optional
+import time
 from utils.tool_args import get_str
 
 
@@ -201,16 +202,32 @@ class AssistantCmdToolAction(InteractionAction):
         # Parse the pipeline
         pipeline = self.parse_pipeline(full_command)
 
+        # Log command execution start
+        try:
+            self.session.utils.logger.cmd_exec(cmd=command, args=raw_args, cwd=self.base_dir, pipeline=pipeline)
+        except Exception:
+            pass
+
+        _st = time.time()
         # Execute and handle output
         success, output = self.execute_pipeline(pipeline)
+        duration_ms = int((time.time() - _st) * 1000)
 
         if success:
             self.session.add_context('assistant', {
                 'name': 'command_output',
                 'content': output
             })
+            try:
+                self.session.utils.logger.cmd_result(exit_code=0, stdout=output, stderr='', duration_ms=duration_ms)
+            except Exception:
+                pass
         else:
             self.session.add_context('assistant', {
                 'name': 'command_error',
                 'content': f"Error: {output}"
             })
+            try:
+                self.session.utils.logger.cmd_result(exit_code=1, stdout='', stderr=str(output), duration_ms=duration_ms)
+            except Exception:
+                pass

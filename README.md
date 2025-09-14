@@ -230,6 +230,16 @@ See [INSTALL.md](INSTALL.md) for details on how to adjust requirements.txt as ne
   - `python main.py <subcommand> --help`  
     Get detailed help for specific commands (e.g., `chat`).
 
+## Logging (Observability)
+
+- Enable centralized logging in `config.ini` under `[LOG]` (off by default).
+- Defaults: JSONL format in `logs/` with `latest.log` symlink; sensitive fields redacted; previews truncated.
+- Useful keys:
+  - `active = true|false`, `dir = logs`, `per_run = true|false`, optional `file` for a fixed path
+  - `format = json|text`, `mirror_to_console = true|false`
+  - Aspect toggles: `log_tool_use`, `log_cmd`, `log_provider`, `log_settings`, `log_errors`, `log_usage`, `log_messages`, `log_mcp`, `log_rag`
+- Adjust verbosity by aspect (e.g., `log_cmd = detail`) for deeper auditing.
+
 
 - **Interactive Mode**
   - `python main.py chat`  
