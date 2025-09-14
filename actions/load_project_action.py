@@ -81,7 +81,8 @@ class LoadProjectAction(StepwiseAction):
         if sel in mapping:
             try:
                 action = self.session.get_action(mapping[sel])
-                action.start({}) if hasattr(action, 'start') else action.run([])
+                # Always use run() as the public entrypoint
+                action.run({})
                 try:
                     self.session.ui.emit('status', {'message': f"Ran: {sel}"})
                 except Exception:
@@ -120,7 +121,7 @@ class LoadProjectAction(StepwiseAction):
             # Optionally clear contexts
             if self.session.ui.ask_bool('Clear all contexts?', default=False):
                 try:
-                    self.session.get_action('clear_context').start({'target': 'all'})
+                    self.session.get_action('clear_context').run({'target': 'all'})
                 except Exception:
                     pass
             return Completed({'ok': True, 'saved': False})

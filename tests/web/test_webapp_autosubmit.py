@@ -66,6 +66,11 @@ class AutoSubmitAction:
     def __init__(self, session):
         self.session = session
 
+    def run(self, args=None, content=None):
+        from base_classes import Completed
+        self.session.set_flag("auto_submit", True)
+        return Completed({"status": "ok"})
+
     def start(self, args, content):
         from base_classes import Completed
         # Signal that after completing, server should run an assistant turn
@@ -135,4 +140,3 @@ def test_web_action_done_triggers_auto_submit_turn():
     assert j.get("ok") is True and j.get("done") is True
     # The server should have run a follow-up assistant turn and included visible text
     assert "Follow-up" in (j.get("text") or "")
-

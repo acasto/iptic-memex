@@ -138,10 +138,12 @@ class ActionError(Exception):
 class StepwiseAction(InteractionAction):
     """Optional protocol for actions to support stepwise execution.
 
-    Default run() drives start/resume until a Completed is returned.
-    In CLI, ask_* calls should not raise InteractionNeeded. In Web/TUI,
-    the mode will catch InteractionNeeded higher up; run() is still
-    retained for backward compatibility with existing call-sites.
+    Unified entrypoint driver: ``run()`` drives ``start/resume`` until a
+    ``Completed`` is returned. In CLI, ask_* calls should not raise
+    ``InteractionNeeded``. In Web/TUI, the mode will catch
+    ``InteractionNeeded`` raised by ``run()`` and surface it to the UI.
+    Callers should always invoke ``run()``; ``start/resume`` are internal
+    hooks for stepwise actions.
     """
 
     def start(self, args: Dict[str, Any] | None = None, content: Any | None = None) -> Union[Completed, Updates]:
@@ -150,7 +152,7 @@ class StepwiseAction(InteractionAction):
     def resume(self, state_token: str, response: Any) -> Union[Completed, Updates]:
         raise NotImplementedError
 
-    # Back-compat adapter: drive until Completed
+    # Unified entrypoint driver: drive until Completed
     def run(self, *args, **kwargs):  # type: ignore[override]
         # Normalize inputs
         call_args = kwargs.get('args') if 'args' in kwargs else (args[0] if len(args) > 0 else None)

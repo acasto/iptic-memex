@@ -73,11 +73,10 @@ def test_assistant_file_tool_read_plain_text_adds_file_dict():
         act = AssistantFileToolAction(sess)
 
         # Act
-        res = act.start({'mode': 'read', 'file': p})
+        res = act.run({'mode': 'read', 'file': p})
 
         # Assert: a 'file' context was added with dict content
         kinds = [k for (k, d) in sess._added]
         assert 'file' in kinds
         payloads = [d for (k, d) in sess._added if k == 'file']
         assert any(isinstance(x, dict) and x.get('name') == 'a.txt' and x.get('content') == 'hello' for x in payloads)
-

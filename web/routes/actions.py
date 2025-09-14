@@ -61,30 +61,16 @@ async def handle_api_action_start(app, request: Request):
     try:
         if original_emit:
             original_ui.emit = _capture_emit  # type: ignore[attr-defined]
-        # Prefer stepwise start() if available; otherwise, fall back to run()
-        if hasattr(action, 'start') and callable(getattr(action, 'start')):
-            try:
-                res = action.start(args, content)
-            except InteractionNeeded as need:
-                token = app._issue_token(action_name, 1, need.kind, {"args": args, "content": content})
-                spec = dict(need.spec)
-                spec['state_token'] = token
-                return JSONResponse({"ok": True, "done": False, "needs_interaction": {"kind": need.kind, "spec": spec}, "state_token": token, "updates": emitted})
-            except Exception as e:
-                return JSONResponse({"ok": False, "error": {"recoverable": False, "message": str(e)}}, status_code=500)
-        else:
-            # Compatibility: call run() directly for legacy actions
-            try:
-                result = action.run(args)
-                # Normalize payload: return the raw result under 'result' and best-effort ok flag
-                payload = {'result': result}
-                if isinstance(result, dict) and 'ok' in result:
-                    # Preserve explicit ok when provided
-                    payload = result
-                status = True if result is None else bool(result)
-                return JSONResponse({"ok": status, "done": True, "payload": payload, "updates": emitted})
-            except Exception as e:
-                return JSONResponse({"ok": False, "error": {"recoverable": False, "message": str(e)}}, status_code=500)
+        try:
+            # Unified entrypoint: always call run(); Stepwise actions may raise InteractionNeeded
+            res = action.run(args)
+        except InteractionNeeded as need:
+            token = app._issue_token(action_name, 1, need.kind, {"args": args, "content": content})
+            spec = dict(need.spec)
+            spec['state_token'] = token
+            return JSONResponse({"ok": True, "done": False, "needs_interaction": {"kind": need.kind, "spec": spec}, "state_token": token, "updates": emitted})
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": {"recoverable": False, "message": str(e)}}, status_code=500)
     finally:
         # restore ui.emit
         try:
@@ -94,7 +80,23 @@ async def handle_api_action_start(app, request: Request):
             pass
         utils.replace_output(original_output)
 
-    status, data = drive_until_boundary(res, emitted)
+    # After calling run(), handle possible outcomes:
+    # - Completed: done
+    # - Updates: drive until boundary using resume()
+    # - Plain result: normalize to payload
+    status = None
+    data: Dict[str, Any] = {}
+    if isinstance(res, Updates):
+        status, data = drive_until_boundary(res, emitted)
+    elif isinstance(res, Completed):
+        status, data = 'done', {"payload": res.payload, "updates": emitted}
+    else:
+        payload = {'result': res}
+        if isinstance(res, dict) and 'ok' in res:
+            payload = res
+        ok = True if res is None else bool(res)
+        status, data = 'done', {"payload": payload, "updates": emitted, "ok": ok}
+
     if status == 'done':
         # Optionally chain an auto-submitted assistant turn after resume
         try:
@@ -136,7 +138,10 @@ async def handle_api_action_start(app, request: Request):
                 data = {**data, 'text': visible}
         except Exception:
             pass
-        return JSONResponse({"ok": True, "done": True, **data})
+        # Ensure ok present for plain-result normalization above
+        if 'ok' not in data:
+            data['ok'] = True
+        return JSONResponse({"ok": data.pop('ok', True), "done": True, **data})
     elif status == 'needs':
         return JSONResponse({"ok": True, "done": False, **data})
     else:

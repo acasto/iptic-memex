@@ -68,7 +68,7 @@ def test_load_file_deletes_upload_and_sets_metadata():
     action = lfa.LoadFileAction(sess)
 
     # Act
-    res = action.start({'files': [str(up)]}, None)
+    res = action.run({'files': [str(up)]})
 
     # Assert: uploaded file removed on disk
     assert not os.path.exists(up), 'uploaded file should be deleted after loading'

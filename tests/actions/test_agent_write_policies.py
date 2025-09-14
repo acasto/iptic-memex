@@ -96,7 +96,7 @@ def test_write_policy_deny_blocks_write_and_prompts_diff_instruction():
     sess = FakeSession('deny')
     action = AssistantFileToolAction(sess)
     args = {'mode': 'write', 'file': 'demo.txt'}
-    action.start(args, content='new content')
+    action.run(args, 'new content')
     # No write performed
     assert sess.get_action('assistant_fs_handler').writes == []
     # Assistant context contains policy message
@@ -112,7 +112,7 @@ def test_write_policy_dry_run_outputs_diff_without_writing():
     fs.resolved['demo.txt'] = 'demo.txt'
     action = AssistantFileToolAction(sess)
     args = {'mode': 'write', 'file': 'demo.txt'}
-    action.start(args, content='new content')
+    action.run(args, 'new content')
     # No write performed
     assert fs.writes == []
     # Assistant context contains a diff
@@ -124,7 +124,7 @@ def test_write_policy_allow_performs_write_without_confirmation():
     sess = FakeSession('allow')
     action = AssistantFileToolAction(sess)
     args = {'mode': 'write', 'file': 'demo.txt'}
-    action.start(args, content='new content')
+    action.run(args, 'new content')
     # Write performed with force=True
     writes = sess.get_action('assistant_fs_handler').writes
     assert len(writes) == 1 and writes[0][0] == 'demo.txt' and writes[0][2] is True

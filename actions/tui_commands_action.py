@@ -17,7 +17,7 @@ class TuiCommandsAction(InteractionAction):
         self.session = session
         self.registry = session.get_action('user_commands_registry')
 
-    def start(self, args: Dict[str, Any] | None = None, content: Any | None = None) -> Completed:
+    def run(self, args: Dict[str, Any] | None = None, content: Any | None = None) -> Completed:
         args = args or {}
         op = (args.get('op') or '').strip()
         if op == 'list':
@@ -29,4 +29,3 @@ class TuiCommandsAction(InteractionAction):
             ok, err = self.registry.execute(path, a, interactivity='allow_prompts')
             return Completed({'ok': ok, 'error': err})
         return Completed({'ok': False, 'error': 'Invalid op'})
-

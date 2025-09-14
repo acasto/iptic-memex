@@ -17,8 +17,8 @@ class WebCommandsAction(InteractionAction):
         self.session = session
         self.registry = session.get_action('user_commands_registry')
 
-    # Web actions use start() directly; return Completed for consistency with action routes
-    def start(self, args: Dict[str, Any] | None = None, content: Any | None = None) -> Completed:
+    # Unified entrypoint: implement run() so routes can call run() everywhere
+    def run(self, args: Dict[str, Any] | None = None, content: Any | None = None) -> Completed:
         args = args or {}
         op = (args.get('op') or '').strip()
         if op == 'list':

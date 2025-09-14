@@ -48,6 +48,10 @@ class MultiStepAction:
         # Web will drive until boundary and then return Completed
         return Completed({"value": resp}) if False else ev
 
+    # Add a run entrypoint so routes can call run() uniformly
+    def run(self, args=None, content=None):
+        return self.start(args, content)
+
 
 def _mk_client_with_action():
     from starlette.testclient import TestClient
@@ -80,4 +84,3 @@ def test_web_action_multistep_flow():
     # Because action returns Updates first, server will drive, collect updates, then complete
     # Payload may be attached only on 'done' paths; ensure we got updates containing the user response
     assert j2.get("updates") and any(u.get("message") == "got:abc" for u in j2["updates"])
-

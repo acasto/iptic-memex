@@ -72,7 +72,7 @@
   - Use `session.ui.ask_text/ask_bool/ask_choice/ask_files` for prompts (CLI blocks; Web/TUI raises `InteractionNeeded`).
   - Use `session.ui.emit('status'|'warning'|'error'|'progress', {...})` for updates instead of `print`.
   - Return `Completed({...})` when done; optionally return `Updates([...])` to stream intermediate events.
-  - `StepwiseAction.run(...)` remains for CLI back‑compat; it will drive `start/resume` until `Completed`.
+- Callers must invoke `action.run(...)` in all modes; `StepwiseAction.run(...)` drives `start/resume` until `Completed`.
 - Helper/internal actions that never prompt (e.g., filesystem helpers, simple runners) may still subclass `InteractionAction` and expose utility methods.
 - Access helpers via `self.session.utils` (I/O, spinners) and configs via `self.session.get_option(...)`.
 
@@ -422,7 +422,7 @@ max_completion_tokens = 4096
   - CLI blocks (`CLIUI`, `capabilities.blocking=True`); Web/TUI raise `InteractionNeeded` (`blocking=False`).
 - Stepwise protocol (mode-agnostic):
   - Actions may implement `start(args, content)` and `resume(state_token, response)` and subclass `StepwiseAction`.
-  - `StepwiseAction.run(...)` remains for back-compat and can drive start/resume in CLI.
+- `run()` is the public entrypoint across modes; `StepwiseAction.run(...)` drives `start/resume` and may raise `InteractionNeeded` in non‑blocking UIs.
 - Confirmations & updates:
   - Use `session.ui.ask_bool(...)` for confirmations; use `session.ui.emit('status'|'progress'|'warning'|'error', {...})` for updates.
   - Reprint gating: only reprint chat in blocking UIs (CLI) to avoid stdout in Web/TUI.
@@ -450,7 +450,7 @@ max_completion_tokens = 4096
 - Replace stdin/stdout with `session.ui.ask_*` and `session.ui.emit(...)`.
 - For multi-step actions, implement `start/resume`; on resume, use `force=True` where needed to avoid re-confirm loops.
 - Use `session.context_transaction()` to stage side effects pending confirmation.
-- Keep a thin `run(...)` for back-compat by subclassing `StepwiseAction`.
+- Implement or inherit `run(...)` (preferred). For stepwise flows, subclass `StepwiseAction` so `run()` drives `start/resume`.
 - Gating: if an action is inherently interactive/looping and not yet fully stateful for Web/TUI, gate it to CLI by checking `session.ui.capabilities.blocking` and emit a warning otherwise (e.g., `manage_chats`, `save_code`, `debug_storage`).
 
 ## Status: Actions Converted
