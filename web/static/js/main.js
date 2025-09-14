@@ -17,6 +17,7 @@ const newChatBtn = document.getElementById('newchat');
 const attachBtn = document.getElementById('attach');
 const previewsEl = document.getElementById('previews');
 const optionsBtn = document.getElementById('options');
+const statsBtn = document.getElementById('stats');
 const chatsBtn = document.getElementById('chats');
 const saveChatBtn = document.getElementById('savechat');
 const darkToggle = document.getElementById('darkmode');
@@ -1231,3 +1232,50 @@ function confirmPanel(message) {
 
 // Focus the input field on initial load
 msg?.focus();
+// ---- Stats panel (Usage & Cost) ----
+async function openStatsPanel() {
+  closePanel();
+  openPanel();
+  panel.dataset.kind = 'stats';
+
+  const container = document.createElement('div');
+  container.innerHTML = `
+    <div class="panel-header">
+      <h3 class="panel-title">Usage & Cost</h3>
+      <button class="panel-close" onclick="document.getElementById('panelOverlay').click()">×</button>
+    </div>
+    <div class="form-group"><div id="statsUsage">Loading usage...</div></div>
+    <div class="form-group"><div id="statsCost">Loading cost...</div></div>
+    <div class="form-actions">
+      <button class="btn btn-secondary" id="statsRefresh">Refresh</button>
+    </div>
+  `;
+  panel.appendChild(container);
+
+  async function fetchStats() {
+    const { actionStart } = await import('./api.js');
+    const usageEl = document.getElementById('statsUsage');
+    const costEl = document.getElementById('statsCost');
+    try {
+      const [u, c] = await Promise.all([
+        actionStart('show', ['usage'], null),
+        actionStart('show', ['cost'], null),
+      ]);
+      const uLines = (u && Array.isArray(u.updates)) ? u.updates.map(x => x && x.message ? String(x.message) : '').filter(Boolean) : [];
+      const cLines = (c && Array.isArray(c.updates)) ? c.updates.map(x => x && x.message ? String(x.message) : '').filter(Boolean) : [];
+      usageEl.textContent = uLines.length ? uLines.join('\n') : 'No usage data.';
+      costEl.textContent = cLines.length ? cLines.join('\n') : 'No cost data.';
+    } catch (e) {
+      const msg = (e && e.message) ? e.message : String(e);
+      try { usageEl.textContent = 'Error loading usage: ' + msg; } catch {}
+      try { costEl.textContent = 'Error loading cost: ' + msg; } catch {}
+    }
+  }
+
+  document.getElementById('statsRefresh').onclick = fetchStats;
+  fetchStats();
+}
+
+if (statsBtn) {
+  statsBtn.addEventListener('click', openStatsPanel);
+}

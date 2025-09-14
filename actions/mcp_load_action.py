@@ -110,5 +110,7 @@ class McpLoadAction(InteractionAction):
                 else:
                     out.info(msg)
         except Exception:
-            print(msg)
-
+            try:
+                self.session.utils.output.info(msg)
+            except Exception:
+                pass

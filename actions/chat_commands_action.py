@@ -239,7 +239,7 @@ class ChatCommandsAction(InteractionAction):
             try:
                 self.session.ui.emit('error', {'message': msg})
             except Exception:
-                print(msg)
+                pass
 
     # ----- helper completions borrowed from legacy ---------------------------
     def _complete_file_paths(self, prefix: str) -> List[str]:

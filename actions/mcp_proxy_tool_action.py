@@ -193,7 +193,10 @@ class McpProxyToolAction(InteractionAction):
                 else:
                     out.info(msg)
         except Exception:
-            print(msg)
+            try:
+                self.session.utils.output.info(msg)
+            except Exception:
+                pass
 
     def _stringify_tool_result(self, result) -> str:
         """Best-effort conversion of MCP tool result to a compact text string.

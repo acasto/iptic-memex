@@ -47,4 +47,7 @@ class McpDiscoverAction(InteractionAction):
             else:
                 self.session.utils.output.write(msg)
         except Exception:
-            print(msg)
+            try:
+                self.session.utils.output.info(msg)
+            except Exception:
+                pass

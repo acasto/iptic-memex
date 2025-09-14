@@ -1,10 +1,11 @@
 from base_classes import InteractionAction
+import os
 
 
 class ClearChatAction(InteractionAction):
     def __init__(self, session):
         self.session = session
-        self.ui = self.session.get_action('ui')
+        pass
 
     def run(self, args=None):
         """
@@ -15,7 +16,7 @@ class ClearChatAction(InteractionAction):
         elif args[0] == 'chat':
             self.clear_chat()
         elif args[0] == 'screen':
-            self.ui.clear_screen()
+            self._clear_screen()
         elif args[0] == 'last':
             if len(args) > 1 and args[1].isdigit():
                 self.remove_last_messages(int(args[1]))
@@ -34,7 +35,7 @@ class ClearChatAction(InteractionAction):
         """
         self.session.get_context('chat').clear()
         self.session.get_provider().reset_usage()
-        self.ui.clear_screen()
+        self._clear_screen()
         try:
             self.session.ui.emit('status', {'message': 'Chat history has been cleared.'})
         except Exception:
@@ -109,3 +110,13 @@ class ClearChatAction(InteractionAction):
                 self.session.ui.emit('status', {'message': 'No messages to remove.'})
             except Exception:
                 pass
+
+    @staticmethod
+    def _clear_screen():
+        try:
+            if os.name == 'nt':
+                os.system('cls')
+            else:
+                os.system('clear')
+        except Exception:
+            pass

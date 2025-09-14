@@ -382,7 +382,27 @@ class UserCommandsRegistryAction(InteractionAction):
                     fn2(self.session, *argv)
                     return True, None
                 return False, f"Handler method '{method_name}' not found for action '{action_name}'"
-            action.run(argv)
+            res = action.run(argv)
+            # Best-effort: if the action returned a chats list, surface it in CLI via UI emits
+            try:
+                payload = None
+                if hasattr(res, 'payload'):
+                    payload = getattr(res, 'payload', None)
+                elif isinstance(res, dict):
+                    payload = res
+                if isinstance(payload, dict) and isinstance(payload.get('chats'), list):
+                    chats = payload.get('chats') or []
+                    try:
+                        self.session.ui.emit('status', {'message': 'Saved chats:'})
+                        if not chats:
+                            self.session.ui.emit('status', {'message': '(none)'})
+                        for it in chats:
+                            name = (it.get('name') or it.get('filename') or it.get('path') or '') if isinstance(it, dict) else str(it)
+                            self.session.ui.emit('status', {'message': f"- {name}"})
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             return True, None
 
         return False, 'Invalid handler type'

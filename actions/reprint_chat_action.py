@@ -1,5 +1,8 @@
 from base_classes import InteractionAction
 from actions.assistant_output_action import AssistantOutputAction  # only for non-stream filter path
+from utils.output_utils import ColorSystem, Style
+import os
+import re
 
 
 class ReprintChatAction(InteractionAction):
@@ -16,12 +19,11 @@ class ReprintChatAction(InteractionAction):
         - With 'all': fetch full history and still apply filters.
         - With 'raw all': bypass filters and print the full history exactly as stored.
         """
-        ui = self.session.get_action('ui')
         chat = self.session.get_context('chat')
         params = self.session.get_params()
 
         # clear the screen
-        ui.clear_screen()
+        self._clear_screen()
 
         # Determine whether to bypass filters and/or fetch full history
         bypass_filters = False
@@ -40,10 +42,10 @@ class ReprintChatAction(InteractionAction):
         turns = chat.get('all' if fetch_all else None)
         for turn in turns:
             if turn['role'] == 'user':
-                label = ui.color_wrap(params['user_label'], params['user_label_color'])
+                label = self._color_wrap(params.get('user_label', 'User:'), params.get('user_label_color', 'white'))
                 message = turn['message'] or ''
             else:
-                label = ui.color_wrap(params['response_label'], params['response_label_color'])
+                label = self._color_wrap(params.get('response_label', 'Assistant:'), params.get('response_label_color', 'white'))
                 # Apply output filters unless bypassing
                 if bypass_filters:
                     message = turn['message'] or ''
@@ -61,7 +63,64 @@ class ReprintChatAction(InteractionAction):
                 pass
             return
 
-        if self.session.get_params()['highlighting']:
-            print(ui.format_code_block(formatted))
-        else:
-            print(formatted)
+        try:
+            out = self.session.utils.output
+            if self.session.get_params().get('highlighting'):
+                out.write(self._format_code_block(formatted))
+            else:
+                out.write(formatted)
+        except Exception:
+            # Last resort fallback
+            if self.session.get_params().get('highlighting'):
+                print(self._format_code_block(formatted))
+            else:
+                print(formatted)
+
+    @staticmethod
+    def _clear_screen():
+        try:
+            if os.name == 'nt':
+                os.system('cls')
+            else:
+                os.system('clear')
+        except Exception:
+            pass
+
+    @staticmethod
+    def _color_wrap(text: str, color: str | None = None) -> str:
+        try:
+            if not color:
+                return text
+            return ColorSystem.style_text(text, Style(fg=color))
+        except Exception:
+            return text
+
+    @staticmethod
+    def _format_code_block(text: str) -> str:
+        def highlight_block(block: str) -> str:
+            match = re.match(r"^```(\w+)?\n([\s\S]*?)\n?```$", block, re.DOTALL)
+            if not match:
+                return block
+            language = match.group(1)
+            code_content = match.group(2)
+            try:
+                from pygments import highlight
+                from pygments.lexers import get_lexer_by_name, guess_lexer
+                from pygments.formatters import TerminalFormatter
+                from pygments.util import ClassNotFound
+                try:
+                    if language:
+                        lexer = get_lexer_by_name(language, startinline=(language.lower() == 'php'))
+                    else:
+                        lexer = guess_lexer(code_content)
+                except Exception:
+                    lexer = get_lexer_by_name('text', stripall=True)
+                formatter = TerminalFormatter()
+                highlighted_code = highlight(code_content, lexer, formatter)
+                return f"```{language or ''}\n{highlighted_code}```"
+            except Exception:
+                return block
+
+        parts = re.split(r'(```[\s\S]*?```)', text)
+        formatted_parts = [highlight_block(part) if part.startswith('```') else part for part in parts]
+        return ''.join(formatted_parts)

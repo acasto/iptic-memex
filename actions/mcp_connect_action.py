@@ -118,5 +118,8 @@ class McpConnectAction(InteractionAction):
             else:
                 self.session.utils.output.info(msg)
         except Exception:
-            # Last resort
-            print(msg)
+            # Last resort: attempt utils output, else ignore
+            try:
+                self.session.utils.output.info(msg)
+            except Exception:
+                pass
