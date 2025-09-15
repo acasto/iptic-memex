@@ -48,6 +48,7 @@ class LoggingHandler:
         'provider': 'basic',
         'mcp': 'off',
         'rag': 'off',
+        'web': 'off',
         'errors': 'basic',
         'usage': 'basic',
     }
@@ -153,6 +154,14 @@ class LoggingHandler:
         if not self._should_log('messages', 'basic'): return
         self._write(self._prepare_payload('messages', 'core.turns', 'messages', 'info', meta))
 
+    def messages_event(self, kind: str, details: dict, component: str = 'core.messages'):
+        if not self._should_log('messages', 'basic'): return
+        self._write(self._prepare_payload(kind, component, 'messages', 'info', details))
+
+    def messages_detail(self, kind: str, details: dict, component: str = 'core.messages'):
+        if not self._should_log('messages', 'detail'): return
+        self._write(self._prepare_payload(kind, component, 'messages', 'info', details))
+
     def mcp_event(self, kind: str, details: dict, component: str = 'provider'):
         if not self._should_log('mcp', 'basic'): return
         self._write(self._prepare_payload(kind, f'{component}.mcp', 'mcp', 'info', details))
@@ -164,6 +173,10 @@ class LoggingHandler:
     def rag_event(self, kind: str, details: dict, component: str = 'rag'):
         if not self._should_log('rag', 'basic'): return
         self._write(self._prepare_payload(kind, f'{component}', 'rag', 'info', details))
+
+    def web_event(self, kind: str, details: dict, component: str = 'web'):
+        if not self._should_log('web', 'basic'): return
+        self._write(self._prepare_payload(kind, f'{component}', 'web', 'info', details))
 
     def error(self, where: str, exc: BaseException, *, stack: Optional[str] = None):
         if not self._should_log('errors', 'basic'): return

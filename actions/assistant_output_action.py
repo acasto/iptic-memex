@@ -49,6 +49,11 @@ class AssistantOutputAction(InteractionAction):
             params = self.session.get_params() or {}
             if params.get('debug_filters', False):
                 self.output.debug(f"[OutputFilter] {message}")
+            # Mirror to centralized logging when enabled at detail level
+            try:
+                self.session.utils.logger.messages_detail('output_filter_debug', {'message': str(message)}, component='actions.output')
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -69,6 +74,10 @@ class AssistantOutputAction(InteractionAction):
             inst = self.session.get_action(action_name)
             if not inst:
                 self.output.debug(f"Output filter not found: {name}")
+                try:
+                    self.session.utils.logger.messages_detail('filter_missing', {'name': str(name)}, component='actions.output')
+                except Exception:
+                    pass
                 continue
             # Basic interface validation
             if not hasattr(inst, 'process_token') or not callable(getattr(inst, 'process_token')):
@@ -100,6 +109,10 @@ class AssistantOutputAction(InteractionAction):
         if self._filters_display:
             class_names = [f.__class__.__name__ for f in self._filters_display]
             self.output.debug(f"Loaded output filters: {class_names}")
+            try:
+                self.session.utils.logger.messages_detail('filters_loaded', {'filters': class_names}, component='actions.output')
+            except Exception:
+                pass
 
     # ---- streaming callbacks ----
     def _apply_filters(self, text: str, filters: List[Any]) -> str:

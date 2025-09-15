@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Callable
 from contextlib import asynccontextmanager
 import os
+import time
 
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -56,43 +57,168 @@ def create_app(session, webstate: WebState | None = None) -> Starlette:
     # Route wrappers that pass our ctx to handlers
     async def api_status(request: Request):
         from web.routes.meta import handle_api_status
-        return await handle_api_status(ctx, request)
+        lg = getattr(session.utils, 'logger', None)
+        _st = time.time()
+        try:
+            if lg: lg.web_event('route_begin', {'path': '/api/status', 'method': request.method}, component='web.routes')
+            res = await handle_api_status(ctx, request)
+            return res
+        finally:
+            try:
+                if lg:
+                    lg.web_event('route_done', {'path': '/api/status', 'method': request.method, 'status': getattr(res, 'status_code', None), 'duration_ms': int((time.time()-_st)*1000)}, component='web.routes')
+            except Exception:
+                pass
 
     async def api_params(request: Request):
         from web.routes.meta import handle_api_params
-        return await handle_api_params(ctx, request)
+        lg = getattr(session.utils, 'logger', None)
+        _st = time.time()
+        try:
+            if lg: lg.web_event('route_begin', {'path': '/api/params', 'method': request.method}, component='web.routes')
+            res = await handle_api_params(ctx, request)
+            return res
+        finally:
+            try:
+                if lg:
+                    lg.web_event('route_done', {'path': '/api/params', 'method': request.method, 'status': getattr(res, 'status_code', None), 'duration_ms': int((time.time()-_st)*1000)}, component='web.routes')
+            except Exception:
+                pass
 
     async def api_models(request: Request):
         from web.routes.meta import handle_api_models
-        return await handle_api_models(ctx, request)
+        lg = getattr(session.utils, 'logger', None)
+        _st = time.time()
+        try:
+            if lg: lg.web_event('route_begin', {'path': '/api/models', 'method': request.method}, component='web.routes')
+            res = await handle_api_models(ctx, request)
+            return res
+        finally:
+            try:
+                if lg:
+                    lg.web_event('route_done', {'path': '/api/models', 'method': request.method, 'status': getattr(res, 'status_code', None), 'duration_ms': int((time.time()-_st)*1000)}, component='web.routes')
+            except Exception:
+                pass
 
     async def api_chat(request: Request):
         from web.routes.chat import handle_api_chat
-        return await handle_api_chat(ctx, request)
+        lg = getattr(session.utils, 'logger', None)
+        _st = time.time()
+        try:
+            if lg: lg.web_event('route_begin', {'path': '/api/chat', 'method': request.method}, component='web.routes')
+            res = await handle_api_chat(ctx, request)
+            return res
+        finally:
+            try:
+                if lg:
+                    lg.web_event('route_done', {'path': '/api/chat', 'method': request.method, 'status': getattr(res, 'status_code', None), 'duration_ms': int((time.time()-_st)*1000)}, component='web.routes')
+            except Exception:
+                pass
 
     async def api_stream_start(request: Request):
         from web.routes.stream import handle_api_stream_start
-        return await handle_api_stream_start(ctx, request)
+        lg = getattr(session.utils, 'logger', None)
+        _st = time.time()
+        try:
+            if lg: lg.web_event('route_begin', {'path': '/api/stream/start', 'method': request.method}, component='web.routes')
+            res = await handle_api_stream_start(ctx, request)
+            return res
+        finally:
+            try:
+                if lg:
+                    lg.web_event('route_done', {'path': '/api/stream/start', 'method': request.method, 'status': getattr(res, 'status_code', None), 'duration_ms': int((time.time()-_st)*1000)}, component='web.routes')
+            except Exception:
+                pass
 
     async def api_stream(request: Request):
         from web.routes.stream import handle_api_stream
-        return await handle_api_stream(ctx, request)
+        lg = getattr(session.utils, 'logger', None)
+        _st = time.time()
+        try:
+            if lg: lg.web_event('route_begin', {'path': '/api/stream', 'method': request.method}, component='web.routes')
+            res = await handle_api_stream(ctx, request)
+            return res
+        finally:
+            try:
+                if lg:
+                    lg.web_event('route_done', {'path': '/api/stream', 'method': request.method, 'status': getattr(res, 'status_code', None), 'duration_ms': int((time.time()-_st)*1000)}, component='web.routes')
+            except Exception:
+                pass
 
     async def api_stream_cancel(request: Request):
         from web.routes.stream import handle_api_stream_cancel
-        return await handle_api_stream_cancel(ctx, request)
+        lg = getattr(session.utils, 'logger', None)
+        _st = time.time()
+        try:
+            if lg: lg.web_event('route_begin', {'path': '/api/stream/cancel', 'method': request.method}, component='web.routes')
+            res = await handle_api_stream_cancel(ctx, request)
+            return res
+        finally:
+            try:
+                if lg:
+                    lg.web_event('route_done', {'path': '/api/stream/cancel', 'method': request.method, 'status': getattr(res, 'status_code', None), 'duration_ms': int((time.time()-_st)*1000)}, component='web.routes')
+            except Exception:
+                pass
 
     async def api_action_start(request: Request):
         from web.routes.actions import handle_api_action_start
-        return await handle_api_action_start(ctx, request)
+        lg = getattr(session.utils, 'logger', None)
+        _st = time.time()
+        try:
+            if lg: lg.web_event('route_begin', {'path': '/api/action/start', 'method': request.method}, component='web.routes')
+            res = await handle_api_action_start(ctx, request)
+            return res
+        finally:
+            try:
+                if lg:
+                    lg.web_event('route_done', {'path': '/api/action/start', 'method': request.method, 'status': getattr(res, 'status_code', None), 'duration_ms': int((time.time()-_st)*1000)}, component='web.routes')
+            except Exception:
+                pass
 
     async def api_action_resume(request: Request):
         from web.routes.actions import handle_api_action_resume
-        return await handle_api_action_resume(ctx, request)
+        lg = getattr(session.utils, 'logger', None)
+        _st = time.time()
+        try:
+            if lg: lg.web_event('route_begin', {'path': '/api/action/resume', 'method': request.method}, component='web.routes')
+            res = await handle_api_action_resume(ctx, request)
+            return res
+        finally:
+            try:
+                if lg:
+                    lg.web_event('route_done', {'path': '/api/action/resume', 'method': request.method, 'status': getattr(res, 'status_code', None), 'duration_ms': int((time.time()-_st)*1000)}, component='web.routes')
+            except Exception:
+                pass
 
     async def api_action_cancel(request: Request):
         from web.routes.actions import handle_api_action_cancel
-        return await handle_api_action_cancel(ctx, request)
+        lg = getattr(session.utils, 'logger', None)
+        _st = time.time()
+        try:
+            if lg: lg.web_event('route_begin', {'path': '/api/action/cancel', 'method': request.method}, component='web.routes')
+            res = await handle_api_action_cancel(ctx, request)
+            return res
+        finally:
+            try:
+                if lg:
+                    lg.web_event('route_done', {'path': '/api/action/cancel', 'method': request.method, 'status': getattr(res, 'status_code', None), 'duration_ms': int((time.time()-_st)*1000)}, component='web.routes')
+            except Exception:
+                pass
+
+    async def api_upload(request: Request):
+        from web.routes.upload import api_upload as _api_upload
+        lg = getattr(session.utils, 'logger', None)
+        _st = time.time()
+        try:
+            if lg: lg.web_event('route_begin', {'path': '/api/upload', 'method': request.method}, component='web.routes')
+            res = await _api_upload(request)
+            return res
+        finally:
+            try:
+                if lg:
+                    lg.web_event('route_done', {'path': '/api/upload', 'method': request.method, 'status': getattr(res, 'status_code', None), 'duration_ms': int((time.time()-_st)*1000)}, component='web.routes')
+            except Exception:
+                pass
 
     routes = [
         Route('/', _index_handler_factory(os.path.join(os.path.dirname(__file__), 'static', 'index.html'))),
@@ -107,7 +233,7 @@ def create_app(session, webstate: WebState | None = None) -> Starlette:
         Route('/api/action/resume', api_action_resume, methods=['POST']),
         Route('/api/action/cancel', api_action_cancel, methods=['POST']),
         # Upload route is implemented as a free function already
-        Route('/api/upload', __import__('web.routes.upload', fromlist=['api_upload']).api_upload, methods=['POST']),
+        Route('/api/upload', api_upload, methods=['POST']),
     ]
 
     @asynccontextmanager
