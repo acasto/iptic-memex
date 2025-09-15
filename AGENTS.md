@@ -582,7 +582,7 @@ max_completion_tokens = 4096
   - CLI: `mcp provider`, `mcp status` show whether the current provider supports pass‑through, whether MCP is active, and list configured servers with hints.
 
 - App‑Side MCP (http & stdio)
-  - `[MCP]` defaults: `mcp_servers` (optional), `autoload`, `auto_alias`, `debug`.
+- `[MCP]` defaults: `mcp_servers` (optional), `autoload`, `auto_alias`.
   - Per‑server: `[MCP.<name>]` with `transport = provider|http|stdio`, target `url|command`, `headers` (supports `${env:VAR}`), and provider hints (`allowed_tools`, `require_approval`).
   - Per‑server overrides: `autoload`, `auto_alias`. Omitted keys inherit the global defaults.
   - `allowed_tools` also filters app‑side registration (only the listed tool names are registered for that server).
@@ -594,4 +594,4 @@ max_completion_tokens = 4096
   - `show tools` lists assistant‑visible tools (deduped) and annotates MCP entries with `(server)` for clarity.
 
 - Noise Control
-  - `[MCP].debug = true` surfaces auto‑registration summaries and per‑call success lines. Errors are always printed.
+- For MCP diagnostics, prefer centralized logging: set `[LOG].log_mcp = detail` (and optionally `mirror_to_console = true`).

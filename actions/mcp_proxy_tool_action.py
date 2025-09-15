@@ -148,20 +148,15 @@ class McpProxyToolAction(InteractionAction):
             return
         elapsed_ms = int((time.time() - started) * 1000)
 
-        # Emit a brief status line (debug only)
+        # Centralized logging at detail level
         try:
-            debug = bool(self.session.get_option('MCP', 'debug', fallback=False))
+            self.session.utils.logger.mcp_detail('call_ok', {
+                'server': server,
+                'tool': tool,
+                'elapsed_ms': elapsed_ms,
+            }, component='mcp.proxy')
         except Exception:
-            debug = False
-        if debug:
-            try:
-                msg = f"MCP call {server}:{tool} ok in {elapsed_ms} ms"
-                if self.session.ui and getattr(self.session.ui.capabilities, 'blocking', False) is False:
-                    self.session.ui.emit('status', {'message': msg})
-                else:
-                    self.session.utils.output.info(msg)
-            except Exception:
-                pass
+            pass
 
         # Format result into a readable string for the chat tool message
         out_text = self._stringify_tool_result(result)

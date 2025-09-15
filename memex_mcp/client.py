@@ -707,9 +707,11 @@ def get_or_create_client(session) -> MCPClient:
         # Optional flags
         debug = False
         http_fallback = False
+        # Drive client debug from centralized logging (log_mcp=detail)
         try:
-            val = session.get_option('MCP', 'debug', fallback=False)
-            debug = (str(val).strip().lower() in ('1', 'true', 'yes', 'on')) if not isinstance(val, bool) else bool(val)
+            lg = getattr(getattr(session, 'utils', None), 'logger', None)
+            if lg and callable(getattr(lg, 'is_enabled', None)):
+                debug = bool(lg.is_enabled('mcp', 'detail'))
         except Exception:
             debug = False
         try:

@@ -284,6 +284,17 @@ def autoload_mcp(session) -> None:
         elif mode == 'stdio':
             app_stdio[name] = s
 
+    # Log autoload plan (labels only; no secrets)
+    try:
+        plan = {
+            'http': list(app_http.keys()),
+            'stdio': list(app_stdio.keys()),
+            'provider': list(provider_targets.keys()),
+        }
+        session.utils.logger.mcp_event('autoload_plan', plan, component='mcp.bootstrap')
+    except Exception:
+        pass
+
     # Provider pass-through synthesis (only if provider supports and [MCP] is active)
     prov = getattr(session, 'get_provider', lambda: None)()
     try:
@@ -296,6 +307,10 @@ def autoload_mcp(session) -> None:
         mcp_active = False
     if provider_targets and supports and mcp_active:
         _apply_provider_passthrough(session, provider_targets)
+        try:
+            session.utils.logger.mcp_event('provider_passthrough', {'targets': list(provider_targets.keys())}, component='mcp.bootstrap')
+        except Exception:
+            pass
 
     # App-side connections
     from memex_mcp.client import get_or_create_client
@@ -303,11 +318,19 @@ def autoload_mcp(session) -> None:
     for name, s in app_http.items():
         try:
             client.connect_http(name, s.get('url') or '', headers=s.get('headers') or {})
+            try:
+                session.utils.logger.mcp_event('connect_http', {'name': name}, component='mcp.bootstrap')
+            except Exception:
+                pass
         except Exception:
             continue
     for name, s in app_stdio.items():
         try:
             client.connect_stdio(name, s.get('command') or '')
+            try:
+                session.utils.logger.mcp_event('connect_stdio', {'name': name}, component='mcp.bootstrap')
+            except Exception:
+                pass
         except Exception:
             continue
 
@@ -353,5 +376,9 @@ def autoload_mcp(session) -> None:
                 if do_alias:
                     args.append('--alias')
                 registrar.run(args)
+                try:
+                    session.utils.logger.mcp_event('register_tools', {'name': name, 'alias': do_alias, 'restricted': bool(allow_list)}, component='mcp.bootstrap')
+                except Exception:
+                    pass
             except Exception:
                 continue

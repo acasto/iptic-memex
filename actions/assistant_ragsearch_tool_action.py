@@ -199,6 +199,15 @@ class AssistantRagsearchToolAction(InteractionAction):
         per_index_cap = None if pic_raw is None else _int(pic_raw, None)
         threshold = _float(args.get('threshold', None), _float(_rag_opt('similarity_threshold', 0.0) or 0.0, 0.0))
 
+        # Log search begin (summary only)
+        try:
+            self.session.utils.logger.rag_event('search_begin', {
+                'query_len': len(query),
+                'indexes': index_names,
+            }, component='rag.search')
+        except Exception:
+            pass
+
         # Execute search
         try:
             res = search(
@@ -264,6 +273,16 @@ class AssistantRagsearchToolAction(InteractionAction):
         # Re-apply top_k after grouping
         grouped.sort(key=lambda r: float(r.get('score') or 0.0), reverse=True)
         grouped = grouped[: max(1, top_k)]
+
+        # Log search done summary
+        try:
+            self.session.utils.logger.rag_event('search_done', {
+                'results': len(grouped),
+                'top_k': max(1, top_k),
+                'threshold': threshold,
+            }, component='rag.search')
+        except Exception:
+            pass
 
         # Build readable summary block
         lines: List[str] = []

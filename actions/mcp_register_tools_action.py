@@ -89,15 +89,23 @@ class McpRegisterToolsAction(InteractionAction):
 
         self.session.set_user_data('__dynamic_tools__', dynamic)
 
-        # Emit summary only when MCP debug is enabled to avoid noisy startup output
+        # Emit summary to centralized logger at detail level
         try:
-            debug = bool(self.session.get_option('MCP', 'debug', fallback=False))
+            if added:
+                self.session.utils.logger.mcp_detail('register_tools', {
+                    'server': server,
+                    'count': len(added),
+                    'tools': added,
+                    'alias': bool(alias),
+                    'filtered': bool(filter_set),
+                }, component='mcp.register')
+            else:
+                self.session.utils.logger.mcp_detail('register_tools_none', {
+                    'server': server,
+                    'filtered': bool(filter_set),
+                }, component='mcp.register')
         except Exception:
-            debug = False
-        if added and debug:
-            self._emit('status', f"Registered {len(added)} MCP tool(s): {', '.join(added)}")
-        elif not added and debug:
-            self._emit('warning', "No tools were registered (check filters or conflicts).")
+            pass
 
     # ---- helpers -----------------------------------------------------------
     def _to_command_spec(self, server: str, tool: MCPToolSpec) -> Dict:

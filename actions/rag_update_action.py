@@ -94,6 +94,17 @@ class RagUpdateAction(InteractionAction):
         except Exception:
             pass
 
+        # Log update start
+        try:
+            self.session.utils.logger.rag_event('update_begin', {
+                'indexes': list(indexes.keys()),
+                'active': list(active or []),
+                'vector_db': vector_db,
+                'target': target,
+            }, component='rag.update')
+        except Exception:
+            pass
+
         # Process each index
         for name in names:
             root = indexes[name]
@@ -117,6 +128,10 @@ class RagUpdateAction(InteractionAction):
                 'provider': prov.__class__.__name__,
                 'embedding_id': embedding_model,
             }
+            try:
+                self.session.utils.logger.rag_event('index_begin', {'name': name, 'root': root}, component='rag.update')
+            except Exception:
+                pass
             stats = update_index(
                 index_name=name,
                 root_path=root,
@@ -135,6 +150,10 @@ class RagUpdateAction(InteractionAction):
                     self.session.ui.emit('status', {'message': f"Up to date {name}: files={stats['files']} chunks={stats['chunks']} -> {stats['index_dir']}"})
                 else:
                     self.session.ui.emit('status', {'message': f"Indexed {name}: files={stats['files']} chunks={stats['chunks']} embedded={stats['embedded']} -> {stats['index_dir']}"})
+                try:
+                    self.session.utils.logger.rag_event('index_done', {'name': name, **stats}, component='rag.update')
+                except Exception:
+                    pass
             except Exception:
                 pass
 

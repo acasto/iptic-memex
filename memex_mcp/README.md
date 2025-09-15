@@ -16,7 +16,7 @@ Key behaviors
 Config options (config.ini → [MCP])
 - `active = true|false`: gate MCP features.
 - `use_sdk = true|false`: prefer the Python SDK when installed.
-- `debug = true|false`: emit one-line client diagnostics for suppressed errors.
+- Diagnostics: use centralized logging. Set `[LOG].log_mcp = detail` (and optionally `mirror_to_console = true`) to emit one-line diagnostics for MCP operations.
 - `http_fallback = true|false`: enable generic HTTP JSON endpoints (/tools,/call,/resource,/resources).
 - `mcp_servers = name1,name2` (optional): declare known server subsections `[MCP.<name>]`. If omitted, all defined `[MCP.<name>]` are considered.
 - `autoload = name1,name2`: autoload these servers on session build (connect + register).
@@ -40,5 +40,5 @@ Commands
 - `/mcp on|off`: enable/disable MCP for the session; `on` autoloads configured servers, `off` unloads and disables.
 
 Notes
-- The official MCP SDK surfaces client/session functions (e.g., `ClientSession`, `streamablehttp_client`). The client adapts to SDK layouts across versions and logs import attempts in debug mode.
+- The official MCP SDK surfaces client/session functions (e.g., `ClientSession`, `streamablehttp_client`). The client adapts to SDK layouts across versions; when logging is set to `log_mcp = detail`, import attempts and fallback paths are recorded via the central logger.
 - Dynamic tools are always included in the tool registry (not filtered by `[TOOLS].active_tools`).

@@ -76,7 +76,7 @@ Model Context Protocol (MCP) support includes provider pass‑through (OpenAI Re
   - `mcp load <server>`; `mcp unload <server>`; `discover mcp tools <server>` → probe tools; `register mcp tools <server> [--tools t1,t2] [--alias]` → expose to the assistant
   - `show tools` – assistant‑visible tool names (deduped), annotated with server
 
-Tip: Keep `[MCP].debug = false` for clean startup; set to true to see registration summaries and per‑call success lines.
+Tip: For MCP diagnostics, enable `[LOG].log_mcp = detail` (and optionally `mirror_to_console = true`) to see registration summaries and per‑call lines without cluttering normal UI output.
 
 ### Filesystem Sandbox and --base-dir
 

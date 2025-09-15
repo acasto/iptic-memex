@@ -96,6 +96,10 @@ class LoggingHandler:
         payload = self._prepare_payload(event, component, aspect, severity, data or {})
         self._write(payload)
 
+    def is_enabled(self, aspect: str, min_level: str = 'basic') -> bool:
+        """Return True if logging is active and the given aspect meets the min level."""
+        return self._should_log(aspect, min_level)
+
     # Settings/events sugar
     def settings(self, effective: dict) -> None:
         if not self._should_log('settings', 'basic'): return
@@ -151,6 +155,10 @@ class LoggingHandler:
 
     def mcp_event(self, kind: str, details: dict, component: str = 'provider'):
         if not self._should_log('mcp', 'basic'): return
+        self._write(self._prepare_payload(kind, f'{component}.mcp', 'mcp', 'info', details))
+
+    def mcp_detail(self, kind: str, details: dict, component: str = 'provider'):
+        if not self._should_log('mcp', 'detail'): return
         self._write(self._prepare_payload(kind, f'{component}.mcp', 'mcp', 'info', details))
 
     def rag_event(self, kind: str, details: dict, component: str = 'rag'):
@@ -324,4 +332,3 @@ class LoggingHandler:
                 self._output.write(line, level=lvl)
             except Exception:
                 pass
-
