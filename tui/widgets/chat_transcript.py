@@ -24,9 +24,21 @@ class ChatTranscript(RichLog):
         "system": ("System", "bold magenta"),
     }
 
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, wrap=True, markup=False, highlight=False, auto_scroll=True, **kwargs)
+    def __init__(
+        self,
+        *args,
+        role_titles: Optional[dict[str, str]] = None,
+        role_styles: Optional[dict[str, str]] = None,
+        **kwargs,
+    ) -> None:
+        kwargs.setdefault("wrap", True)
+        kwargs.setdefault("markup", False)
+        kwargs.setdefault("highlight", False)
+        kwargs.setdefault("auto_scroll", True)
+        super().__init__(*args, **kwargs)
         self.entries: List[ChatEntry] = []
+        self._role_titles = role_titles or {}
+        self._role_styles = role_styles or {}
 
     def add_message(self, role: str, text: str, *, streaming: bool = False) -> str:
         """Append a message to the log and return its generated identifier."""
@@ -85,8 +97,8 @@ class ChatTranscript(RichLog):
             return
         for entry in self.entries:
             title, style = self.ROLE_STYLES.get(entry.role, ("Other", "cyan"))
-            if entry.streaming:
-                title = f"{title} · streaming"
+            title = self._role_titles.get(entry.role, title)
+            style = self._role_styles.get(entry.role, style)
             if entry.role == "assistant":
                 try:
                     content = Markdown(entry.text or "")
@@ -99,4 +111,3 @@ class ChatTranscript(RichLog):
             panel = Panel(content, title=title, border_style=style, padding=(1, 2), box=box.ROUNDED)
             self.write(panel)
             self.write("")
-

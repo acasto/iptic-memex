@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 
 from rich.text import Text
 
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -96,3 +97,18 @@ class InteractionModal(ModalScreen[Optional[Any]]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+    def on_key(self, event: events.Key) -> None:  # type: ignore[override]
+        if self.kind == "choice" and event.key in ("tab", "shift+tab"):
+            event.prevent_default()
+            event.stop()
+            list_view = getattr(self, "list_view", None)
+            if list_view is not None:
+                try:
+                    self.set_focus(list_view)
+                except Exception:
+                    pass
+            return
+        parent_on_key = getattr(super(), "on_key", None)
+        if callable(parent_on_key):
+            parent_on_key(event)

@@ -80,6 +80,20 @@ if TEXTUAL_AVAILABLE:
             }
             self._suppress_input_changed_reset: bool = False
 
+            params = self.session.get_params() or {}
+            response_label = str(params.get('response_label') or '').strip()
+            response_label_color = str(params.get('response_label_color') or '').strip()
+            self._chat_role_titles: Dict[str, str] = {}
+            self._chat_role_styles: Dict[str, str] = {}
+            if response_label:
+                self._chat_role_titles['assistant'] = response_label
+            if response_label_color:
+                color_tokens = {token.lower() for token in response_label_color.replace('-', ' ').split()}
+                color_style = response_label_color
+                if 'bold' not in color_tokens:
+                    color_style = f"bold {response_label_color}"
+                self._chat_role_styles['assistant'] = color_style
+
             self._orig_output: Optional[OutputHandler] = self.session.utils.output
             self._tui_output = TuiOutput(self._handle_output_event)
             self.session.utils.replace_output(self._tui_output)
@@ -111,7 +125,11 @@ if TEXTUAL_AVAILABLE:
             )
             yield status
 
-            self.chat_view = ChatTranscript(id="chat_transcript")
+            self.chat_view = ChatTranscript(
+                id="chat_transcript",
+                role_titles=self._chat_role_titles,
+                role_styles=self._chat_role_styles,
+            )
             yield self.chat_view
 
             # Sidebar removed; dedicate full width to chat. Status is shown via F8 modal.
@@ -464,8 +482,16 @@ if TEXTUAL_AVAILABLE:
             except Exception:
                 pass
             self._handle_command_result(path, result)
-            if path and path[0] in {'reprint', 'load', 'load chat'} and self.chat_view:
-                # After reprint or load, rebuild the transcript from chat context
+            should_refresh_chat = False
+            if path:
+                primary = path[0] or ''
+                secondary = path[1] if len(path) > 1 else ''
+                if primary in {'reprint', 'load', 'load chat'}:
+                    should_refresh_chat = True
+                elif primary == 'clear' and secondary == 'chat':
+                    should_refresh_chat = True
+            if should_refresh_chat and self.chat_view:
+                # After commands that reset chat state, rebuild the transcript from context
                 self.chat_view.clear_messages()
                 self._render_existing_history()
             self._refresh_context_panel()
