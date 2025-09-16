@@ -12,6 +12,11 @@ class TUIUI(UI):
     def __init__(self, session):
         self.session = session
         self.capabilities = CapabilityFlags(file_picker=True, rich_text=True, progress=True, diffs=True, blocking=False)
+        self._event_handler = None
+
+    def set_event_handler(self, handler):
+        """Allow the TUI app to receive emit events."""
+        self._event_handler = handler
 
     def _raise(self, kind: str, spec: Dict[str, Any]):
         token = spec.get('state_token') or 'UNISSUED'
@@ -44,5 +49,9 @@ class TUIUI(UI):
         self._raise('files', {'prompt': prompt, 'accept': accept, 'multiple': multiple, 'must_exist': must_exist})
 
     def emit(self, event_type: str, data: Dict[str, Any]) -> None:
-        # TUI implementation will collect events via its own plumbing
-        return
+        if self._event_handler:
+            try:
+                payload = dict(data) if isinstance(data, dict) else {'message': str(data)}
+                self._event_handler(event_type, payload)
+            except Exception:
+                pass

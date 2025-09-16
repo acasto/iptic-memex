@@ -1,0 +1,56 @@
+Screen {
+    layout: grid;
+    grid-size: 2 4;
+    grid-columns: 1fr 38;
+    grid-rows: auto 1fr auto auto;
+    grid-gutter: 0 1;
+}
+
+#status_bar {
+    column-span: 2;
+    padding: 1 2;
+    background: $primary;
+    color: $text;
+}
+
+#chat_transcript {
+    border: solid $surface;
+    margin: 1 0 1 1;
+}
+
+#sidebar {
+    margin: 1 1 1 0;
+}
+
+#status_log {
+    height: 1fr;
+    border: solid $surface;
+    margin-bottom: 1;
+}
+
+#contexts {
+    height: auto;
+    border: solid $surface;
+}
+
+#input_row {
+    column-span: 2;
+    padding: 1 2;
+    border-top: solid $surface;
+}
+
+Footer {
+    column-span: 2;
+}
+
+#command_palette {
+    padding: 1 2;
+    border: solid $surface;
+    width: 60;
+}
+
+#interaction_modal {
+    padding: 1 2;
+    border: solid $surface;
+    width: 60;
+}

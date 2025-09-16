@@ -45,3 +45,15 @@ def test_tui_ask_bool_and_choice_and_files():
     assert e3.value.kind == "files"
     assert e3.value.spec.get("accept") == [".txt"]
 
+
+def test_tui_emit_uses_handler():
+    sess = DummySession()
+    ui = TUIUI(sess)
+    captured = []
+
+    def handler(kind, data):
+        captured.append((kind, data))
+
+    ui.set_event_handler(handler)
+    ui.emit('status', {'message': 'hello'})
+    assert captured == [('status', {'message': 'hello'})]

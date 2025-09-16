@@ -48,6 +48,7 @@ class LoggingHandler:
         'provider': 'basic',
         'mcp': 'off',
         'rag': 'off',
+        'tui': 'off',
         'web': 'off',
         'errors': 'basic',
         'usage': 'basic',
@@ -173,6 +174,10 @@ class LoggingHandler:
     def rag_event(self, kind: str, details: dict, component: str = 'rag'):
         if not self._should_log('rag', 'basic'): return
         self._write(self._prepare_payload(kind, f'{component}', 'rag', 'info', details))
+
+    def tui_event(self, kind: str, details: dict, component: str = 'tui'):
+        if not self._should_log('tui', 'basic'): return
+        self._write(self._prepare_payload(kind, f'{component}', 'tui', 'info', details))
 
     def web_event(self, kind: str, details: dict, component: str = 'web'):
         if not self._should_log('web', 'basic'): return

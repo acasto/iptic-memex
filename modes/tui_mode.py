@@ -6,40 +6,26 @@ This mode delegates to the Textual-based implementation in the tui package.
 
 from base_classes import InteractionMode
 
+from tui.app import MemexTUIApp
+
 
 class TUIMode(InteractionMode):
-    """
-    TUI mode that delegates to the Textual implementation.
-    
-    This maintains consistency with other modes while keeping
-    the complex TUI implementation isolated in the tui package.
-    """
-    
+    """TUI mode that launches the Textual application."""
+
     def __init__(self, session, builder=None):
-        """
-        Initialize the TUI mode.
-        
-        Args:
-            session: The Session object with all business logic
-            builder: SessionBuilder for creating new sessions
-        """
+        """Store the session and ensure chat context exists."""
+
         self.session = session
         self.builder = builder
-    
-    def start(self):
-        """
-        Start the TUI mode by delegating to the Textual implementation.
-        """
+        if "chat" not in self.session.context:
+            self.session.add_context("chat")
+
+    def start(self) -> None:
+        """Start the Textual application."""
+
         try:
-            from tui.mode import TextualMode
-            textual_mode = TextualMode(self.session, self.builder)
-            textual_mode.start()
-        except ImportError as e:
-            if 'textual' in str(e).lower():
-                print("Error: TUI mode requires the 'textual' library.")
-                print("Install with: pip install textual")
-            else:
-                print(f"Error importing TUI components: {e}")
-        except Exception as e:
-            print(f"Error starting TUI mode: {e}")
+            app = MemexTUIApp(self.session, self.builder)
+            app.run()
+        except Exception as exc:
+            print(f"Error starting TUI mode: {exc}")
             raise
