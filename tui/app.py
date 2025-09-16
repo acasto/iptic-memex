@@ -82,6 +82,7 @@ if TEXTUAL_AVAILABLE:
             self._suppress_input_changed_reset: bool = False
             self._last_file_completion_hint: Optional[str] = None
             self._last_file_completion_choices: List[str] = []
+            self._last_file_completion_abs_dir: Optional[str] = None
 
             params = self.session.get_params() or {}
             response_label = str(params.get('response_label') or '').strip()
@@ -672,50 +673,64 @@ if TEXTUAL_AVAILABLE:
             current = self.input.value or ''
             cycle = self._tab_cycle_state or {}
 
-            suggestions_list: List[str]
-            suggestions_items: List[CommandItem] = []
+            # ---- File-path mode first: always re-seed when base dir changes ----
+            file_active, _, _, _ = self._detect_file_completion_context(current)
+            if file_active:
+                # Rebuild suggestions every Tab to catch "…/<dir>/" transitions.
+                file_suggestions = self._file_path_completion_values(current)
+                abs_dir = getattr(self, '_last_file_completion_abs_dir', None)
 
-            if cycle.get('applied') == current and cycle.get('suggestions'):
-                suggestions_list = list(cycle.get('suggestions') or [])
+                # Decide if we need to (re)seed the cycle (new line, new dir, or empty).
+                need_seed = (
+                    cycle.get('mode') != 'file'
+                    or cycle.get('prefix') != current
+                    or cycle.get('abs_dir') != abs_dir
+                    or not cycle.get('suggestions')
+                )
+                if need_seed:
+                    # FIRST Tab in this directory: preview only; don't insert yet.
+                    self._tab_cycle_state = {
+                        'mode': 'file',
+                        'prefix': current,
+                        'applied': current,
+                        'index': -1,
+                        'suggestions': file_suggestions,
+                        'abs_dir': abs_dir,
+                    }
+                    self._show_file_completion_hint()
+                    return
+
+                # Subsequent Tabs: cycle and insert
+                suggestions_list: List[str] = list(cycle.get('suggestions') or [])
                 if not suggestions_list:
                     return
-                index = (int(cycle.get('index', 0)) + 1) % len(suggestions_list)
+                index = (int(cycle.get('index', -1)) + 1) % len(suggestions_list)
                 chosen = suggestions_list[index]
                 cycle.update({'index': index})
-            else:
-                file_suggestions = self._file_path_completion_values(current)
-                if file_suggestions:
-                    if not cycle.get('suggestions'):
-                        cycle = {
-                            'prefix': current,
-                            'index': -1,
-                            'suggestions': file_suggestions,
-                            'applied': current,
-                            'mode': 'file',
-                        }
-                        self._tab_cycle_state = cycle
-                        self._show_file_completion_hint()
-                        return
-                    suggestions_list = file_suggestions
-                    self._show_file_completion_hint()
-                elif self._detect_file_completion_context(current)[0]:
-                    self._show_file_completion_hint()
-                    return
-                else:
-                    suggestions_items, _ = self._find_command_suggestions(current)
-                    if suggestions_items:
-                        suggestions_list = [self._format_suggestion(item.title) for item in suggestions_items]
-                    else:
-                        suggestions_list = list(self._all_suggestion_strings)
-                if not suggestions_list:
-                    return
-                chosen = suggestions_list[0]
-                cycle = {
-                    'prefix': current,
-                    'index': 0,
-                    'suggestions': suggestions_list,
-                }
+                self._tab_cycle_state = {**cycle, 'applied': chosen}
+                try:
+                    self._suppress_input_changed_reset = True
+                    self.input.value = chosen
+                    self.input.cursor_position = len(chosen)
+                except Exception:
+                    pass
+                finally:
+                    try:
+                        self.set_focus(self.input)
+                    except Exception:
+                        pass
+                return
 
+            # ---- Command completion fallback (unchanged semantics) ----
+            suggestions_items, _ = self._find_command_suggestions(current)
+            if suggestions_items:
+                suggestions_list = [self._format_suggestion(item.title) for item in suggestions_items]
+            else:
+                suggestions_list = list(self._all_suggestion_strings)
+            if not suggestions_list:
+                return
+            chosen = suggestions_list[0]
+            cycle = {'prefix': current, 'index': 0, 'suggestions': suggestions_list}
             self._tab_cycle_state = {**cycle, 'applied': chosen}
             try:
                 self._suppress_input_changed_reset = True
@@ -724,12 +739,10 @@ if TEXTUAL_AVAILABLE:
             except Exception:
                 pass
             finally:
-                # Ensure focus stays on the input regardless of the keypress
                 try:
                     self.set_focus(self.input)
                 except Exception:
                     pass
-
         def _open_compose_modal(self, prefill: str = '') -> None:
             def _on_close(result: Optional[str]) -> None:
                 if result is None:
@@ -795,6 +808,7 @@ if TEXTUAL_AVAILABLE:
             self._tab_cycle_state = {'key': '', 'index': 0, 'suggestions': []}
             self._last_file_completion_hint = None
             self._last_file_completion_choices = []
+            self._last_file_completion_abs_dir = None
 
         def _detect_file_completion_context(self, line: str) -> Tuple[bool, str, str, str]:
             input_widget = getattr(self, 'input', None)
@@ -854,6 +868,7 @@ if TEXTUAL_AVAILABLE:
             except Exception:
                 self._last_file_completion_hint = None
                 self._last_file_completion_choices = []
+                self._last_file_completion_abs_dir = None
                 return []
 
             suggestions: List[str] = []
@@ -869,6 +884,7 @@ if TEXTUAL_AVAILABLE:
             except Exception:
                 pass
             self._last_file_completion_hint = display_hint
+            self._last_file_completion_abs_dir = base_dir
 
             limit = 60
             count = 0
