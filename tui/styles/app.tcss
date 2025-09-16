@@ -1,7 +1,7 @@
 Screen {
     layout: grid;
-    grid-size: 2 4;
-    grid-columns: 1fr 38;
+    grid-size: 1 4;
+    grid-columns: 1fr;
     grid-rows: auto 1fr auto auto;
     grid-gutter: 0 1;
 }
@@ -18,20 +18,9 @@ Screen {
     margin: 1 0 1 1;
 }
 
-#sidebar {
-    margin: 1 1 1 0;
-}
+/* Sidebar removed in favor of full-width chat; status is now modal */
 
-#status_log {
-    height: 1fr;
-    border: solid $surface;
-    margin-bottom: 1;
-}
-
-#contexts {
-    height: auto;
-    border: solid $surface;
-}
+/* Status/context panels moved to modal overlay */
 
 #input_row {
     column-span: 2;
@@ -60,4 +49,27 @@ Footer {
     width: 1fr;
     margin-bottom: 1;
     color: $text;
+}
+
+#compose_modal {
+    padding: 1 2;
+    width: 90%;
+    height: auto;
+    max-width: 120;
+}
+
+#compose_editor {
+    height: 12;
+}
+
+#status_modal {
+    padding: 1 2;
+    width: 90%;
+    max-width: 120;
+    height: 80%;
+}
+
+#status_full {
+    height: 1fr;
+    border: solid $surface;
 }

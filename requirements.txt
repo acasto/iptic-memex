@@ -20,3 +20,4 @@ mlx-lm
 starlette
 uvicorn
 python-multipart
+textual

@@ -22,6 +22,7 @@ class InteractionModal(ModalScreen[Optional[Any]]):
         super().__init__()
         self.kind = kind
         self.spec = spec or {}
+        self._choice_entries: list[tuple[str, Any]] = []
 
     def compose(self) -> ComposeResult:
         prompt = str(self.spec.get("prompt") or self.spec.get("message") or "Input required")
@@ -46,15 +47,14 @@ class InteractionModal(ModalScreen[Optional[Any]]):
                     yield Button("No", id="no")
             elif self.kind == "choice":
                 options = list(self.spec.get("options") or self.spec.get("choices") or [])
+                self._choice_entries = []
                 self.list_view = ListView(id="interaction_choices")
+                yield self.list_view
+                yield Static(Text("Enter to select · Esc to cancel", style="dim"))
                 for opt in options:
                     label = str(opt if not isinstance(opt, dict) else opt.get("label", opt.get("value")))
                     data = opt.get("value") if isinstance(opt, dict) else opt
-                    item = ListItem(Static(label))
-                    setattr(item, "choice_value", data)
-                    self.list_view.append(item)
-                yield self.list_view
-                yield Static(Text("Enter to select · Esc to cancel", style="dim"))
+                    self._choice_entries.append((label, data))
             else:
                 self.input = Input(placeholder="Enter value…", id="interaction_input_generic")
                 yield self.input
@@ -65,6 +65,12 @@ class InteractionModal(ModalScreen[Optional[Any]]):
             self.set_focus(self.input)
         elif hasattr(self, "list_view"):
             try:
+                if self._choice_entries:
+                    for label, data in self._choice_entries:
+                        item = ListItem(Static(label))
+                        setattr(item, "choice_value", data)
+                        await self.list_view.append(item)
+                    self._choice_entries = []
                 self.list_view.index = 0
                 self.set_focus(self.list_view)
             except Exception:
@@ -90,4 +96,3 @@ class InteractionModal(ModalScreen[Optional[Any]]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
-
