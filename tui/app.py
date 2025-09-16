@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any, Awaitable, Dict, List, Optional, Tuple
 
 try:
@@ -79,6 +80,8 @@ if TEXTUAL_AVAILABLE:
                 'suggestions': [],
             }
             self._suppress_input_changed_reset: bool = False
+            self._last_file_completion_hint: Optional[str] = None
+            self._last_file_completion_choices: List[str] = []
 
             params = self.session.get_params() or {}
             response_label = str(params.get('response_label') or '').strip()
@@ -254,6 +257,9 @@ if TEXTUAL_AVAILABLE:
                 self._reset_tab_cycle()
             if not value.startswith('/'):
                 self._clear_command_hint()
+                return
+            if self._detect_file_completion_context(value)[0]:
+                self._update_input_suggestions(value, [])
                 return
             suggestions, highlight = self._find_command_suggestions(value)
             if self.command_hint:
@@ -476,6 +482,30 @@ if TEXTUAL_AVAILABLE:
                 self._clear_command_hint()
                 return
 
+            if action_name == 'load_file':
+                has_path_arg = any((str(arg).strip()) for arg in argv)
+                if not has_path_arg:
+                    if self.status_log:
+                        self.status_log.log_status('Provide a file path before loading.', 'warning')
+                    self._display_status_message('Add a file path or use Tab to complete one, then press Enter.', 'warning')
+                    command_bits = [segment for segment in (path or []) if segment]
+                    if command_bits:
+                        base = '/' + ' '.join(command_bits)
+                    else:
+                        base = '/load file'
+                    if not base.endswith(' '):
+                        base = base + ' '
+                    if self.input:
+                        try:
+                            self.input.value = base
+                            if hasattr(self.input, 'cursor_position'):
+                                self.input.cursor_position = len(base)
+                            self._update_input_suggestions(base, [])
+                        except Exception:
+                            pass
+                    self._show_file_completion_hint()
+                    return
+
             result = await self._drive_action(action, argv)
             try:
                 self.session.utils.logger.tui_event('command_action', {'path': ' '.join(path or []), 'action': action_name, 'method': None, 'argv': argv})
@@ -526,6 +556,8 @@ if TEXTUAL_AVAILABLE:
             return await self.push_screen_wait(InteractionModal(need.kind, dict(need.spec)))
 
         def _find_command_suggestions(self, line: str) -> Tuple[List[CommandItem], str]:
+            if self._detect_file_completion_context(line)[0]:
+                return [], ''
             if not line.startswith('/'):
                 return [], ''
             if not self._command_specs:
@@ -600,6 +632,18 @@ if TEXTUAL_AVAILABLE:
             try:
                 if not hasattr(self.input, 'suggestions'):
                     return
+                file_active = self._detect_file_completion_context(line)[0]
+                if file_active:
+                    suggestions = self._file_path_completion_values(line)
+                    if suggestions:
+                        self.input.suggestions = suggestions  # type: ignore[attr-defined]
+                    else:
+                        self.input.suggestions = []  # type: ignore[attr-defined]
+                    if hasattr(self.input, 'suggester'):
+                        self.input.suggester = None  # type: ignore[attr-defined]
+                    self._show_file_completion_hint()
+                    return
+                self._last_file_completion_hint = None
                 if not line.startswith('/'):
                     self.input.suggestions = []  # type: ignore[attr-defined]
                     return
@@ -639,11 +683,30 @@ if TEXTUAL_AVAILABLE:
                 chosen = suggestions_list[index]
                 cycle.update({'index': index})
             else:
-                suggestions_items, _ = self._find_command_suggestions(current)
-                if suggestions_items:
-                    suggestions_list = [self._format_suggestion(item.title) for item in suggestions_items]
+                file_suggestions = self._file_path_completion_values(current)
+                if file_suggestions:
+                    if not cycle.get('suggestions'):
+                        cycle = {
+                            'prefix': current,
+                            'index': -1,
+                            'suggestions': file_suggestions,
+                            'applied': current,
+                            'mode': 'file',
+                        }
+                        self._tab_cycle_state = cycle
+                        self._show_file_completion_hint()
+                        return
+                    suggestions_list = file_suggestions
+                    self._show_file_completion_hint()
+                elif self._detect_file_completion_context(current)[0]:
+                    self._show_file_completion_hint()
+                    return
                 else:
-                    suggestions_list = list(self._all_suggestion_strings)
+                    suggestions_items, _ = self._find_command_suggestions(current)
+                    if suggestions_items:
+                        suggestions_list = [self._format_suggestion(item.title) for item in suggestions_items]
+                    else:
+                        suggestions_list = list(self._all_suggestion_strings)
                 if not suggestions_list:
                     return
                 chosen = suggestions_list[0]
@@ -730,6 +793,131 @@ if TEXTUAL_AVAILABLE:
 
         def _reset_tab_cycle(self) -> None:
             self._tab_cycle_state = {'key': '', 'index': 0, 'suggestions': []}
+            self._last_file_completion_hint = None
+            self._last_file_completion_choices = []
+
+        def _detect_file_completion_context(self, line: str) -> Tuple[bool, str, str, str]:
+            input_widget = getattr(self, 'input', None)
+            if not input_widget:
+                return False, '', '', ''
+            cursor = getattr(input_widget, 'cursor_position', len(line))
+            before = line[:cursor]
+            after = line[cursor:]
+            if after and after.strip():
+                return False, '', '', ''
+            prefixes = ['/load file ', '/file ']
+            for prefix in prefixes:
+                if before.startswith(prefix):
+                    fragment = before[len(prefix):]
+                    return True, prefix, fragment, after
+            # Allow trailing space state (no fragment yet)
+            if before in {'/load file', '/file'} and line.endswith(' '):
+                prefix = before + ' '
+                return True, prefix, '', after
+            return False, '', '', ''
+
+        def _file_path_completion_values(self, line: str) -> List[str]:
+            active, prefix, fragment, suffix = self._detect_file_completion_context(line)
+            if not active:
+                return []
+            fragment = fragment or ''
+            cwd = os.getcwd()
+            separators = ['/', '\\']
+            display_prefix = ''
+            search = fragment
+            if fragment.endswith(tuple(separators)):
+                display_prefix = fragment
+                search = ''
+            else:
+                idx = max(fragment.rfind(sep) for sep in separators)
+                if idx >= 0:
+                    display_prefix = fragment[: idx + 1]
+                    search = fragment[idx + 1:]
+            base_dir = cwd
+            expanded_prefix = os.path.expanduser(display_prefix) if display_prefix else ''
+            if display_prefix:
+                if os.path.isabs(expanded_prefix):
+                    base_dir = expanded_prefix
+                else:
+                    base_dir = os.path.abspath(os.path.join(cwd, expanded_prefix))
+            expanded_fragment = os.path.expanduser(fragment)
+            if fragment and os.path.isdir(expanded_fragment):
+                base_dir = expanded_fragment
+                if not fragment.endswith(tuple(separators)):
+                    display_prefix = fragment + os.path.sep
+                search = ''
+            elif fragment and fragment.endswith(tuple(separators)):
+                base_dir = os.path.expanduser(fragment)
+            self._last_file_completion_choices = []
+            try:
+                entries = sorted(os.listdir(base_dir))
+            except Exception:
+                self._last_file_completion_hint = None
+                self._last_file_completion_choices = []
+                return []
+
+            suggestions: List[str] = []
+            dir_sep = '/' if display_prefix.endswith('/') else '\\' if display_prefix.endswith('\\') else os.path.sep
+            if display_prefix:
+                display_hint = display_prefix
+            else:
+                display_hint = '.'
+            try:
+                home = os.path.expanduser('~')
+                if display_hint.startswith(home):
+                    display_hint = display_hint.replace(home, '~', 1)
+            except Exception:
+                pass
+            self._last_file_completion_hint = display_hint
+
+            limit = 60
+            count = 0
+            lower_search = search
+            for name in entries:
+                if name in {'.', '..'}:
+                    continue
+                if search and not name.startswith(lower_search):
+                    continue
+                candidate_display = display_prefix + name
+                absolute_path = os.path.join(base_dir, name)
+                if os.path.isdir(absolute_path):
+                    append_sep = dir_sep if not candidate_display.endswith((dir_sep, '/', '\\')) else ''
+                    candidate_display = f"{candidate_display}{append_sep}"
+                formatted = candidate_display
+                if any(ch.isspace() for ch in formatted):
+                    formatted = f'"{formatted}"'
+                value = prefix + formatted + suffix
+                suggestions.append(value)
+                self._last_file_completion_choices.append(candidate_display)
+                count += 1
+                if count >= limit:
+                    break
+            return suggestions
+
+        def _show_file_completion_hint(self) -> None:
+            if not self.command_hint:
+                return
+            hint = self._last_file_completion_hint
+            choices = list(self._last_file_completion_choices or [])
+            if not hint:
+                if choices:
+                    title = 'Files'
+                    self.command_hint.show_strings(choices[:8], title=title)
+                else:
+                    self.command_hint.show_message('Tab to complete file paths (supports ~). Enter with no path opens picker.')
+                return
+            label = hint
+            if hint == '.':
+                label = 'current directory'
+            title = f"Files in {label} · Tab to cycle · Enter loads"
+            display_choices = choices[:8]
+            if len(choices) > 8:
+                display_choices.append('...')
+            if display_choices:
+                self.command_hint.show_strings(display_choices, title=title)
+            else:
+                message = f"Tab to complete file paths (base: {hint}; ~ expands to home). Enter with a path loads immediately; Enter alone opens picker."
+                self.command_hint.show_message(message)
 
         def _record_status(self, text: str, level: str) -> None:
             try:

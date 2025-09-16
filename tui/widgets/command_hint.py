@@ -67,6 +67,33 @@ class CommandHint(Static):
         self.update(panel)
         self.display = True
 
+    def show_message(self, message: str) -> None:
+        """Display an informational message in place of command suggestions."""
+
+        text = (message or '').strip()
+        if not text:
+            self.display = False
+            self.update('')
+            return
+        body = Text(text, style='bold')
+        panel = Panel(body, title='Info', border_style='cyan', padding=(0, 1), expand=True)
+        self.update(panel)
+        self.display = True
+
+    def show_strings(self, values: Iterable[str], *, title: str = 'Suggestions') -> None:
+        """Render a simple list of string suggestions."""
+
+        entries = [str(v) for v in values if str(v).strip()]
+        if not entries:
+            self.display = False
+            self.update('')
+            return
+        texts = [Text(entry, style='bold') for entry in entries]
+        columns = Columns(texts, equal=True, expand=True)
+        panel = Panel(columns, title=title, border_style='cyan', padding=(0, 1), expand=True)
+        self.update(panel)
+        self.display = True
+
     def _highlight_prefix(self, title: str, prefix: str) -> Text:
         text = Text(title, style='bold')
         if not prefix:
