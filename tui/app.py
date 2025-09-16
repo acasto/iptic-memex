@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Dict, List, Optional
+from typing import Any, Awaitable, Dict, List, Optional, Tuple
 
 try:
     from textual.app import App, ComposeResult
     from textual.binding import Binding
-    from textual.containers import Container, Vertical
+    from textual.containers import Vertical
     from textual.widgets import Footer, Input, Static
     TEXTUAL_AVAILABLE = True
 except ImportError:  # pragma: no cover - surfaced when textual missing
@@ -26,6 +26,7 @@ if TEXTUAL_AVAILABLE:
     from tui.screens.command_palette import CommandPalette
     from tui.screens.interaction_modal import InteractionModal
     from tui.widgets.chat_transcript import ChatTranscript
+    from tui.widgets.command_hint import CommandHint
     from tui.widgets.context_summary import ContextSummary
     from tui.widgets.status_panel import StatusPanel
 
@@ -55,6 +56,11 @@ if TEXTUAL_AVAILABLE:
 
             self.command_registry = self.session.get_action('user_commands_registry')
             self._command_items: List[CommandItem] = []
+            self._command_specs: Dict[str, Dict[str, Any]] = {}
+            self._command_lookup: Dict[Tuple[str, str], CommandItem] = {}
+            self._top_level_commands: List[CommandItem] = []
+            self._subcommand_map: Dict[str, List[CommandItem]] = {}
+            self.command_hint: Optional[CommandHint] = None
 
             self._orig_output: Optional[OutputHandler] = self.session.utils.output
             self._tui_output = TuiOutput(self._handle_output_event)
@@ -97,7 +103,9 @@ if TEXTUAL_AVAILABLE:
                 self.context_panel = ContextSummary(id="contexts")
                 yield self.context_panel
 
-            with Container(id="input_row"):
+            with Vertical(id="input_row"):
+                self.command_hint = CommandHint(id="command_hint")
+                yield self.command_hint
                 self.input = Input(placeholder="Type a message or '/' for commands", id="input")
                 yield self.input
 
@@ -106,6 +114,8 @@ if TEXTUAL_AVAILABLE:
         async def on_mount(self) -> None:
             if self.input:
                 self.set_focus(self.input)
+            if self.command_hint:
+                self.command_hint.display = False
             if self.status_log:
                 self.status_log.log_status("Welcome to iptic-memex TUI. Press Ctrl+S to toggle streaming.", "info")
             try:
@@ -175,9 +185,21 @@ if TEXTUAL_AVAILABLE:
         async def on_input_submitted(self, event: Input.Submitted) -> None:
             message = (event.value or '').strip()
             event.input.value = ''
+            self._clear_command_hint()
             if not message:
                 return
             self._handle_user_input(message)
+
+        def on_input_changed(self, event: Input.Changed) -> None:  # type: ignore[override]
+            if getattr(event.input, 'id', None) != 'input':
+                return
+            value = event.value or ''
+            if not value.startswith('/'):
+                self._clear_command_hint()
+                return
+            suggestions, highlight = self._find_command_suggestions(value)
+            if self.command_hint:
+                self.command_hint.update_suggestions(suggestions, prefix=highlight)
 
         def _handle_user_input(self, message: str) -> None:
             if message.startswith('/'):
@@ -235,26 +257,66 @@ if TEXTUAL_AVAILABLE:
             except Exception:
                 specs = {}
             commands: List[CommandItem] = []
+            lookup: Dict[Tuple[str, str], CommandItem] = {}
+            sub_map: Dict[str, List[CommandItem]] = {}
+            top_level: List[CommandItem] = []
             for item in specs.get('commands', []):
                 cmd_name = item.get('command')
                 help_text = item.get('help', '')
+                has_default = False
                 for sub in item.get('subs', []):
                     sub_name = sub.get('sub') or ''
                     title = f"/{cmd_name}" + (f" {sub_name}" if sub_name else '')
-                    commands.append(CommandItem(title=title, path=[cmd_name, sub_name], help=help_text, handler=sub))
+                    cmd_help = help_text
+                    sub_help = sub.get('ui', {}).get('help') if isinstance(sub.get('ui'), dict) else ''
+                    entry = CommandItem(
+                        title=title,
+                        path=[cmd_name, sub_name],
+                        help=sub_help or cmd_help,
+                        handler=sub,
+                    )
+                    commands.append(entry)
+                    lookup[(cmd_name, sub_name)] = entry
+                    if sub_name:
+                        sub_map.setdefault(cmd_name, []).append(entry)
+                    else:
+                        has_default = True
+                        top_level.append(entry)
+                if not has_default:
+                    top_level.append(
+                        CommandItem(
+                            title=f"/{cmd_name}",
+                            path=[cmd_name, ''],
+                            help=help_text,
+                            handler={},
+                        )
+                    )
             self._command_items = commands
+            self._command_lookup = lookup
+            self._command_specs = {item.get('command'): item for item in specs.get('commands', [])}
+            self._top_level_commands = sorted(top_level, key=lambda c: c.title.lower())
+            for key, entries in sub_map.items():
+                entries.sort(key=lambda c: c.title.lower())
+            self._subcommand_map = sub_map
 
         def action_open_commands(self) -> None:
+            if self.command_hint:
+                self.command_hint.display = False
             if not self._command_items:
                 if self.status_log:
                     self.status_log.log_status('No commands available.', 'warning')
                 return
-            self.push_screen(CommandPalette(self._command_items), self._on_command_selected)
+            palette = CommandPalette(self._command_items)
+            self.push_screen(palette, self._on_command_selected)
 
         def _on_command_selected(self, command: Optional[CommandItem]) -> None:
             if not command:
                 return
             self._schedule_task(self._execute_command_item(command))
+            if self.input:
+                self.input.value = ''
+                self.set_focus(self.input)
+            self._clear_command_hint()
 
         async def _execute_command_item(self, command: CommandItem) -> None:
             handler = command.handler or {}
@@ -282,6 +344,7 @@ if TEXTUAL_AVAILABLE:
                     pass
                 self._refresh_context_panel()
                 self._check_auto_submit()
+                self._clear_command_hint()
                 return
 
             action_name = handler.get('action') or handler.get('name')
@@ -323,6 +386,7 @@ if TEXTUAL_AVAILABLE:
                     pass
                 self._refresh_context_panel()
                 self._check_auto_submit()
+                self._clear_command_hint()
                 return
 
             await self._drive_action(action, argv)
@@ -332,6 +396,7 @@ if TEXTUAL_AVAILABLE:
                 pass
             self._refresh_context_panel()
             self._check_auto_submit()
+            self._clear_command_hint()
 
         async def _drive_action(self, action: Any, argv: List[str]) -> None:
             pending = ('run', argv)
@@ -359,6 +424,70 @@ if TEXTUAL_AVAILABLE:
 
         async def _prompt_for_interaction(self, need: InteractionNeeded) -> Any:
             return await self.push_screen_wait(InteractionModal(need.kind, dict(need.spec)))
+
+        def _find_command_suggestions(self, line: str) -> Tuple[List[CommandItem], str]:
+            if not line.startswith('/'):
+                return [], ''
+            if not self._command_specs:
+                return [], ''
+            raw = line[1:]
+            if not raw:
+                return self._top_level_commands, ''
+            has_space = raw.endswith(' ')
+            try:
+                import shlex
+                tokens = shlex.split(raw, posix=True)
+            except Exception:
+                tokens = raw.strip().split()
+            if not tokens:
+                return self._top_level_commands[:max_items], ''
+            first_token = tokens[0]
+            first_lower = first_token.lower()
+            top_matches = [item for item in self._top_level_commands if item.title.lower().startswith(f'/{first_lower}')]
+            if len(tokens) == 1 and not has_space:
+                if top_matches:
+                    return top_matches, first_token
+                return self._top_level_commands, first_token
+
+            command_name = first_token if first_token in self._command_specs else None
+            if not command_name:
+                candidates = [name for name in self._command_specs if name.startswith(first_token)]
+                if len(candidates) == 1:
+                    command_name = candidates[0]
+            if not command_name:
+                highlight = first_token
+                suggestions = top_matches or self._top_level_commands
+                return suggestions, highlight
+
+            if len(tokens) == 1 and not has_space:
+                matches = [item for item in self._top_level_commands if item.path[0] == command_name]
+                return matches, first_token
+
+            sub_items = self._subcommand_map.get(command_name, [])
+            if not sub_items:
+                matches = [item for item in self._top_level_commands if item.path[0] == command_name]
+                return matches, first_token
+
+            sub_fragment = ''
+            if len(tokens) >= 2:
+                sub_fragment = tokens[1]
+            highlight = sub_fragment
+            if sub_fragment:
+                frag_lower = sub_fragment.lower()
+                sub_matches = [
+                    item for item in sub_items
+                    if item.title.lower().startswith(f'/{command_name.lower()} {frag_lower}')
+                ]
+                if not sub_matches:
+                    highlight = ''
+                    sub_matches = sub_items
+            else:
+                sub_matches = sub_items
+            return sub_matches, highlight
+
+        def _clear_command_hint(self) -> None:
+            if self.command_hint:
+                self.command_hint.update_suggestions([], prefix='')
 
         # ----- chat execution ----------------------------------------
         async def _run_turn(self, message: str) -> None:

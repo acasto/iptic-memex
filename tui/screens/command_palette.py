@@ -28,10 +28,11 @@ class CommandPalette(ModalScreen[Optional[CommandItem]]):
 
     BINDINGS = [Binding("escape", "close", "Close")]
 
-    def __init__(self, commands: List[CommandItem]) -> None:
+    def __init__(self, commands: List[CommandItem], *, initial_query: str = "") -> None:
         super().__init__()
         self._all = list(commands)
         self._filtered = list(commands)
+        self._initial_query = initial_query
 
     def compose(self) -> ComposeResult:
         with Vertical(id="command_palette"):
@@ -42,7 +43,9 @@ class CommandPalette(ModalScreen[Optional[CommandItem]]):
             yield Static(Text("Enter to select · Esc to cancel", style="dim"))
 
     async def on_mount(self) -> None:
-        self._refresh_list()
+        if self._initial_query:
+            self.search.value = self._initial_query
+        self._apply_query(self._initial_query)
         self.set_focus(self.search)
 
     def _refresh_list(self) -> None:
@@ -55,13 +58,16 @@ class CommandPalette(ModalScreen[Optional[CommandItem]]):
             except Exception:
                 pass
 
-    def on_input_changed(self, event: Input.Changed) -> None:  # type: ignore[override]
-        query = (event.value or "").strip().lower()
+    def _apply_query(self, raw_query: str) -> None:
+        query = (raw_query or "").strip().lower()
         if not query:
             self._filtered = list(self._all)
         else:
             self._filtered = [cmd for cmd in self._all if query in cmd.title.lower() or query in cmd.help.lower()]
         self._refresh_list()
+
+    def on_input_changed(self, event: Input.Changed) -> None:  # type: ignore[override]
+        self._apply_query(event.value)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:  # type: ignore[override]
         if self._filtered:
@@ -73,4 +79,3 @@ class CommandPalette(ModalScreen[Optional[CommandItem]]):
 
     def action_close(self) -> None:
         self.dismiss(None)
-

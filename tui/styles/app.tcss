@@ -37,6 +37,7 @@ Screen {
     column-span: 2;
     padding: 1 2;
     border-top: solid $surface;
+    align-vertical: bottom;
 }
 
 Footer {
@@ -53,4 +54,10 @@ Footer {
     padding: 1 2;
     border: solid $surface;
     width: 60;
+}
+
+#command_hint {
+    width: 1fr;
+    margin-bottom: 1;
+    color: $text;
 }
