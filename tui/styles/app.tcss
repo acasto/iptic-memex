@@ -19,6 +19,9 @@ Screen {
 }
 
 #input_row {
+    dock: bottom;
+    height: auto;
+    max-height: 20%;
     padding: 1 2;
     border-top: solid $surface;
 }
