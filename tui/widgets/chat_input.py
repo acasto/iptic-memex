@@ -27,62 +27,20 @@ class ChatInput(TextArea):
     async def _on_key(self, event: events.Key) -> None:  # type: ignore[override]
         """Intercept key presses before Textual inserts characters."""
 
-        key = event.key.lower()
-        aliases = {alias.lower() for alias in getattr(event, "aliases", [])}
-        ctrl = bool(getattr(event, "ctrl", False))
-        shift = bool(getattr(event, "shift", False))
-        base = key.split('+')[-1]
+        if event.key == "shift+enter" or event.key == "ctrl+j":
+            event.stop()
+            event.prevent_default()
+            start, end = self.selection
+            self._replace_via_keyboard("\n", start, end)
+            return
 
-        # Enter submits when no modifiers
-        if base in {"enter", "return"} and not ctrl and not shift:
-            event.stop(); event.prevent_default()
+        if event.key == "enter":
+            event.stop()
+            event.prevent_default()
             self.post_message(self.SendRequested(self.text))
-            return
-
-        # Ctrl+J inserts newline
-        if (base == "j" and ctrl) or "ctrl+j" in aliases:
-            event.stop(); event.prevent_default()
-            start, end = self.selection
-            self._replace_via_keyboard("\n", start, end)
-            return
-
-        # Shift+Enter inserts newline
-        if (base in {"enter", "return"} and shift) or "shift+enter" in aliases:
-            event.stop(); event.prevent_default()
-            start, end = self.selection
-            self._replace_via_keyboard("\n", start, end)
             return
 
         await super()._on_key(event)
-
-    async def handle_key(self, event: events.Key) -> bool:  # type: ignore[override]
-        key = event.key.lower()
-        aliases = {alias.lower() for alias in getattr(event, "aliases", [])}
-        ctrl = bool(getattr(event, "ctrl", False))
-        shift = bool(getattr(event, "shift", False))
-        base = key.split('+')[-1]
-
-        if base in {"enter", "return"} and not ctrl and not shift:
-            event.prevent_default()
-            event.stop()
-            self.post_message(self.SendRequested(self.text))
-            return True
-        if (base == "j" and ctrl) or "ctrl+j" in aliases:
-            event.prevent_default()
-            event.stop()
-            self.insert_text("\n")
-            return True
-        if (base in {"enter", "return"} and shift) or "shift+enter" in aliases:
-            event.prevent_default()
-            event.stop()
-            self.insert_text("\n")
-            return True
-        return await super().handle_key(event)
-
-    def check_consume_key(self, key: str, character: str | None = None) -> bool:  # type: ignore[override]
-        if key.lower() in {"enter", "return"}:
-            return True
-        return super().check_consume_key(key, character)
 
     def clear_and_focus(self) -> None:
         self.text = ""

@@ -154,7 +154,7 @@ if TEXTUAL_AVAILABLE:
                 except Exception:
                     pass
             if self.command_hint:
-                self.command_hint.display = False
+                self.command_hint.styles.visibility = "hidden"
             self._emit_status("Welcome to iptic-memex TUI. Press Ctrl+S to toggle streaming.", 'info')
             try:
                 params = self.session.get_params() or {}
@@ -267,7 +267,7 @@ if TEXTUAL_AVAILABLE:
 
         def action_open_commands(self) -> None:
             if self.command_hint:
-                self.command_hint.display = False
+                self.command_hint.styles.visibility = "hidden"
             if not self._command_controller.has_commands:
                 self._emit_status('No commands available.', 'warning')
                 return

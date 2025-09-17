@@ -43,6 +43,7 @@ Footer {
 
 #command_hint {
     width: 1fr;
+    min-height: 1;
     margin-bottom: 1;
     color: $text;
 }
