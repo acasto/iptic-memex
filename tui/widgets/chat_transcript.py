@@ -84,6 +84,17 @@ class ChatTranscript(RichLog):
         self.entries.clear()
         self._render_entries()
 
+    def set_role_customization(
+        self,
+        role_titles: Optional[dict[str, str]] = None,
+        role_styles: Optional[dict[str, str]] = None,
+    ) -> None:
+        """Update role display overrides and re-render existing entries."""
+
+        self._role_titles = dict(role_titles or {})
+        self._role_styles = dict(role_styles or {})
+        self._render_entries()
+
     def _render_entries(self) -> None:
         self.clear()
         if not self.entries:

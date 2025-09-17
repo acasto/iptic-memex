@@ -24,6 +24,10 @@ class InteractionModal(ModalScreen[Optional[Any]]):
         self.kind = kind
         self.spec = spec or {}
         self._choice_entries: list[tuple[str, Any]] = []
+        self._default_choice = self.spec.get('default')
+        self._default_bool: Optional[bool] = None
+        if self.kind == 'bool' and self._default_choice is not None:
+            self._default_bool = bool(self._default_choice)
 
     def compose(self) -> ComposeResult:
         prompt = str(self.spec.get("prompt") or self.spec.get("message") or "Input required")
@@ -43,9 +47,11 @@ class InteractionModal(ModalScreen[Optional[Any]]):
                     hint = "Enter submits · Esc cancels (multi-line supported)"
                 yield Static(Text(hint, style="dim"), id="interaction_hint")
             elif self.kind == "bool":
+                self.yes_button = Button("Yes", id="yes")
+                self.no_button = Button("No", id="no")
                 with Horizontal(id="interaction_bool_buttons"):
-                    yield Button("Yes", id="yes")
-                    yield Button("No", id="no")
+                    yield self.yes_button
+                    yield self.no_button
             elif self.kind == "choice":
                 options = list(self.spec.get("options") or self.spec.get("choices") or [])
                 self._choice_entries = []
@@ -70,10 +76,26 @@ class InteractionModal(ModalScreen[Optional[Any]]):
                     for label, data in self._choice_entries:
                         item = ListItem(Static(label))
                         setattr(item, "choice_value", data)
+                        setattr(item, "choice_label", label)
                         await self.list_view.append(item)
                     self._choice_entries = []
-                self.list_view.index = 0
+                default_value = self._default_choice
+                target_index = 0
+                if default_value is not None:
+                    for idx, item in enumerate(self.list_view.children):
+                        val = getattr(item, "choice_value", None)
+                        label = getattr(item, "choice_label", None)
+                        if val == default_value or label == default_value:
+                            target_index = idx
+                            break
+                self.list_view.index = target_index
                 self.set_focus(self.list_view)
+            except Exception:
+                pass
+        if hasattr(self, "yes_button") and hasattr(self, "no_button"):
+            target = self.no_button if self._default_bool is False else self.yes_button
+            try:
+                self.set_focus(target)
             except Exception:
                 pass
 
@@ -108,6 +130,32 @@ class InteractionModal(ModalScreen[Optional[Any]]):
                     self.set_focus(list_view)
                 except Exception:
                     pass
+            return
+        if self.kind == "bool" and event.key in ("left", "right", "tab", "shift+tab"):
+            event.prevent_default()
+            event.stop()
+            focus = self.focused
+            target = None
+            if focus is self.yes_button or focus is None:
+                target = self.no_button if event.key in ("right", "tab") else self.yes_button
+            elif focus is self.no_button:
+                target = self.yes_button if event.key in ("left", "shift+tab") else self.no_button
+            if target is not None:
+                try:
+                    self.set_focus(target)
+                except Exception:
+                    pass
+            return
+        if self.kind == "bool" and event.key == "enter":
+            event.prevent_default()
+            event.stop()
+            focus = self.focused
+            if focus is self.yes_button:
+                self.dismiss(True)
+            elif focus is self.no_button:
+                self.dismiss(False)
+            else:
+                self.dismiss(self._default_bool if self._default_bool is not None else True)
             return
         parent_on_key = getattr(super(), "on_key", None)
         if callable(parent_on_key):

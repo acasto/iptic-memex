@@ -72,19 +72,10 @@ if TEXTUAL_AVAILABLE:
             self._command_controller = CommandController()
             self._input_completion = InputCompletionManager()
 
-            params = self.session.get_params() or {}
-            response_label = str(params.get('response_label') or '').strip()
-            response_label_color = str(params.get('response_label_color') or '').strip()
             self._chat_role_titles: Dict[str, str] = {}
             self._chat_role_styles: Dict[str, str] = {}
-            if response_label:
-                self._chat_role_titles['assistant'] = response_label
-            if response_label_color:
-                color_tokens = {token.lower() for token in response_label_color.replace('-', ' ').split()}
-                color_style = response_label_color
-                if 'bold' not in color_tokens:
-                    color_style = f"bold {response_label_color}"
-                self._chat_role_styles['assistant'] = color_style
+            params = self.session.get_params() or {}
+            self._apply_response_label(params)
 
             self._stream_enabled: bool = bool((self.session.get_params() or {}).get('stream'))
             self._pending_tasks: set[asyncio.Task[Any]] = set()
@@ -121,7 +112,7 @@ if TEXTUAL_AVAILABLE:
             model_name = params.get('model', 'unknown')
             provider = params.get('provider', 'unknown')
             status = Static(
-                f"iptic-memex TUI · Model: {model_name} · Provider: {provider} · Stream: {'on' if self._stream_enabled else 'off'}",
+                self._status_bar_text(model_name, provider, self._stream_enabled),
                 id="status_bar",
             )
             yield status
@@ -193,6 +184,8 @@ if TEXTUAL_AVAILABLE:
 
         # ----- input handling -----------------------------------------
         async def on_input_submitted(self, event: Input.Submitted) -> None:
+            if getattr(event.input, 'id', None) != 'input':
+                return
             message = (event.value or '').strip()
             event.input.value = ''
             self._clear_command_hint()
@@ -313,10 +306,42 @@ if TEXTUAL_AVAILABLE:
                 self._emit_status(f"Unknown action '{action_name}'.", 'error', display=False)
                 return
 
-            fixed_args = handler.get('args') or []
+            fixed_args = list(handler.get('args') or [])
+            if extra_argv:
+                trim = len(extra_argv)
+                if trim >= len(fixed_args):
+                    fixed_args = []
+                else:
+                    fixed_args = fixed_args[:-trim]
             if isinstance(fixed_args, str):
                 fixed_args = [fixed_args]
             argv = list(str(a) for a in fixed_args)
+
+            if action_name == 'set_model' and not argv and not (extra_argv and any(str(a).strip() for a in extra_argv)):
+                chosen = await self._prompt_model_choice()
+                if not chosen:
+                    self._emit_status('Model selection cancelled.', 'warning', display=False)
+                    self._clear_command_hint()
+                    return
+                argv.append(chosen)
+
+            if action_name == 'manage_chats' and path and path[0] == 'save' and not extra_argv:
+                save_spec = await self._prompt_save_chat()
+                if not save_spec:
+                    self._emit_status('Chat save cancelled.', 'warning', display=False)
+                    self._clear_command_hint()
+                    return
+                result = await asyncio.to_thread(action._handle_headless, {
+                    'mode': 'save',
+                    'filename': save_spec['filename'],
+                    'include_context': save_spec['include_context'],
+                    'overwrite': save_spec.get('overwrite', False),
+                })
+                self._handle_command_result(path, result)
+                self._refresh_context_panel()
+                self.turn_executor.check_auto_submit()
+                self._clear_command_hint()
+                return
 
             # Intercept bare /clear to behave like Ctrl+L and just clear the view.
             if path and path[0] == 'clear' and (len(path) < 2 or not path[1]):
@@ -385,12 +410,17 @@ if TEXTUAL_AVAILABLE:
                             pass
                     return
 
+            prev_model = (self.session.get_params() or {}).get('model') if action_name == 'set_model' else None
             result = await self._drive_action(action, argv)
             try:
                 self.session.utils.logger.tui_event('command_action', {'path': ' '.join(path or []), 'action': action_name, 'method': None, 'argv': argv})
             except Exception:
                 pass
             self._handle_command_result(path, result)
+            if action_name == 'set_model':
+                new_model = (self.session.get_params() or {}).get('model')
+                if new_model and new_model != prev_model:
+                    self._on_model_changed(str(new_model))
             should_refresh_chat = False
             if path:
                 primary = path[0] or ''
@@ -562,12 +592,102 @@ if TEXTUAL_AVAILABLE:
             if payload.get('ok'):
                 label = ' '.join(path or []) if path else 'command'
                 self._emit_status(f"/{label} completed.", 'info')
+                if payload.get('model'):
+                    self._on_model_changed(str(payload.get('model')))
 
         def _emit_status(self, text: str, level: str, *, display: bool = True) -> None:
             self._output_bridge.record_status(text, level)
             if display:
                 self._output_bridge.display_status_message(text, level)
             self._output_bridge.log_status(text, level)
+
+        def _status_bar_text(self, model: str, provider: str, stream_enabled: bool) -> str:
+            return (
+                f"iptic-memex TUI · Model: {model or 'unknown'} · Provider: {provider or 'unknown'} · "
+                f"Stream: {'on' if stream_enabled else 'off'}"
+            )
+
+        def _update_status_bar(self) -> None:
+            try:
+                bar = self.query_one('#status_bar', Static)
+            except Exception:
+                return
+            params = self.session.get_params() or {}
+            model_name = params.get('model', 'unknown')
+            provider = params.get('provider', 'unknown')
+            bar.update(self._status_bar_text(model_name, provider, self._stream_enabled))
+
+        def _apply_response_label(self, params: Optional[Dict[str, Any]] = None) -> None:
+            params = params or (self.session.get_params() or {})
+            response_label = str(params.get('response_label') or '').strip()
+            response_label_color = str(params.get('response_label_color') or '').strip()
+
+            titles: Dict[str, str] = {}
+            styles: Dict[str, str] = {}
+            if response_label:
+                titles['assistant'] = response_label
+            if response_label_color:
+                color_tokens = {token.lower() for token in response_label_color.replace('-', ' ').split()}
+                color_style = response_label_color
+                if 'bold' not in color_tokens:
+                    color_style = f"bold {response_label_color}"
+                styles['assistant'] = color_style
+
+            self._chat_role_titles = titles
+            self._chat_role_styles = styles
+            if self.chat_view:
+                self.chat_view.set_role_customization(titles, styles)
+
+        def _on_model_changed(self, model_name: str) -> None:
+            params = self.session.get_params() or {}
+            new_stream = bool(params.get('stream'))
+            if new_stream != self._stream_enabled:
+                self._stream_enabled = new_stream
+                self.turn_executor.set_stream_enabled(new_stream)
+            self._apply_response_label(params)
+            self._update_status_bar()
+
+        async def _prompt_model_choice(self) -> Optional[str]:
+            models_raw = self.session.list_models() or {}
+            if isinstance(models_raw, dict):
+                model_map = dict(models_raw)
+            else:
+                model_map = {str(name): {} for name in list(models_raw)}
+
+            if not model_map:
+                self._emit_status('No models available to select.', 'error')
+                return None
+
+            current_model = str((self.session.get_params() or {}).get('model') or '').strip()
+
+            entries: List[tuple[str, str]] = []
+            for name in sorted(model_map.keys()):
+                meta = model_map.get(name) or {}
+                provider = str(meta.get('provider') or '').strip()
+                is_default = str(meta.get('default') or '').lower() in {'true', '1', 'yes'}
+                parts = [name]
+                if provider:
+                    parts.append(f"[{provider}]")
+                if is_default:
+                    parts.append('(default)')
+                if name == current_model:
+                    parts.append('(current)')
+                label = ' '.join(parts)
+                entries.append((name, label))
+
+            # Move current model to the top of the list for quick confirmation
+            if current_model:
+                entries.sort(key=lambda item: (0 if item[0] == current_model else 1, item[1].lower()))
+            else:
+                entries.sort(key=lambda item: item[1].lower())
+
+            choices = [{'label': label, 'value': name} for name, label in entries]
+            selection = await self._wait_for_screen(
+                InteractionModal('choice', {'prompt': 'Select a model', 'choices': choices})
+            )
+            if not selection:
+                return None
+            return str(selection)
 
         async def _handle_manage_chats_command(
             self,
@@ -657,11 +777,7 @@ if TEXTUAL_AVAILABLE:
             self.turn_executor.set_stream_enabled(self._stream_enabled)
             status = f"Streaming {'enabled' if self._stream_enabled else 'disabled'}"
             self._emit_status(status, 'info', display=False)
-            bar = self.query_one('#status_bar', Static)
-            params = self.session.get_params() or {}
-            model_name = params.get('model', 'unknown')
-            provider = params.get('provider', 'unknown')
-            bar.update(f"iptic-memex TUI · Model: {model_name} · Provider: {provider} · Stream: {'on' if self._stream_enabled else 'off'}")
+            self._update_status_bar()
 
         def action_refresh_contexts(self) -> None:
             self._refresh_context_panel()
