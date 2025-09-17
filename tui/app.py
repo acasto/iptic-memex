@@ -219,7 +219,27 @@ if TEXTUAL_AVAILABLE:
                 return
             if self.chat_view:
                 self.chat_view.add_message('user', message)
-            self._schedule_task(self.turn_executor.run(message))
+
+            async def _run_and_handle_turn() -> None:
+                result = await self.turn_executor.run(message)
+                self._handle_turn_result(result)
+
+            self._schedule_task(_run_and_handle_turn())
+
+        def _handle_turn_result(self, result: Any) -> None:
+            if result:
+                self._handle_context_events(result)
+            self._refresh_context_panel()
+            self.turn_executor.check_auto_submit()
+
+        def _handle_context_events(self, result: Any) -> None:
+            events = getattr(result, 'context_events', None)
+            if not events:
+                return
+            for event in events:
+                message = event.get('message')
+                if message:
+                    self._emit_status(message, 'info')
 
         def on_button_pressed(self, event: Button.Pressed) -> None:  # type: ignore[override]
             if event.button.id == "send_button":
@@ -255,7 +275,8 @@ if TEXTUAL_AVAILABLE:
             }
             path = parsed.get('path') or []
             argv = parsed.get('argv') or []
-            await self._execute_command_handler(handler, path, argv)
+            result = await self._execute_command_handler(handler, path, argv)
+            self._handle_turn_result(result)
 
         # ----- commands ------------------------------------------------
         def _load_commands(self) -> None:
@@ -277,30 +298,35 @@ if TEXTUAL_AVAILABLE:
         def _on_command_selected(self, command: Optional[CommandItem]) -> None:
             if not command:
                 return
-            self._schedule_task(self._execute_command_item(command))
+
+            async def _run_and_handle_command() -> None:
+                result = await self._execute_command_item(command)
+                self._handle_turn_result(result)
+
+            self._schedule_task(_run_and_handle_command())
             if self.input:
                 self._input_completion.mark_programmatic_update()
                 self.input.value = ''
                 self.set_focus(self.input)
             self._clear_command_hint()
 
-        async def _execute_command_item(self, command: CommandItem) -> None:
+        async def _execute_command_item(self, command: CommandItem) -> Any:
             handler = command.handler or {}
-            await self._execute_command_handler(handler, command.path, [])
+            return await self._execute_command_handler(handler, command.path, [])
 
-        async def _execute_command_handler(self, handler: Dict[str, Any], path: List[str], extra_argv: Optional[List[str]]) -> None:
+        async def _execute_command_handler(self, handler: Dict[str, Any], path: List[str], extra_argv: Optional[List[str]]) -> Any:
             if not handler:
                 self._emit_status('Invalid command handler.', 'error', display=False)
-                return
+                return None
             if handler.get('type') == 'builtin':
                 if path and path[0] == 'quit':
                     self.action_quit()
-                    return
+                    return None
                 try:
                     ok, err = await asyncio.to_thread(self.command_registry.execute, path, {'argv': list(extra_argv or [])})
                 except SystemExit:
                     self.action_quit()
-                    return
+                    return None
                 try:
                     self.session.utils.logger.tui_event('command_builtin', {'path': ' '.join(path or []), 'ok': bool(ok)})
                 except Exception:
@@ -310,16 +336,16 @@ if TEXTUAL_AVAILABLE:
                 self._refresh_context_panel()
                 self.turn_executor.check_auto_submit()
                 self._clear_command_hint()
-                return
+                return None
 
             action_name = handler.get('action') or handler.get('name')
             if not action_name:
                 self._emit_status('Command missing action mapping.', 'error', display=False)
-                return
+                return None
             action = self.session.get_action(action_name)
             if not action:
                 self._emit_status(f"Unknown action '{action_name}'.", 'error', display=False)
-                return
+                return None
 
             fixed_args = list(handler.get('args') or [])
             if isinstance(fixed_args, str):
@@ -331,7 +357,7 @@ if TEXTUAL_AVAILABLE:
                 if not chosen:
                     self._emit_status('Model selection cancelled.', 'warning', display=False)
                     self._clear_command_hint()
-                    return
+                    return None
                 argv.append(chosen)
 
             # Intercept bare /clear to behave like Ctrl+L and just clear the view.
@@ -340,7 +366,7 @@ if TEXTUAL_AVAILABLE:
                     self.chat_view.clear_messages()
                 self._emit_status('Screen cleared.', 'info')
                 self._clear_command_hint()
-                return
+                return None
 
             if action_name == 'manage_chats':
                 handled = await self._handle_manage_chats_command(action, path, argv, extra_argv)
@@ -351,7 +377,7 @@ if TEXTUAL_AVAILABLE:
                     self._refresh_context_panel()
                     self.turn_executor.check_auto_submit()
                     self._clear_command_hint()
-                    return
+                    return None
 
             if extra_argv:
                 argv.extend(str(a) for a in extra_argv)
@@ -367,7 +393,7 @@ if TEXTUAL_AVAILABLE:
                         result = await asyncio.to_thread(cls_fn, self.session, *argv)
                     else:
                         self._emit_status(f"Handler method '{method_name}' not found.", 'error', display=False)
-                        return
+                        return None
                 self._emit_status('Command executed.', 'info', display=False)
                 try:
                     self.session.utils.logger.tui_event('command_action', {'path': ' '.join(path or []), 'action': action_name, 'method': method_name, 'argv': argv})
@@ -377,7 +403,7 @@ if TEXTUAL_AVAILABLE:
                 self._refresh_context_panel()
                 self.turn_executor.check_auto_submit()
                 self._clear_command_hint()
-                return
+                return result
 
             if action_name == 'load_file':
                 has_path_arg = any((str(arg).strip()) for arg in argv)
@@ -399,7 +425,7 @@ if TEXTUAL_AVAILABLE:
                                 self.input.cursor_position = len(base)
                         except Exception:
                             pass
-                    return
+                    return None
 
             prev_model = (self.session.get_params() or {}).get('model') if action_name == 'set_model' else None
             result = await self._drive_action(action, argv)
@@ -427,8 +453,9 @@ if TEXTUAL_AVAILABLE:
             self._refresh_context_panel()
             self.turn_executor.check_auto_submit()
             self._clear_command_hint()
+            return result
 
-        async def _drive_action(self, action: Any, argv: List[str]) -> None:
+        async def _drive_action(self, action: Any, argv: List[str]) -> Any:
             pending = ('run', argv)
             while True:
                 try:
@@ -443,11 +470,11 @@ if TEXTUAL_AVAILABLE:
                     response = await self._prompt_for_interaction(need)
                     if response is None:
                         self._emit_status('Command cancelled.', 'warning', display=False)
-                        return
+                        return None
                     pending = ('resume', (need.state_token, response))
                 except Exception as exc:
                     self._emit_status(f'Command error: {exc}', 'error', display=False)
-                    return
+                    return None
 
         async def _prompt_for_interaction(self, need: InteractionNeeded) -> Any:
             return await self.push_screen_wait(InteractionModal(need.kind, dict(need.spec)))

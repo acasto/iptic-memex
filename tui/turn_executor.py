@@ -54,7 +54,18 @@ class TurnExecutor:
         self._check_auto_submit()
 
     # --- public entrypoint --------------------------------------------
-    async def run(self, message: str) -> None:
+    # NOTE: threading + return value
+    # This coroutine is awaited from the Textual event loop (the app thread). The heavy
+    # work (provider turn) runs in a worker via asyncio.to_thread(...), so it’s safe to
+    # call _finish_turn(...) directly here without marshaling through call_in_app_thread.
+    # If run() is ever awaited from a non-app thread, switch back to:
+    #     self._call_in_app_thread(self._finish_turn, self._active_message_id, result)
+    #
+    # The method returns the TurnResult (or None on error) so callers can react to the
+    # outcome (e.g., emit context_events, refresh panels, auto-submit checks) after the
+    # UI has been updated. It also manages the streaming message lifecycle by creating
+    # an assistant message up front and finalizing it in _finish_turn(...).
+    async def run(self, message: str) -> Any:
         if self._chat_view:
             self._active_message_id = self._chat_view.add_message(
                 "assistant",
@@ -65,16 +76,17 @@ class TurnExecutor:
             self._active_message_id = None
 
         def _run_turn() -> Any:
-            options = TurnOptions(stream=self._stream_enabled, suppress_context_print=True)
+            options = TurnOptions(stream=self._stream_enabled)
             return self.turn_runner.run_user_turn(message, options=options)
 
         try:
             result = await asyncio.to_thread(_run_turn)
         except Exception as exc:  # pragma: no cover - best-effort safety
             self._call_in_app_thread(self._handle_turn_error, str(exc))
-            return
+            return None
 
-        self._call_in_app_thread(self._finish_turn, self._active_message_id, result)
+        self._finish_turn(self._active_message_id, result)
+        return result
 
     # --- internal helpers ---------------------------------------------
     def _finish_turn(self, msg_id: Optional[str], result: Any) -> None:
