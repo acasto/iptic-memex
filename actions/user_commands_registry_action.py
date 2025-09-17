@@ -137,9 +137,19 @@ class UserCommandsRegistryAction(InteractionAction):
             'save': {
                 'help': 'Save chat or code',
                 'sub': {
-                    'chat': {'type': 'action', 'name': 'manage_chats', 'args': ['save']},
+                    'chat': {
+                        'type': 'action',
+                        'name': 'manage_chats',
+                        'args': ['save'],
+                        'complete': {'type': 'builtin', 'name': 'chat_paths'},
+                    },
                     'last': {'type': 'action', 'name': 'manage_chats', 'args': ['save', False, 'last']},
-                    'full': {'type': 'action', 'name': 'manage_chats', 'args': ['save', 'full']},
+                    'full': {
+                        'type': 'action',
+                        'name': 'manage_chats',
+                        'args': ['save', 'full'],
+                        'complete': {'type': 'builtin', 'name': 'chat_paths'},
+                    },
                     'code': {'type': 'action', 'name': 'save_code'},
                 },
             },

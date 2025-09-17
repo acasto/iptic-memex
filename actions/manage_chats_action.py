@@ -2,9 +2,13 @@ from base_classes import StepwiseAction, Completed
 import os
 import re
 from datetime import datetime
+from typing import Any, Dict, Iterable, Optional, Tuple, Union
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
+
+
+ChatTurns = Union[None, str, Tuple[str, Optional[int]]]
 
 
 class ManageChatsAction(StepwiseAction):
@@ -21,39 +25,43 @@ class ManageChatsAction(StepwiseAction):
     def __init__(self, session):
         self.session = session
         self.chat = session.get_context('chat')
-        self._state: dict = {}
+        self._state: Dict[str, Any] = {}
 
     # Stepwise entrypoints
     def start(self, args=None, content=None) -> Completed:
-        if isinstance(args, dict) and (args.get('mode')):
-            return Completed(self._handle_headless(args))
+        if isinstance(args, dict) and args.get('mode'):
+            return Completed(self._handle_headless(dict(args)))
 
-        # Support legacy list-args shortcuts from user commands (e.g., ['list'], ['save','full'], ['save','last', '3'])
-        if isinstance(args, (list, tuple)) and args:
-            try:
-                cmd = str(args[0] or '').strip().lower()
-            except Exception:
-                cmd = ''
-            if cmd == 'list':
-                # Emit list to UI for chat mode and return structured payload
+        cli_spec = self._parse_cli_args(args)
+        if cli_spec:
+            mode = cli_spec['mode']
+            if mode == 'list':
+                items = self._list_chats()
                 try:
-                    self.list_chats()
+                    if not items:
+                        self.session.ui.emit('status', {'message': 'No chat files found.'})
+                    else:
+                        self.session.ui.emit('status', {'message': f"Found {len(items)} chat file(s)."})
                 except Exception:
                     pass
-                return Completed({'ok': True, 'mode': 'list', 'chats': self._list_chats()})
-            if cmd == 'save':
-                include_context = False
-                turns = None
-                try:
-                    if len(args) > 1 and str(args[1]).lower() == 'full':
-                        include_context = True
-                    if len(args) > 1 and str(args[1]).lower() == 'last':
-                        turns = 'last'
-                    if len(args) > 3 and str(args[2]).lower() == 'last' and str(args[3]).isdigit():
-                        turns = ('last', int(args[3]))
-                except Exception:
-                    pass
-                return Completed(self._handle_headless({'mode': 'save', 'include_context': include_context, 'turns': turns}))
+                return Completed({'ok': True, 'mode': 'list', 'chats': items})
+            if mode == 'load':
+                filename = cli_spec.get('filename')
+                if filename:
+                    return self._complete_load(filename)
+                # Fall back to interactive prompt when filename missing
+                return self._start_load_interactive()
+            if mode == 'save':
+                if cli_spec.get('headless'):
+                    payload = {
+                        'mode': 'save',
+                        'filename': cli_spec.get('filename'),
+                        'include_context': cli_spec.get('include_context', False),
+                        'turns': cli_spec.get('turns'),
+                        'overwrite': cli_spec.get('overwrite', False),
+                    }
+                    return Completed(self._handle_headless(payload))
+                return self._begin_save_flow(cli_spec)
 
         choices = ['List chats', 'Save chat', 'Load chat', 'Quit']
         sel = self.session.ui.ask_choice('Manage chats:', choices, default=choices[0])
@@ -64,15 +72,12 @@ class ManageChatsAction(StepwiseAction):
             response = response['response']
 
         phase = self._state.get('phase')
-        if phase == 'save_wait_filename':
-            self._state['filename'] = str(response or '')
-            self._state['phase'] = 'save_wait_include'
-            inc = self.session.ui.ask_bool('Include context in save?', default=False)
-            if inc is None:
-                return Completed({'ok': True})
-            return self._complete_save(include_context=bool(inc))
-        if phase == 'save_wait_include':
-            return self._complete_save(include_context=bool(response))
+        if phase == 'await_filename':
+            return self._handle_filename_response(response)
+        if phase == 'await_include_context':
+            return self._handle_include_context_response(response)
+        if phase == 'await_overwrite':
+            return self._handle_overwrite_response(response)
         if phase == 'load_wait_filename':
             filename = str(response or '')
             return self._complete_load(filename)
@@ -93,14 +98,9 @@ class ManageChatsAction(StepwiseAction):
                 pass
             return Completed({'ok': True, 'mode': 'list', 'chats': items})
         if sel == 'Save chat':
-            self._state = {'phase': 'save_wait_filename'}
-            params = self.session.get_params()
+            params = self.session.get_params() or {}
             chat_format = params.get('chat_format', 'md')
-            default_filename = f"chat_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.{chat_format}"
-            fname = self.session.ui.ask_text('Filename to save:', default=default_filename)
-            if fname is None:
-                return Completed({'ok': True})
-            return self.resume('__implicit__', fname)
+            return self._begin_save_flow({'mode': 'save', 'chat_format': chat_format})
         if sel == 'Load chat':
             self._state = {'phase': 'load_wait_filename'}
             params = self.session.get_params()
@@ -111,30 +111,53 @@ class ManageChatsAction(StepwiseAction):
             return self._complete_load(str(fname or ''))
         return Completed({'ok': True, 'quit': True})
 
-    def _complete_save(self, *, include_context: bool) -> Completed:
-        params = self.session.get_params()
-        chat_format = params.get('chat_format', 'md')
+    def _begin_save_flow(self, spec: Dict[str, Any]) -> Completed:
+        params = self.session.get_params() or {}
+        chat_format = spec.get('chat_format') or params.get('chat_format', 'md') or 'md'
+        chats_directory = params.get('chats_directory', 'chats')
+
+        self._state = {
+            'mode': 'save',
+            'phase': None,
+            'chat_format': chat_format,
+            'chats_directory': chats_directory,
+            'filename': spec.get('filename'),
+            'include_context': spec.get('include_context'),
+            'turns': spec.get('turns'),
+            'overwrite': bool(spec.get('overwrite', False)),
+        }
+
+        if self._state.get('turns') is not None and self._state.get('filename') is None:
+            # When saving partial transcripts (e.g., /save last) keep legacy headless flow
+            payload = {
+                'mode': 'save',
+                'turns': self._state['turns'],
+                'include_context': bool(self._state.get('include_context', False)),
+                'overwrite': bool(self._state.get('overwrite', False)),
+            }
+            return Completed(self._handle_headless(payload))
+
+        return self._continue_save_flow()
+
+    def _continue_save_flow(self) -> Completed:
         filename = self._state.get('filename')
         if not filename:
-            filename = f"chat_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.{chat_format}"
-        if '.' in str(filename):
-            provided_ext = str(filename).rsplit('.', 1)[-1].lower()
-            if provided_ext in {'md', 'txt', 'pdf'}:
-                chat_format = provided_ext
-        if not str(filename).lower().endswith(f'.{chat_format}'):
-            filename = f"{filename}.{chat_format}"
-        chats_directory = params.get('chats_directory', 'chats')
-        os.makedirs(chats_directory, exist_ok=True)
-        full_path = os.path.join(chats_directory, filename)
-        try:
-            self._save_chat_to_file(full_path, include_context, turns=None)
-            try:
-                self.session.ui.emit('status', {'message': f"Chat saved to {full_path}"})
-            except Exception:
-                pass
-            return Completed({'ok': True, 'mode': 'save', 'saved': True, 'filename': filename, 'path': full_path})
-        except Exception as e:
-            return Completed({'ok': False, 'mode': 'save', 'error': str(e)})
+            return self._prompt_for_filename()
+
+        if not self._state.get('full_path'):
+            normalized_name, chat_format, full_path = self._normalize_filename(filename)
+            self._state['filename'] = normalized_name
+            self._state['chat_format'] = chat_format
+            self._state['full_path'] = full_path
+
+        if self._state.get('include_context') is None:
+            include_default = bool(self._state.get('turns'))
+            return self._prompt_for_include_context(default=include_default)
+
+        if not self._state.get('overwrite') and os.path.exists(self._state['full_path']):
+            return self._prompt_for_overwrite()
+
+        return self._finalize_save()
 
     def _complete_load(self, filename: str) -> Completed:
         params = self.session.get_params()
@@ -343,3 +366,205 @@ class ManageChatsAction(StepwiseAction):
         except Exception:
             pass
         return items
+
+    # ----- save flow helpers -------------------------------------------------
+
+    def _parse_cli_args(self, args: Any) -> Optional[Dict[str, Any]]:
+        if not isinstance(args, (list, tuple)) or not args:
+            return None
+        tokens: Iterable[Any] = [a for a in args if a is not None]
+        tokens = list(tokens)
+        if not tokens:
+            return None
+        cmd = str(tokens[0]).strip().lower()
+        if cmd == 'list':
+            return {'mode': 'list'}
+        if cmd == 'load':
+            filename = str(tokens[1]).strip() if len(tokens) > 1 else None
+            return {'mode': 'load', 'filename': filename}
+        if cmd != 'save':
+            return None
+
+        include_context: Optional[bool] = None
+        turns: ChatTurns = None
+        filename: Optional[str] = None
+        overwrite = False
+
+        remainder = list(tokens[1:])
+        idx = 0
+        while idx < len(remainder):
+            token = remainder[idx]
+            if isinstance(token, bool) and include_context is None:
+                include_context = token
+                idx += 1
+                continue
+            token_str = str(token).strip()
+            token_lower = token_str.lower()
+            if token_lower == 'full':
+                include_context = True
+                idx += 1
+                continue
+            if token_lower == 'overwrite':
+                overwrite = True
+                idx += 1
+                continue
+            if token_lower in {'true', 'false'} and include_context is None:
+                include_context = (token_lower == 'true')
+                idx += 1
+                continue
+            if token_lower == 'last':
+                count = None
+                if idx + 1 < len(remainder):
+                    next_tok = remainder[idx + 1]
+                    if self._is_int_like(next_tok):
+                        count = int(next_tok)
+                        idx += 1
+                turns = ('last', count) if count else 'last'
+                idx += 1
+                continue
+            if self._is_int_like(token) and turns and isinstance(turns, tuple) and turns[1] is None:
+                turns = (turns[0], int(token))
+                idx += 1
+                continue
+            if filename is None and token_str:
+                filename = token_str
+            idx += 1
+
+        spec: Dict[str, Any] = {
+            'mode': 'save',
+            'filename': filename,
+            'include_context': include_context,
+            'turns': turns,
+            'overwrite': overwrite,
+        }
+
+        if turns is not None and filename is None:
+            spec['headless'] = True
+
+        return spec
+
+    def _default_filename(self, chat_format: str) -> str:
+        ts = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        return f"chat_{ts}.{chat_format}"
+
+    def _prompt_for_filename(self) -> Completed:
+        self._state['phase'] = 'await_filename'
+        chat_format = self._state.get('chat_format', 'md')
+        default_name = self._default_filename(chat_format)
+        response = self.session.ui.ask_text('Filename to save:', default=default_name)
+        return self._handle_filename_response(response)
+
+    def _handle_filename_response(self, response: Any) -> Completed:
+        self._state['phase'] = None
+        if response is None:
+            return Completed({'ok': False, 'mode': 'save', 'cancelled': True})
+        filename = str(response).strip()
+        if not filename:
+            # Re-prompt for filename when empty
+            return self._prompt_for_filename()
+
+        self._state['filename'] = filename
+        self._state.pop('full_path', None)
+        return self._continue_save_flow()
+
+    def _prompt_for_include_context(self, *, default: bool = False) -> Completed:
+        self._state['phase'] = 'await_include_context'
+        response = self.session.ui.ask_bool('Include context in save?', default=default)
+        return self._handle_include_context_response(response)
+
+    def _handle_include_context_response(self, response: Any) -> Completed:
+        self._state['phase'] = None
+        if response is None:
+            return Completed({'ok': False, 'mode': 'save', 'cancelled': True})
+        self._state['include_context'] = bool(response)
+        return self._continue_save_flow()
+
+    def _prompt_for_overwrite(self) -> Completed:
+        self._state['phase'] = 'await_overwrite'
+        display_name = self._state.get('filename')
+        prompt = f"File '{display_name}' already exists. Overwrite?"
+        response = self.session.ui.ask_bool(prompt, default=False)
+        return self._handle_overwrite_response(response)
+
+    def _handle_overwrite_response(self, response: Any) -> Completed:
+        self._state['phase'] = None
+        if response is None:
+            return Completed({'ok': False, 'mode': 'save', 'cancelled': True})
+        if not bool(response):
+            # User declined overwrite; ask for a new filename
+            self._state['filename'] = None
+            self._state.pop('full_path', None)
+            return self._prompt_for_filename()
+        self._state['overwrite'] = True
+        return self._continue_save_flow()
+
+    def _finalize_save(self) -> Completed:
+        try:
+            include_context = bool(self._state.get('include_context', False))
+            turns = self._state.get('turns')
+            full_path = self._state.get('full_path')
+            if not full_path:
+                normalized_name, chat_format, full_path = self._normalize_filename(self._state['filename'])
+                self._state['filename'] = normalized_name
+                self._state['chat_format'] = chat_format
+                self._state['full_path'] = full_path
+            os.makedirs(os.path.dirname(full_path) or '.', exist_ok=True)
+            self._save_chat_to_file(full_path, include_context, turns)
+            try:
+                self.session.ui.emit('status', {'message': f"Chat saved to {full_path}"})
+            except Exception:
+                pass
+            payload = {
+                'ok': True,
+                'mode': 'save',
+                'saved': True,
+                'filename': self._state.get('filename'),
+                'path': full_path,
+                'include_context': include_context,
+            }
+            self._state = {}
+            return Completed(payload)
+        except Exception as exc:
+            return Completed({'ok': False, 'mode': 'save', 'error': str(exc)})
+
+    def _normalize_filename(self, filename: str) -> Tuple[str, str, str]:
+        params = self.session.get_params() or {}
+        chats_directory = self._state.get('chats_directory') or params.get('chats_directory', 'chats')
+        chat_format = self._state.get('chat_format', params.get('chat_format', 'md') or 'md')
+        name = filename.strip()
+        expanded = os.path.expanduser(name)
+        if os.path.isabs(expanded):
+            base_dir = os.path.dirname(expanded)
+            basename = os.path.basename(expanded)
+        else:
+            base_dir = chats_directory
+            basename = name
+        provided_ext = None
+        if '.' in basename:
+            provided_ext = basename.rsplit('.', 1)[-1].lower()
+        allowed_exts = {'md', 'txt', 'pdf'}
+        if provided_ext in allowed_exts:
+            chat_format = provided_ext
+        if not basename.lower().endswith(f'.{chat_format}'):
+            basename = f"{basename}.{chat_format}"
+        if os.path.isabs(expanded):
+            full_path = os.path.normpath(os.path.join(base_dir, basename))
+        else:
+            full_path = os.path.normpath(os.path.join(os.path.expanduser(base_dir), basename))
+        return basename, chat_format, full_path
+
+    def _is_int_like(self, value: Any) -> bool:
+        try:
+            int(value)
+            return True
+        except (TypeError, ValueError):
+            return False
+
+    def _start_load_interactive(self) -> Completed:
+        self._state = {'phase': 'load_wait_filename'}
+        params = self.session.get_params()
+        chats_directory = params.get('chats_directory', 'chats')
+        fname = self.session.ui.ask_text(f'Filename to load (from {chats_directory}):')
+        if fname is None:
+            return Completed({'ok': True})
+        return self._complete_load(str(fname or ''))

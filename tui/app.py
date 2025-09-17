@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Dict, List, Optional
+import os
+from datetime import datetime
+from typing import Any, Awaitable, Dict, List, Optional, Tuple
 
 try:
     from textual import events
@@ -307,12 +309,6 @@ if TEXTUAL_AVAILABLE:
                 return
 
             fixed_args = list(handler.get('args') or [])
-            if extra_argv:
-                trim = len(extra_argv)
-                if trim >= len(fixed_args):
-                    fixed_args = []
-                else:
-                    fixed_args = fixed_args[:-trim]
             if isinstance(fixed_args, str):
                 fixed_args = [fixed_args]
             argv = list(str(a) for a in fixed_args)
@@ -324,24 +320,6 @@ if TEXTUAL_AVAILABLE:
                     self._clear_command_hint()
                     return
                 argv.append(chosen)
-
-            if action_name == 'manage_chats' and path and path[0] == 'save' and not extra_argv:
-                save_spec = await self._prompt_save_chat()
-                if not save_spec:
-                    self._emit_status('Chat save cancelled.', 'warning', display=False)
-                    self._clear_command_hint()
-                    return
-                result = await asyncio.to_thread(action._handle_headless, {
-                    'mode': 'save',
-                    'filename': save_spec['filename'],
-                    'include_context': save_spec['include_context'],
-                    'overwrite': save_spec.get('overwrite', False),
-                })
-                self._handle_command_result(path, result)
-                self._refresh_context_panel()
-                self.turn_executor.check_auto_submit()
-                self._clear_command_hint()
-                return
 
             # Intercept bare /clear to behave like Ctrl+L and just clear the view.
             if path and path[0] == 'clear' and (len(path) < 2 or not path[1]):
@@ -700,6 +678,12 @@ if TEXTUAL_AVAILABLE:
                 return False
             mode = str(fixed_args[0] or '').lower()
             try:
+                if mode == 'save':
+                    handled, payload = await self._handle_manage_chats_save(action, extra_argv)
+                    if handled:
+                        if payload is not None:
+                            self._handle_command_result(path, payload)
+                        return True
                 if mode == 'list':
                     result = await asyncio.to_thread(action._handle_headless, {'mode': 'list'})
                     self._handle_command_result(path, result)
@@ -734,6 +718,95 @@ if TEXTUAL_AVAILABLE:
                 self._emit_status(f'Manage chats error: {exc}', 'error')
                 return True
             return False
+
+        async def _handle_manage_chats_save(
+            self,
+            action: Any,
+            extra_argv: Optional[List[str]],
+        ) -> Tuple[bool, Optional[Dict[str, Any]]]:
+            params = self.session.get_params() or {}
+            chat_format = params.get('chat_format', 'md') or 'md'
+            chats_directory = params.get('chats_directory', 'chats')
+
+            default_name = None
+            default_fn = getattr(action, '_default_filename', None)
+            if callable(default_fn):
+                try:
+                    default_name = default_fn(chat_format)
+                except Exception:
+                    default_name = None
+            if not default_name:
+                ts = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+                default_name = f"chat_{ts}.{chat_format}"
+
+            candidate = None
+            if extra_argv:
+                candidate = str(extra_argv[0] or '').strip() or None
+
+            while True:
+                if not candidate:
+                    value = await self._wait_for_screen(
+                        InteractionModal('text', {'prompt': 'Filename to save:', 'default': default_name})
+                    )
+                    if not value:
+                        self._emit_status('Chat save cancelled.', 'warning', display=False)
+                        return True, None
+                    candidate = str(value).strip()
+
+                try:
+                    normalize_fn = getattr(action, '_normalize_filename', None)
+                    if callable(normalize_fn):
+                        basename, _, full_path = normalize_fn(candidate)
+                    else:
+                        basename = candidate
+                        full_path = os.path.join(os.path.expanduser(chats_directory), basename)
+                except Exception as exc:
+                    self._emit_status(f'Invalid filename: {exc}', 'error')
+                    candidate = None
+                    continue
+
+                expanded_input = os.path.expanduser(candidate)
+                default_name = full_path if os.path.isabs(expanded_input) else basename
+
+                include_ctx = await self._wait_for_screen(
+                    InteractionModal('bool', {'prompt': 'Include context in save?', 'default': False})
+                )
+                if include_ctx is None:
+                    self._emit_status('Chat save cancelled.', 'warning', display=False)
+                    return True, None
+
+                overwrite = False
+                exists = await asyncio.to_thread(os.path.exists, full_path)
+                if exists:
+                    overwrite_resp = await self._wait_for_screen(
+                        InteractionModal(
+                            'bool',
+                            {
+                                'prompt': f"File '{basename}' exists. Overwrite?",
+                                'default': False,
+                            },
+                        )
+                    )
+                    if overwrite_resp is None:
+                        self._emit_status('Chat save cancelled.', 'warning', display=False)
+                        return True, None
+                    if not overwrite_resp:
+                        candidate = None
+                        continue
+                    overwrite = True
+
+                save_target = full_path if os.path.isabs(expanded_input) else basename
+
+                payload = await asyncio.to_thread(
+                    action._handle_headless,
+                    {
+                        'mode': 'save',
+                        'filename': save_target,
+                        'include_context': bool(include_ctx),
+                        'overwrite': overwrite,
+                    },
+                )
+                return True, payload
 
         # ----- status/context helpers ---------------------------------
         def _refresh_context_panel(self) -> None:
