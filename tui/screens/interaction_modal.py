@@ -11,13 +11,17 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, ListItem, ListView, Static
+from textual.widgets import Button, Input, ListItem, ListView, Static, TextArea
 
 
 class InteractionModal(ModalScreen[Optional[Any]]):
     """Prompt users for additional input when actions require it."""
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("alt+enter", "submit", "Submit", show=False, priority=True),
+        Binding("ctrl+j", "submit", "Submit", show=False, priority=True),
+    ]
 
     def __init__(self, kind: str, spec: Dict[str, Any]) -> None:
         super().__init__()
@@ -31,20 +35,32 @@ class InteractionModal(ModalScreen[Optional[Any]]):
 
     def compose(self) -> ComposeResult:
         prompt = str(self.spec.get("prompt") or self.spec.get("message") or "Input required")
+        self._is_multiline = bool(self.spec.get("multiline"))
         with Vertical(id="interaction_modal"):
             yield Static(prompt, id="interaction_prompt")
             if self.kind in ("text", "files"):
                 default = self.spec.get("default")
                 placeholder = self.spec.get("placeholder") or ""
-                self.input = Input(
-                    value=str(default or ""),
-                    placeholder=str(placeholder),
-                    id="interaction_input",
-                )
-                yield self.input
-                hint = "Press Enter to submit · Esc to cancel"
-                if self.spec.get("multiline"):
-                    hint = "Enter submits · Esc cancels (multi-line supported)"
+                if self._is_multiline:
+                    self.text_area = TextArea(
+                        str(default or ""),
+                        soft_wrap=True,
+                        placeholder=str(placeholder),
+                        id="interaction_textarea",
+                    )
+                    yield self.text_area
+                    self.submit_button = Button("Save", id="submit")
+                    with Horizontal(id="interaction_multiline_actions"):
+                        yield self.submit_button
+                    hint = "Use Alt+Enter or Ctrl+J to submit · Esc to cancel"
+                else:
+                    self.input = Input(
+                        value=str(default or ""),
+                        placeholder=str(placeholder),
+                        id="interaction_input",
+                    )
+                    yield self.input
+                    hint = "Press Enter to submit · Esc to cancel"
                 yield Static(Text(hint, style="dim"), id="interaction_hint")
             elif self.kind == "bool":
                 self.yes_button = Button("Yes", id="yes")
@@ -68,7 +84,9 @@ class InteractionModal(ModalScreen[Optional[Any]]):
                 yield Static(Text("Press Enter to submit · Esc to cancel", style="dim"))
 
     async def on_mount(self) -> None:
-        if hasattr(self, "input"):
+        if hasattr(self, "text_area"):
+            self.set_focus(self.text_area)
+        elif hasattr(self, "input"):
             self.set_focus(self.input)
         elif hasattr(self, "list_view"):
             try:
@@ -110,6 +128,8 @@ class InteractionModal(ModalScreen[Optional[Any]]):
             self.dismiss(True)
         elif event.button.id == "no":
             self.dismiss(False)
+        elif event.button.id == "submit":
+            self._submit_multiline()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:  # type: ignore[override]
         choice = getattr(event.item, "choice_value", None)
@@ -121,6 +141,20 @@ class InteractionModal(ModalScreen[Optional[Any]]):
         self.dismiss(None)
 
     def on_key(self, event: events.Key) -> None:  # type: ignore[override]
+        if self._is_multiline and getattr(self, "text_area", None) is not None:
+            key = event.key.lower()
+            ctrl = getattr(event, "ctrl", False)
+            alt = getattr(event, "alt", False)
+            if self.focused is self.text_area and (
+                (key == "enter" and alt)
+                or key == "alt+enter"
+                or (key == "j" and ctrl)
+                or key == "ctrl+j"
+            ):
+                event.prevent_default()
+                event.stop()
+                self._submit_multiline()
+                return
         if self.kind == "choice" and event.key in ("tab", "shift+tab"):
             event.prevent_default()
             event.stop()
@@ -160,3 +194,12 @@ class InteractionModal(ModalScreen[Optional[Any]]):
         parent_on_key = getattr(super(), "on_key", None)
         if callable(parent_on_key):
             parent_on_key(event)
+
+    def action_submit(self) -> None:
+        if self._is_multiline:
+            self._submit_multiline()
+
+    def _submit_multiline(self) -> None:
+        if not self._is_multiline or not hasattr(self, "text_area"):
+            return
+        self.dismiss(self.text_area.text)

@@ -11,8 +11,8 @@ try:
     from textual import events
     from textual.app import App, ComposeResult
     from textual.binding import Binding
-    from textual.containers import Vertical
-    from textual.widgets import Footer, Input, Static
+    from textual.containers import Horizontal, Vertical
+    from textual.widgets import Button, Footer, Static
     TEXTUAL_AVAILABLE = True
 except ImportError:  # pragma: no cover - surfaced when textual missing
     TEXTUAL_AVAILABLE = False
@@ -31,13 +31,14 @@ from utils.output_utils import OutputHandler
 
 if TEXTUAL_AVAILABLE:
     from tui.screens.command_palette import CommandPalette
-    from tui.screens.compose_modal import ComposeModal
     from tui.screens.interaction_modal import InteractionModal
     from tui.widgets.chat_transcript import ChatTranscript
     from tui.widgets.command_hint import CommandHint
     from tui.widgets.context_summary import ContextSummary
     from tui.widgets.status_panel import StatusPanel
+    from tui.widgets.chat_input import ChatInput
     from tui.screens.status_modal import StatusModal
+    from textual.widgets import TextArea
 
     class MemexTUIApp(App):
         """Main Textual app providing a richer chat experience."""
@@ -67,7 +68,8 @@ if TEXTUAL_AVAILABLE:
             self.chat_view: Optional[ChatTranscript] = None
             self.status_log: Optional[StatusPanel] = None
             self.context_panel: Optional[ContextSummary] = None
-            self.input: Optional[Input] = None
+            self.input: Optional[ChatInput] = None
+            self.send_button: Optional[Button] = None
 
             self.command_registry = self.session.get_action('user_commands_registry')
             self.command_hint: Optional[CommandHint] = None
@@ -119,24 +121,27 @@ if TEXTUAL_AVAILABLE:
             )
             yield status
 
-            self.chat_view = ChatTranscript(
-                id="chat_transcript",
-                role_titles=self._chat_role_titles,
-                role_styles=self._chat_role_styles,
-            )
-            self._output_bridge.set_chat_view(self.chat_view)
-            self.turn_executor.set_chat_view(self.chat_view)
-            yield self.chat_view
-
-            # Sidebar removed; dedicate full width to chat. Status is shown via F8 modal.
+            with Vertical(id="main_content"):
+                self.chat_view = ChatTranscript(
+                    id="chat_transcript",
+                    role_titles=self._chat_role_titles,
+                    role_styles=self._chat_role_styles,
+                )
+                self.chat_view.styles.height = "1fr"
+                self._output_bridge.set_chat_view(self.chat_view)
+                self.turn_executor.set_chat_view(self.chat_view)
+                yield self.chat_view
 
             with Vertical(id="input_row"):
                 self.command_hint = CommandHint(id="command_hint")
                 self._input_completion.set_command_hint(self.command_hint)
                 yield self.command_hint
-                self.input = Input(placeholder="Type a message or '/' for commands", id="input")
-                self._input_completion.set_input(self.input)
-                yield self.input
+                with Horizontal(id="input_controls"):
+                    self.input = ChatInput(placeholder="Type a message or '/' for commands")
+                    self._input_completion.set_input(self.input)
+                    yield self.input
+                    self.send_button = Button("Send", id="send_button")
+                    yield self.send_button
 
             yield Footer()
 
@@ -185,24 +190,28 @@ if TEXTUAL_AVAILABLE:
             self.call_from_thread(self._output_bridge.handle_ui_event, event_type, data)
 
         # ----- input handling -----------------------------------------
-        async def on_input_submitted(self, event: Input.Submitted) -> None:
-            if getattr(event.input, 'id', None) != 'input':
-                return
-            message = (event.value or '').strip()
-            event.input.value = ''
-            self._clear_command_hint()
-            if not message:
-                return
-            self._handle_user_input(message)
+        async def on_chat_input_send_requested(self, message: "ChatInput.SendRequested") -> None:
+            message.stop()
+            self._submit_input_text(message.text)
 
-        def on_input_changed(self, event: Input.Changed) -> None:  # type: ignore[override]
-            if getattr(event.input, 'id', None) != 'input':
+        def on_text_area_changed(self, message: TextArea.Changed) -> None:
+            if message.control is not self.input:
                 return
-            value = event.value or ''
+            value = message.control.text or ''
             self._input_completion.handle_input_changed(
                 value,
                 find_command_suggestions=self._command_controller.find_command_suggestions,
             )
+
+        def _submit_input_text(self, raw_text: str) -> None:
+            text = (raw_text or '').strip()
+            if not text:
+                return
+            if self.input:
+                self._input_completion.mark_programmatic_update()
+                self.input.clear_and_focus()
+            self._clear_command_hint()
+            self._handle_user_input(text)
 
         def _handle_user_input(self, message: str) -> None:
             if message.startswith('/'):
@@ -211,6 +220,10 @@ if TEXTUAL_AVAILABLE:
             if self.chat_view:
                 self.chat_view.add_message('user', message)
             self._schedule_task(self.turn_executor.run(message))
+
+        def on_button_pressed(self, event: Button.Pressed) -> None:  # type: ignore[override]
+            if event.button.id == "send_button":
+                self._submit_input_text(self.input.text if self.input else '')
 
         async def _dispatch_slash_command(self, text: str) -> None:
             registry = self.command_registry
@@ -454,22 +467,6 @@ if TEXTUAL_AVAILABLE:
                 find_command_suggestions=self._command_controller.find_command_suggestions,
                 focus_input=_focus,
             )
-        def _open_compose_modal(self, prefill: str = '') -> None:
-            def _on_close(result: Optional[str]) -> None:
-                if result is None:
-                    return
-                self._submit_composed_message(result)
-
-            self.push_screen(ComposeModal(prefill), _on_close)
-
-        def _submit_composed_message(self, text: str) -> None:
-            message = text.rstrip()
-            if not message:
-                return
-            if self.input:
-                self.input.value = ''
-            self._clear_command_hint()
-            self._handle_user_input(message)
 
         async def _wait_for_screen(self, screen) -> Any:
             loop = asyncio.get_running_loop()
@@ -911,10 +908,6 @@ if TEXTUAL_AVAILABLE:
                 event.prevent_default()
                 event.stop()
                 self._handle_tab_completion()
-            elif ('shift+enter' in event.aliases or event.key == 'shift+enter') and focused_input:
-                event.prevent_default()
-                event.stop()
-                self._open_compose_modal(prefill=self.input.value or '')
             elif event.key == 'tab' or event.key == 'shift+tab':
                 event.prevent_default()
                 event.stop()
