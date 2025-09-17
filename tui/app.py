@@ -3,24 +3,26 @@
 from __future__ import annotations
 
 import asyncio
-import os
-from typing import Any, Awaitable, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Dict, List, Optional
 
 try:
     from textual import events
     from textual.app import App, ComposeResult
     from textual.binding import Binding
     from textual.containers import Vertical
-    from textual.suggester import SuggestFromList
     from textual.widgets import Footer, Input, Static
     TEXTUAL_AVAILABLE = True
 except ImportError:  # pragma: no cover - surfaced when textual missing
     TEXTUAL_AVAILABLE = False
 
 from base_classes import Completed, InteractionNeeded
-from core.turns import TurnOptions, TurnRunner
+from core.turns import TurnRunner
+from tui.commands import CommandController
+from tui.input_completion import InputCompletionManager
 from tui.models import CommandItem
+from tui.output_bridge import OutputBridge
 from tui.output_sink import OutputEvent, TuiOutput
+from tui.turn_executor import TurnExecutor
 
 from utils.output_utils import OutputHandler
 
@@ -66,23 +68,9 @@ if TEXTUAL_AVAILABLE:
             self.input: Optional[Input] = None
 
             self.command_registry = self.session.get_action('user_commands_registry')
-            self._command_items: List[CommandItem] = []
-            self._command_specs: Dict[str, Dict[str, Any]] = {}
-            self._command_lookup: Dict[Tuple[str, str], CommandItem] = {}
-            self._top_level_commands: List[CommandItem] = []
-            self._subcommand_map: Dict[str, List[CommandItem]] = {}
             self.command_hint: Optional[CommandHint] = None
-            self._status_history: List[tuple[str, str]] = []
-            self._all_suggestion_strings: List[str] = []
-            self._tab_cycle_state: Dict[str, Any] = {
-                'key': '',
-                'index': 0,
-                'suggestions': [],
-            }
-            self._suppress_input_changed_reset: bool = False
-            self._last_file_completion_hint: Optional[str] = None
-            self._last_file_completion_choices: List[str] = []
-            self._last_file_completion_abs_dir: Optional[str] = None
+            self._command_controller = CommandController()
+            self._input_completion = InputCompletionManager()
 
             params = self.session.get_params() or {}
             response_label = str(params.get('response_label') or '').strip()
@@ -98,14 +86,8 @@ if TEXTUAL_AVAILABLE:
                     color_style = f"bold {response_label_color}"
                 self._chat_role_styles['assistant'] = color_style
 
-            self._orig_output: Optional[OutputHandler] = self.session.utils.output
-            self._tui_output = TuiOutput(self._handle_output_event)
-            self.session.utils.replace_output(self._tui_output)
-
             self._stream_enabled: bool = bool((self.session.get_params() or {}).get('stream'))
             self._pending_tasks: set[asyncio.Task[Any]] = set()
-            self._active_message_id: Optional[str] = None
-            self._spinner_messages: Dict[str, str] = {}
 
             self._ui_adapter = getattr(self.session, 'ui', None)
             if hasattr(self._ui_adapter, 'set_event_handler'):
@@ -117,6 +99,21 @@ if TEXTUAL_AVAILABLE:
                 self._status_max_lines = int(self.session.get_option('TUI', 'status_max_lines', fallback=200))
             except Exception:
                 self._status_max_lines = 200
+
+            self._output_bridge = OutputBridge(status_limit=self._status_max_lines)
+            self.turn_executor = TurnExecutor(
+                self.session,
+                self.turn_runner,
+                schedule_task=self._schedule_task,
+                emit_status=self._emit_status,
+                refresh_contexts=self._refresh_context_panel,
+                call_in_app_thread=self.call_from_thread,
+                stream_enabled=self._stream_enabled,
+            )
+
+            self._orig_output: Optional[OutputHandler] = self.session.utils.output
+            self._tui_output = TuiOutput(self._handle_output_event)
+            self.session.utils.replace_output(self._tui_output)
 
         # ----- layout --------------------------------------------------
         def compose(self) -> ComposeResult:
@@ -134,14 +131,18 @@ if TEXTUAL_AVAILABLE:
                 role_titles=self._chat_role_titles,
                 role_styles=self._chat_role_styles,
             )
+            self._output_bridge.set_chat_view(self.chat_view)
+            self.turn_executor.set_chat_view(self.chat_view)
             yield self.chat_view
 
             # Sidebar removed; dedicate full width to chat. Status is shown via F8 modal.
 
             with Vertical(id="input_row"):
                 self.command_hint = CommandHint(id="command_hint")
+                self._input_completion.set_command_hint(self.command_hint)
                 yield self.command_hint
                 self.input = Input(placeholder="Type a message or '/' for commands", id="input")
+                self._input_completion.set_input(self.input)
                 yield self.input
 
             yield Footer()
@@ -156,15 +157,13 @@ if TEXTUAL_AVAILABLE:
                     pass
             if self.command_hint:
                 self.command_hint.display = False
-            if self.status_log:
-                self.status_log.log_status("Welcome to iptic-memex TUI. Press Ctrl+S to toggle streaming.", "info")
+            self._emit_status("Welcome to iptic-memex TUI. Press Ctrl+S to toggle streaming.", 'info')
             try:
                 params = self.session.get_params() or {}
                 self.session.utils.logger.tui_event('start', {'model': params.get('model'), 'provider': params.get('provider')})
             except Exception:
                 pass
             self._load_commands()
-            self._refresh_input_suggester()
             self._refresh_context_panel()
             self._render_existing_history()
             # Configure input suggestions (Textual 0.27+)
@@ -186,58 +185,11 @@ if TEXTUAL_AVAILABLE:
 
         # ----- output handling ----------------------------------------
         def _handle_output_event(self, event: OutputEvent) -> None:
-            self.call_from_thread(self._dispatch_output_event, event)
-
-        def _dispatch_output_event(self, event: OutputEvent) -> None:
-            if not hasattr(self, '_status_history'):
-                self._status_history = []
-            if event.type == 'write':
-                text = event.text or ''
-                if event.is_stream and self._active_message_id and self.chat_view:
-                    self.chat_view.append_text(self._active_message_id, text)
-                else:
-                    stripped = text.rstrip('\n')
-                    if stripped:
-                        level = event.level or 'info'
-                        self._record_status(stripped, level)
-                        self._display_status_message(stripped, level)
-                        if self.status_log:
-                            self.status_log.log_status(stripped, level)
-            elif event.type == 'spinner':
-                label = event.text or 'Working...'
-                self._record_status(label, 'info')
-                if self.status_log:
-                    self.status_log.log_status(label, 'info')
-                if event.spinner_id:
-                    self._spinner_messages[event.spinner_id] = label
-            elif event.type == 'spinner_done':
-                label = self._spinner_messages.pop(event.spinner_id, None)
-                if label:
-                    self._record_status(f"{label} – done", 'debug')
-                    if self.status_log:
-                        self.status_log.log_status(f"{label} – done", 'debug')
+            active_id = getattr(self.turn_executor, "active_message_id", None)
+            self.call_from_thread(self._output_bridge.handle_output_event, event, active_id)
 
         def _handle_ui_event(self, event_type: str, data: Dict[str, Any]) -> None:
-            if not hasattr(self, '_status_history'):
-                self._status_history: List[tuple[str, str]] = []
-            message = str(data.get('message') or data.get('text') or '')
-            if event_type == 'progress':
-                prog = data.get('progress')
-                if prog is not None:
-                    pct = int(float(prog) * 100)
-                    if message:
-                        message = f"{message} ({pct}%)"
-                    else:
-                        message = f"Progress {pct}%"
-            if not message:
-                message = str(data)
-            level = 'info'
-            if event_type in ('warning', 'error', 'critical'):
-                level = event_type
-            self._record_status(message, level)
-            self._display_status_message(message, level)
-            if self.status_log:
-                self.status_log.log_status(message, level)
+            self.call_from_thread(self._output_bridge.handle_ui_event, event_type, data)
 
         # ----- input handling -----------------------------------------
         async def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -252,20 +204,10 @@ if TEXTUAL_AVAILABLE:
             if getattr(event.input, 'id', None) != 'input':
                 return
             value = event.value or ''
-            if self._suppress_input_changed_reset:
-                self._suppress_input_changed_reset = False
-            else:
-                self._reset_tab_cycle()
-            if not value.startswith('/'):
-                self._clear_command_hint()
-                return
-            if self._detect_file_completion_context(value)[0]:
-                self._update_input_suggestions(value, [])
-                return
-            suggestions, highlight = self._find_command_suggestions(value)
-            if self.command_hint:
-                self.command_hint.update_suggestions(suggestions, prefix=highlight)
-            self._update_input_suggestions(value, suggestions)
+            self._input_completion.handle_input_changed(
+                value,
+                find_command_suggestions=self._command_controller.find_command_suggestions,
+            )
 
         def _handle_user_input(self, message: str) -> None:
             if message.startswith('/'):
@@ -273,37 +215,29 @@ if TEXTUAL_AVAILABLE:
                 return
             if self.chat_view:
                 self.chat_view.add_message('user', message)
-            self._schedule_task(self._run_turn(message))
+            self._schedule_task(self.turn_executor.run(message))
 
         async def _dispatch_slash_command(self, text: str) -> None:
             registry = self.command_registry
             if not registry:
-                if self.status_log:
-                    self.status_log.log_status('Command registry unavailable.', 'error')
-                self._display_status_message('Command registry unavailable.', 'error')
+                self._emit_status('Command registry unavailable.', 'error')
                 return
             try:
                 chat_commands = self.session.get_action('chat_commands')
             except Exception:
                 chat_commands = None
             if not chat_commands:
-                if self.status_log:
-                    self.status_log.log_status('Commands action unavailable.', 'error')
-                self._display_status_message('Commands action unavailable.', 'error')
+                self._emit_status('Commands action unavailable.', 'error')
                 return
             try:
                 parsed = chat_commands.match(text)
             except Exception as exc:
-                if self.status_log:
-                    self.status_log.log_status(f'Command error: {exc}', 'error')
-                self._display_status_message(f'Command error: {exc}', 'error')
+                self._emit_status(f'Command error: {exc}', 'error')
                 return
             if not parsed:
                 return
             if parsed.get('kind') == 'error':
-                if self.status_log:
-                    self.status_log.log_status(parsed.get('message', 'Invalid command'), 'warning')
-                self._display_status_message(parsed.get('message', 'Invalid command'), 'warning')
+                self._emit_status(parsed.get('message', 'Invalid command'), 'warning')
                 return
             handler = {
                 'type': parsed.get('kind'),
@@ -317,65 +251,19 @@ if TEXTUAL_AVAILABLE:
 
         # ----- commands ------------------------------------------------
         def _load_commands(self) -> None:
-            registry = self.command_registry
-            if not registry:
-                return
-            try:
-                specs = registry.get_specs('tui')
-            except Exception:
-                specs = {}
-            commands: List[CommandItem] = []
-            lookup: Dict[Tuple[str, str], CommandItem] = {}
-            sub_map: Dict[str, List[CommandItem]] = {}
-            top_level: List[CommandItem] = []
-            for item in specs.get('commands', []):
-                cmd_name = item.get('command')
-                help_text = item.get('help', '')
-                has_default = False
-                for sub in item.get('subs', []):
-                    sub_name = sub.get('sub') or ''
-                    title = f"/{cmd_name}" + (f" {sub_name}" if sub_name else '')
-                    cmd_help = help_text
-                    sub_help = sub.get('ui', {}).get('help') if isinstance(sub.get('ui'), dict) else ''
-                    entry = CommandItem(
-                        title=title,
-                        path=[cmd_name, sub_name],
-                        help=sub_help or cmd_help,
-                        handler=sub,
-                    )
-                    commands.append(entry)
-                    lookup[(cmd_name, sub_name)] = entry
-                    if sub_name:
-                        sub_map.setdefault(cmd_name, []).append(entry)
-                    else:
-                        has_default = True
-                        top_level.append(entry)
-                if not has_default:
-                    top_level.append(
-                        CommandItem(
-                            title=f"/{cmd_name}",
-                            path=[cmd_name, ''],
-                            help=help_text,
-                            handler={},
-                        )
-                    )
-            self._command_items = commands
-            self._command_lookup = lookup
-            self._command_specs = {item.get('command'): item for item in specs.get('commands', [])}
-            self._top_level_commands = sorted(top_level, key=lambda c: c.title.lower())
-            for key, entries in sub_map.items():
-                entries.sort(key=lambda c: c.title.lower())
-            self._subcommand_map = sub_map
-            self._refresh_input_suggester()
+            self._command_controller.load(self.command_registry)
+            self._input_completion.update_catalog(
+                self._command_controller.top_level_commands,
+                self._command_controller.subcommand_map,
+            )
 
         def action_open_commands(self) -> None:
             if self.command_hint:
                 self.command_hint.display = False
-            if not self._command_items:
-                if self.status_log:
-                    self.status_log.log_status('No commands available.', 'warning')
+            if not self._command_controller.has_commands:
+                self._emit_status('No commands available.', 'warning')
                 return
-            palette = CommandPalette(self._command_items)
+            palette = CommandPalette(self._command_controller.command_items)
             self.push_screen(palette, self._on_command_selected)
 
         def _on_command_selected(self, command: Optional[CommandItem]) -> None:
@@ -383,6 +271,7 @@ if TEXTUAL_AVAILABLE:
                 return
             self._schedule_task(self._execute_command_item(command))
             if self.input:
+                self._input_completion.mark_programmatic_update()
                 self.input.value = ''
                 self.set_focus(self.input)
             self._clear_command_hint()
@@ -393,8 +282,7 @@ if TEXTUAL_AVAILABLE:
 
         async def _execute_command_handler(self, handler: Dict[str, Any], path: List[str], extra_argv: Optional[List[str]]) -> None:
             if not handler:
-                if self.status_log:
-                    self.status_log.log_status('Invalid command handler.', 'error')
+                self._emit_status('Invalid command handler.', 'error', display=False)
                 return
             if handler.get('type') == 'builtin':
                 if path and path[0] == 'quit':
@@ -405,28 +293,24 @@ if TEXTUAL_AVAILABLE:
                 except SystemExit:
                     self.action_quit()
                     return
-                if not ok and self.status_log:
-                    self.status_log.log_status(err or 'Command failed.', 'error')
                 try:
                     self.session.utils.logger.tui_event('command_builtin', {'path': ' '.join(path or []), 'ok': bool(ok)})
                 except Exception:
                     pass
                 if not ok:
-                    self._display_status_message(err or 'Command failed.', 'error')
+                    self._emit_status(err or 'Command failed.', 'error')
                 self._refresh_context_panel()
-                self._check_auto_submit()
+                self.turn_executor.check_auto_submit()
                 self._clear_command_hint()
                 return
 
             action_name = handler.get('action') or handler.get('name')
             if not action_name:
-                if self.status_log:
-                    self.status_log.log_status('Command missing action mapping.', 'error')
+                self._emit_status('Command missing action mapping.', 'error', display=False)
                 return
             action = self.session.get_action(action_name)
             if not action:
-                if self.status_log:
-                    self.status_log.log_status(f"Unknown action '{action_name}'.", 'error')
+                self._emit_status(f"Unknown action '{action_name}'.", 'error', display=False)
                 return
 
             fixed_args = handler.get('args') or []
@@ -438,9 +322,7 @@ if TEXTUAL_AVAILABLE:
             if path and path[0] == 'clear' and (len(path) < 2 or not path[1]):
                 if self.chat_view:
                     self.chat_view.clear_messages()
-                self._display_status_message('Screen cleared.', 'info')
-                if self.status_log:
-                    self.status_log.log_status('Screen cleared.', 'info')
+                self._emit_status('Screen cleared.', 'info')
                 self._clear_command_hint()
                 return
 
@@ -451,7 +333,7 @@ if TEXTUAL_AVAILABLE:
                         self.chat_view.clear_messages()
                         self._render_existing_history()
                     self._refresh_context_panel()
-                    self._check_auto_submit()
+                    self.turn_executor.check_auto_submit()
                     self._clear_command_hint()
                     return
 
@@ -468,27 +350,24 @@ if TEXTUAL_AVAILABLE:
                     if callable(cls_fn):
                         result = await asyncio.to_thread(cls_fn, self.session, *argv)
                     else:
-                        if self.status_log:
-                            self.status_log.log_status(f"Handler method '{method_name}' not found.", 'error')
+                        self._emit_status(f"Handler method '{method_name}' not found.", 'error', display=False)
                         return
-                if self.status_log:
-                    self.status_log.log_status('Command executed.', 'info')
+                self._emit_status('Command executed.', 'info', display=False)
                 try:
                     self.session.utils.logger.tui_event('command_action', {'path': ' '.join(path or []), 'action': action_name, 'method': method_name, 'argv': argv})
                 except Exception:
                     pass
                 self._handle_command_result(path, result)
                 self._refresh_context_panel()
-                self._check_auto_submit()
+                self.turn_executor.check_auto_submit()
                 self._clear_command_hint()
                 return
 
             if action_name == 'load_file':
                 has_path_arg = any((str(arg).strip()) for arg in argv)
                 if not has_path_arg:
-                    if self.status_log:
-                        self.status_log.log_status('Provide a file path before loading.', 'warning')
-                    self._display_status_message('Add a file path or use Tab to complete one, then press Enter.', 'warning')
+                    self._emit_status('Provide a file path before loading.', 'warning', display=False)
+                    self._emit_status('Add a file path or use Tab to complete one, then press Enter.', 'warning')
                     command_bits = [segment for segment in (path or []) if segment]
                     if command_bits:
                         base = '/' + ' '.join(command_bits)
@@ -498,13 +377,12 @@ if TEXTUAL_AVAILABLE:
                         base = base + ' '
                     if self.input:
                         try:
+                            self._input_completion.mark_programmatic_update()
                             self.input.value = base
                             if hasattr(self.input, 'cursor_position'):
                                 self.input.cursor_position = len(base)
-                            self._update_input_suggestions(base, [])
                         except Exception:
                             pass
-                    self._show_file_completion_hint()
                     return
 
             result = await self._drive_action(action, argv)
@@ -526,7 +404,7 @@ if TEXTUAL_AVAILABLE:
                 self.chat_view.clear_messages()
                 self._render_existing_history()
             self._refresh_context_panel()
-            self._check_auto_submit()
+            self.turn_executor.check_auto_submit()
             self._clear_command_hint()
 
         async def _drive_action(self, action: Any, argv: List[str]) -> None:
@@ -538,211 +416,36 @@ if TEXTUAL_AVAILABLE:
                     else:
                         token, response = pending[1]
                         result = await asyncio.to_thread(action.resume, token, response)
-                    if self.status_log:
-                        self.status_log.log_status('Command completed.', 'info')
+                    self._emit_status('Command completed.', 'info', display=False)
                     return result
                 except InteractionNeeded as need:
                     response = await self._prompt_for_interaction(need)
                     if response is None:
-                        if self.status_log:
-                            self.status_log.log_status('Command cancelled.', 'warning')
+                        self._emit_status('Command cancelled.', 'warning', display=False)
                         return
                     pending = ('resume', (need.state_token, response))
                 except Exception as exc:
-                    if self.status_log:
-                        self.status_log.log_status(f'Command error: {exc}', 'error')
+                    self._emit_status(f'Command error: {exc}', 'error', display=False)
                     return
 
         async def _prompt_for_interaction(self, need: InteractionNeeded) -> Any:
             return await self.push_screen_wait(InteractionModal(need.kind, dict(need.spec)))
 
-        def _find_command_suggestions(self, line: str) -> Tuple[List[CommandItem], str]:
-            if self._detect_file_completion_context(line)[0]:
-                return [], ''
-            if not line.startswith('/'):
-                return [], ''
-            if not self._command_specs:
-                return [], ''
-            raw = line[1:]
-            if not raw:
-                return self._top_level_commands, ''
-            has_space = raw.endswith(' ')
-            try:
-                import shlex
-                tokens = shlex.split(raw, posix=True)
-            except Exception:
-                tokens = raw.strip().split()
-            if not tokens:
-                return self._top_level_commands, ''
-            first_token = tokens[0]
-            first_lower = first_token.lower()
-            top_matches = [item for item in self._top_level_commands if item.title.lower().startswith(f'/{first_lower}')]
-            if len(tokens) == 1 and not has_space:
-                if top_matches:
-                    return top_matches, first_token
-                return self._top_level_commands, first_token
-
-            command_name = first_token if first_token in self._command_specs else None
-            if not command_name:
-                candidates = [name for name in self._command_specs if name.startswith(first_token)]
-                if len(candidates) == 1:
-                    command_name = candidates[0]
-            if not command_name:
-                highlight = first_token
-                suggestions = top_matches or self._top_level_commands
-                return suggestions, highlight
-
-            if len(tokens) == 1 and not has_space:
-                matches = [item for item in self._top_level_commands if item.path[0] == command_name]
-                return matches, first_token
-
-            sub_items = self._subcommand_map.get(command_name, [])
-            if not sub_items:
-                matches = [item for item in self._top_level_commands if item.path[0] == command_name]
-                return matches, first_token
-
-            sub_fragment = ''
-            if len(tokens) >= 2:
-                sub_fragment = tokens[1]
-            highlight = sub_fragment
-            if sub_fragment:
-                frag_lower = sub_fragment.lower()
-                sub_matches = [
-                    item for item in sub_items
-                    if item.title.lower().startswith(f'/{command_name.lower()} {frag_lower}')
-                ]
-                if not sub_matches:
-                    highlight = ''
-                    sub_matches = sub_items
-            else:
-                sub_matches = sub_items
-            return sub_matches, highlight
-
         def _clear_command_hint(self) -> None:
-            if self.command_hint:
-                self.command_hint.update_suggestions([], prefix='')
-            self._reset_tab_cycle()
-
-        def _update_input_suggestions(self, line: str, items: List[CommandItem]) -> None:
-            """Update Input.suggestions if supported by Textual.
-
-            Converts CommandItem suggestions to string suggestions suitable for
-            the Textual Input suggestion API. Appends a trailing space to aid
-            continued typing after accepting a suggestion.
-            """
-            try:
-                if not hasattr(self.input, 'suggestions'):
-                    return
-                file_active = self._detect_file_completion_context(line)[0]
-                if file_active:
-                    suggestions = self._file_path_completion_values(line)
-                    if suggestions:
-                        self.input.suggestions = suggestions  # type: ignore[attr-defined]
-                    else:
-                        self.input.suggestions = []  # type: ignore[attr-defined]
-                    if hasattr(self.input, 'suggester'):
-                        self.input.suggester = None  # type: ignore[attr-defined]
-                    self._show_file_completion_hint()
-                    return
-                self._last_file_completion_hint = None
-                if not line.startswith('/'):
-                    self.input.suggestions = []  # type: ignore[attr-defined]
-                    return
-                # Build suggestion strings
-                suggs: List[str] = []
-                for it in items:
-                    s = self._format_suggestion(it.title)
-                    suggs.append(s)
-                # Deduplicate while preserving order
-                seen = set()
-                uniq = []
-                for s in suggs:
-                    if s not in seen:
-                        seen.add(s)
-                        uniq.append(s)
-                self.input.suggestions = uniq  # type: ignore[attr-defined]
-                # Ensure suggestions appear while typing
-                if hasattr(self.input, 'suggest_on'):
-                    self.input.suggest_on = 'typing'  # type: ignore[attr-defined]
-            except Exception:
-                pass
+            self._input_completion.clear_command_hint()
 
         def _handle_tab_completion(self) -> None:
-            if not self.input:
-                return
-            current = self.input.value or ''
-            cycle = self._tab_cycle_state or {}
-
-            # ---- File-path mode first: always re-seed when base dir changes ----
-            file_active, _, _, _ = self._detect_file_completion_context(current)
-            if file_active:
-                # Rebuild suggestions every Tab to catch "…/<dir>/" transitions.
-                file_suggestions = self._file_path_completion_values(current)
-                abs_dir = getattr(self, '_last_file_completion_abs_dir', None)
-
-                # Decide if we need to (re)seed the cycle (new line, new dir, or empty).
-                need_seed = (
-                    cycle.get('mode') != 'file'
-                    or cycle.get('prefix') != current
-                    or cycle.get('abs_dir') != abs_dir
-                    or not cycle.get('suggestions')
-                )
-                if need_seed:
-                    # FIRST Tab in this directory: preview only; don't insert yet.
-                    self._tab_cycle_state = {
-                        'mode': 'file',
-                        'prefix': current,
-                        'applied': current,
-                        'index': -1,
-                        'suggestions': file_suggestions,
-                        'abs_dir': abs_dir,
-                    }
-                    self._show_file_completion_hint()
-                    return
-
-                # Subsequent Tabs: cycle and insert
-                suggestions_list: List[str] = list(cycle.get('suggestions') or [])
-                if not suggestions_list:
-                    return
-                index = (int(cycle.get('index', -1)) + 1) % len(suggestions_list)
-                chosen = suggestions_list[index]
-                cycle.update({'index': index})
-                self._tab_cycle_state = {**cycle, 'applied': chosen}
-                try:
-                    self._suppress_input_changed_reset = True
-                    self.input.value = chosen
-                    self.input.cursor_position = len(chosen)
-                except Exception:
-                    pass
-                finally:
+            def _focus() -> None:
+                if self.input:
                     try:
                         self.set_focus(self.input)
                     except Exception:
                         pass
-                return
 
-            # ---- Command completion fallback (unchanged semantics) ----
-            suggestions_items, _ = self._find_command_suggestions(current)
-            if suggestions_items:
-                suggestions_list = [self._format_suggestion(item.title) for item in suggestions_items]
-            else:
-                suggestions_list = list(self._all_suggestion_strings)
-            if not suggestions_list:
-                return
-            chosen = suggestions_list[0]
-            cycle = {'prefix': current, 'index': 0, 'suggestions': suggestions_list}
-            self._tab_cycle_state = {**cycle, 'applied': chosen}
-            try:
-                self._suppress_input_changed_reset = True
-                self.input.value = chosen
-                self.input.cursor_position = len(chosen)
-            except Exception:
-                pass
-            finally:
-                try:
-                    self.set_focus(self.input)
-                except Exception:
-                    pass
+            self._input_completion.handle_tab_completion(
+                find_command_suggestions=self._command_controller.find_command_suggestions,
+                focus_input=_focus,
+            )
         def _open_compose_modal(self, prefill: str = '') -> None:
             def _on_close(result: Optional[str]) -> None:
                 if result is None:
@@ -771,195 +474,6 @@ if TEXTUAL_AVAILABLE:
             self.push_screen(screen, _on_close)
             return await future
 
-        def _refresh_input_suggester(self) -> None:
-            if not self.input:
-                return
-            entries: List[str] = []
-            for item in self._top_level_commands:
-                entries.append(self._format_suggestion(item.title))
-            for items in self._subcommand_map.values():
-                for entry in items:
-                    entries.append(self._format_suggestion(entry.title))
-            # Remove duplicates preserving order
-            deduped: List[str] = []
-            seen = set()
-            for value in entries:
-                if value not in seen:
-                    seen.add(value)
-                    deduped.append(value)
-            self._all_suggestion_strings = deduped
-            try:
-                if deduped:
-                    self.input.suggester = SuggestFromList(deduped, case_sensitive=False)
-                else:
-                    self.input.suggester = None
-            except Exception:
-                pass
-
-        def _format_suggestion(self, title: str) -> str:
-            value = title.strip()
-            if not value.startswith('/'):
-                value = '/' + value
-            if not value.endswith(' '):
-                value = value + ' '
-            return value
-
-        def _reset_tab_cycle(self) -> None:
-            self._tab_cycle_state = {'key': '', 'index': 0, 'suggestions': []}
-            self._last_file_completion_hint = None
-            self._last_file_completion_choices = []
-            self._last_file_completion_abs_dir = None
-
-        def _detect_file_completion_context(self, line: str) -> Tuple[bool, str, str, str]:
-            input_widget = getattr(self, 'input', None)
-            if not input_widget:
-                return False, '', '', ''
-            cursor = getattr(input_widget, 'cursor_position', len(line))
-            before = line[:cursor]
-            after = line[cursor:]
-            if after and after.strip():
-                return False, '', '', ''
-            prefixes = ['/load file ', '/file ']
-            for prefix in prefixes:
-                if before.startswith(prefix):
-                    fragment = before[len(prefix):]
-                    return True, prefix, fragment, after
-            # Allow trailing space state (no fragment yet)
-            if before in {'/load file', '/file'} and line.endswith(' '):
-                prefix = before + ' '
-                return True, prefix, '', after
-            return False, '', '', ''
-
-        def _file_path_completion_values(self, line: str) -> List[str]:
-            active, prefix, fragment, suffix = self._detect_file_completion_context(line)
-            if not active:
-                return []
-            fragment = fragment or ''
-            cwd = os.getcwd()
-            separators = ['/', '\\']
-            display_prefix = ''
-            search = fragment
-            if fragment.endswith(tuple(separators)):
-                display_prefix = fragment
-                search = ''
-            else:
-                idx = max(fragment.rfind(sep) for sep in separators)
-                if idx >= 0:
-                    display_prefix = fragment[: idx + 1]
-                    search = fragment[idx + 1:]
-            base_dir = cwd
-            expanded_prefix = os.path.expanduser(display_prefix) if display_prefix else ''
-            if display_prefix:
-                if os.path.isabs(expanded_prefix):
-                    base_dir = expanded_prefix
-                else:
-                    base_dir = os.path.abspath(os.path.join(cwd, expanded_prefix))
-            expanded_fragment = os.path.expanduser(fragment)
-            if fragment and os.path.isdir(expanded_fragment):
-                base_dir = expanded_fragment
-                if not fragment.endswith(tuple(separators)):
-                    display_prefix = fragment + os.path.sep
-                search = ''
-            elif fragment and fragment.endswith(tuple(separators)):
-                base_dir = os.path.expanduser(fragment)
-            self._last_file_completion_choices = []
-            try:
-                entries = sorted(os.listdir(base_dir))
-            except Exception:
-                self._last_file_completion_hint = None
-                self._last_file_completion_choices = []
-                self._last_file_completion_abs_dir = None
-                return []
-
-            suggestions: List[str] = []
-            dir_sep = '/' if display_prefix.endswith('/') else '\\' if display_prefix.endswith('\\') else os.path.sep
-            if display_prefix:
-                display_hint = display_prefix
-            else:
-                display_hint = '.'
-            try:
-                home = os.path.expanduser('~')
-                if display_hint.startswith(home):
-                    display_hint = display_hint.replace(home, '~', 1)
-            except Exception:
-                pass
-            self._last_file_completion_hint = display_hint
-            self._last_file_completion_abs_dir = base_dir
-
-            limit = 60
-            count = 0
-            lower_search = search
-            for name in entries:
-                if name in {'.', '..'}:
-                    continue
-                if search and not name.startswith(lower_search):
-                    continue
-                candidate_display = display_prefix + name
-                absolute_path = os.path.join(base_dir, name)
-                if os.path.isdir(absolute_path):
-                    append_sep = dir_sep if not candidate_display.endswith((dir_sep, '/', '\\')) else ''
-                    candidate_display = f"{candidate_display}{append_sep}"
-                formatted = candidate_display
-                if any(ch.isspace() for ch in formatted):
-                    formatted = f'"{formatted}"'
-                value = prefix + formatted + suffix
-                suggestions.append(value)
-                self._last_file_completion_choices.append(candidate_display)
-                count += 1
-                if count >= limit:
-                    break
-            return suggestions
-
-        def _show_file_completion_hint(self) -> None:
-            if not self.command_hint:
-                return
-            hint = self._last_file_completion_hint
-            choices = list(self._last_file_completion_choices or [])
-            if not hint:
-                if choices:
-                    title = 'Files'
-                    self.command_hint.show_strings(choices[:8], title=title)
-                else:
-                    self.command_hint.show_message('Tab to complete file paths (supports ~). Enter with no path opens picker.')
-                return
-            label = hint
-            if hint == '.':
-                label = 'current directory'
-            title = f"Files in {label} · Tab to cycle · Enter loads"
-            display_choices = choices[:8]
-            if len(choices) > 8:
-                display_choices.append('...')
-            if display_choices:
-                self.command_hint.show_strings(display_choices, title=title)
-            else:
-                message = f"Tab to complete file paths (base: {hint}; ~ expands to home). Enter with a path loads immediately; Enter alone opens picker."
-                self.command_hint.show_message(message)
-
-        def _record_status(self, text: str, level: str) -> None:
-            try:
-                history_limit = getattr(self, '_status_max_lines', 200)
-            except Exception:
-                history_limit = 200
-            self._status_history.append((text, level))
-            if len(self._status_history) > history_limit:
-                self._status_history = self._status_history[-history_limit:]
-
-        def _display_status_message(self, text: str, level: str) -> None:
-            if not self.chat_view:
-                return
-            if level == 'debug':
-                return
-            if text and text.count('\n') > 4 and ('User:' in text or 'Assistant:' in text):
-                # Avoid dumping full conversation as a single system message
-                return
-            prefix = {
-                'info': 'ⓘ',
-                'warning': '⚠',
-                'error': '❌',
-                'critical': '❌',
-            }.get(level, 'ⓘ')
-            message = f"{prefix} {text}" if text else prefix
-            self.chat_view.add_message('system', message)
 
         def _scroll_chat(self, mode: str) -> None:
             if not self.chat_view:
@@ -1013,14 +527,14 @@ if TEXTUAL_AVAILABLE:
 
             if not payload.get('ok', True):
                 message = payload.get('error') or 'Command failed.'
-                self._display_status_message(message, 'error')
+                self._emit_status(message, 'error')
                 return
 
             mode = payload.get('mode')
             if mode == 'list' and 'chats' in payload:
                 chats = payload.get('chats') or []
                 if not chats:
-                    self._display_status_message('No chat files found.', 'info')
+                    self._emit_status('No chat files found.', 'info')
                 else:
                     lines = [f"Chats ({len(chats)}):"]
                     for item in chats[:20]:
@@ -1028,12 +542,12 @@ if TEXTUAL_AVAILABLE:
                         lines.append(f" • {name}")
                     if len(chats) > 20:
                         lines.append(f"… and {len(chats) - 20} more")
-                    self._display_status_message('\n'.join(lines), 'info')
+                    self._emit_status('\n'.join(lines), 'info')
                 return
 
             if mode == 'load' and payload.get('loaded'):
                 filename = payload.get('filename') or payload.get('path')
-                self._display_status_message(f"Loaded chat from {filename}", 'info')
+                self._emit_status(f"Loaded chat from {filename}", 'info')
                 if self.chat_view:
                     self.chat_view.clear_messages()
                     self._render_existing_history()
@@ -1041,13 +555,19 @@ if TEXTUAL_AVAILABLE:
 
             if mode == 'save' and payload.get('saved'):
                 filename = payload.get('filename') or payload.get('path')
-                self._display_status_message(f"Saved chat to {filename}", 'info')
+                self._emit_status(f"Saved chat to {filename}", 'info')
                 return
 
             # Generic fallback: surface minimal confirmation
             if payload.get('ok'):
                 label = ' '.join(path or []) if path else 'command'
-                self._display_status_message(f"/{label} completed.", 'info')
+                self._emit_status(f"/{label} completed.", 'info')
+
+        def _emit_status(self, text: str, level: str, *, display: bool = True) -> None:
+            self._output_bridge.record_status(text, level)
+            if display:
+                self._output_bridge.display_status_message(text, level)
+            self._output_bridge.log_status(text, level)
 
         async def _handle_manage_chats_command(
             self,
@@ -1071,7 +591,7 @@ if TEXTUAL_AVAILABLE:
                     if not filename:
                         chats = await asyncio.to_thread(action._list_chats)
                         if not chats:
-                            self._display_status_message('No chat files found.', 'warning')
+                            self._emit_status('No chat files found.', 'warning')
                             return True
                         choices = []
                         for item in chats:
@@ -1084,65 +604,16 @@ if TEXTUAL_AVAILABLE:
                             InteractionModal('choice', {'prompt': 'Select chat to load', 'choices': choices})
                         )
                         if not selection:
-                            self._display_status_message('Load chat cancelled.', 'warning')
+                            self._emit_status('Load chat cancelled.', 'warning')
                             return True
                         filename = str(selection)
                     result = await asyncio.to_thread(action._handle_headless, {'mode': 'load', 'file': filename})
                     self._handle_command_result(path, result)
                     return True
             except Exception as exc:
-                self._display_status_message(f'Manage chats error: {exc}', 'error')
-                if self.status_log:
-                    self.status_log.log_status(f'Manage chats error: {exc}', 'error')
+                self._emit_status(f'Manage chats error: {exc}', 'error')
                 return True
             return False
-
-        # ----- chat execution ----------------------------------------
-        async def _run_turn(self, message: str) -> None:
-            if self.chat_view:
-                self._active_message_id = self.chat_view.add_message(
-                    'assistant',
-                    '',
-                    streaming=bool(self._stream_enabled),
-                )
-            else:
-                self._active_message_id = None
-
-            def _run() -> Any:
-                options = TurnOptions(stream=self._stream_enabled, suppress_context_print=True)
-                return self.turn_runner.run_user_turn(message, options=options)
-
-            try:
-                result = await asyncio.to_thread(_run)
-            except Exception as exc:
-                self.call_from_thread(self._handle_turn_error, str(exc))
-                return
-
-            self.call_from_thread(self._finish_turn, self._active_message_id, result)
-
-        def _finish_turn(self, msg_id: Optional[str], result: Any) -> None:
-            if msg_id and self.chat_view:
-                text = (result.last_text or '').strip() if hasattr(result, 'last_text') else ''
-                self.chat_view.update_message(msg_id, text or '(no response)', streaming=False)
-            self._active_message_id = None
-            if self.status_log:
-                self.status_log.log_status('Assistant ready.', 'debug')
-            self._refresh_context_panel()
-            self._check_auto_submit()
-
-        def _handle_turn_error(self, error_text: str) -> None:
-            if self.chat_view and self._active_message_id:
-                self.chat_view.update_message(self._active_message_id, f"Error: {error_text}", streaming=False)
-            if self.status_log:
-                self.status_log.log_status(f"Error: {error_text}", 'error')
-            self._active_message_id = None
-
-        def _check_auto_submit(self) -> None:
-            try:
-                if self.session.get_flag('auto_submit'):
-                    self._schedule_task(self._run_turn(''))
-            except Exception:
-                pass
 
         # ----- status/context helpers ---------------------------------
         def _refresh_context_panel(self) -> None:
@@ -1183,9 +654,9 @@ if TEXTUAL_AVAILABLE:
         def action_toggle_stream(self) -> None:
             self._stream_enabled = not self._stream_enabled
             self.session.set_option('stream', bool(self._stream_enabled))
+            self.turn_executor.set_stream_enabled(self._stream_enabled)
             status = f"Streaming {'enabled' if self._stream_enabled else 'disabled'}"
-            if self.status_log:
-                self.status_log.log_status(status, 'info')
+            self._emit_status(status, 'info', display=False)
             bar = self.query_one('#status_bar', Static)
             params = self.session.get_params() or {}
             model_name = params.get('model', 'unknown')
@@ -1194,10 +665,7 @@ if TEXTUAL_AVAILABLE:
 
         def action_refresh_contexts(self) -> None:
             self._refresh_context_panel()
-            self._record_status('Contexts refreshed.', 'debug')
-            self._display_status_message('Contexts refreshed.', 'debug')
-            if self.status_log:
-                self.status_log.log_status('Contexts refreshed.', 'debug')
+            self._emit_status('Contexts refreshed.', 'debug', display=False)
 
         def action_quit(self) -> None:
             self._cleanup()
@@ -1208,7 +676,7 @@ if TEXTUAL_AVAILABLE:
                 self.set_focus(self.input)
 
         def action_show_status(self) -> None:
-            history = getattr(self, '_status_history', [])
+            history = self._output_bridge.status_history
             self.push_screen(StatusModal(history), lambda _: None)
 
         def action_scroll_chat_up(self) -> None:
@@ -1242,11 +710,9 @@ if TEXTUAL_AVAILABLE:
             except Exception:
                 pass
             if cancelled:
-                self._display_status_message('Turn cancelled.', 'warning')
-                if self.status_log:
-                    self.status_log.log_status('Turn cancelled.', 'warning')
+                self._emit_status('Turn cancelled.', 'warning')
             else:
-                self._display_status_message('No running turn to cancel.', 'info')
+                self._emit_status('No running turn to cancel.', 'info')
 
         def on_key(self, event: events.Key) -> None:
             if not self.input:
@@ -1300,6 +766,10 @@ if TEXTUAL_AVAILABLE:
                 if self._orig_output:
                     self.session.utils.replace_output(self._orig_output)
                     self._orig_output = None
+            except Exception:
+                pass
+            try:
+                self.turn_executor.set_chat_view(None)
             except Exception:
                 pass
 

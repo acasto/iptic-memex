@@ -71,6 +71,7 @@ class UserCommandsRegistryAction(InteractionAction):
             'clear': {
                 'help': 'Clear chat, context, or screen',
                 'sub': {
+                    '':        {'type': 'action', 'name': 'clear_chat', 'args': ['screen']},
                     'context': {'type': 'action', 'name': 'clear_context'},
                     'chat':    {'type': 'action', 'name': 'clear_chat', 'args': ['chat']},
                     'last':    {'type': 'action', 'name': 'clear_chat', 'args': ['last']},
