@@ -19,14 +19,21 @@ class LoadFileAction(StepwiseAction):
         self.tc.set_session(session)
         self.utils = session.utils
 
+    MARKITDOWN_EXTENSIONS = (
+        '.pdf',
+        '.docx',
+        '.xlsx',
+        '.xls',
+        '.pptx',
+        '.msg',
+        '.mp3',
+        '.wav',
+    )
+
     def _detect_kind(self, path: str) -> str:
         p = path.lower()
-        if p.endswith('.pdf'):
-            return 'pdf'
-        if p.endswith('.docx'):
-            return 'docx'
-        if p.endswith('.xlsx'):
-            return 'xlsx'
+        if p.endswith(self.MARKITDOWN_EXTENSIONS):
+            return 'markitdown'
         if p.endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif')):
             return 'image'
         # csv treated as text/raw
@@ -42,21 +49,14 @@ class LoadFileAction(StepwiseAction):
         except Exception:
             uploads_dir_abs = None
         for pat in patterns:
-            matches = glob.glob(pat)
+            expanded = os.path.expanduser(pat)
+            matches = glob.glob(expanded)
             for path in matches:
                 if os.path.isfile(path):
                     kind = self._detect_kind(path)
                     processed = False
-                    if kind == 'pdf':
-                        helper = self.session.get_action('read_pdf')
-                        if helper:
-                            processed = bool(helper.process(path))
-                    elif kind == 'docx':
-                        helper = self.session.get_action('read_docx')
-                        if helper:
-                            processed = bool(helper.process(path))
-                    elif kind == 'xlsx':
-                        helper = self.session.get_action('read_sheet')
+                    if kind == 'markitdown':
+                        helper = self.session.get_action('markitdown')
                         if helper:
                             processed = bool(helper.process(path))
                     elif kind == 'image':
@@ -136,7 +136,8 @@ class LoadFileAction(StepwiseAction):
             if hasattr(self.session.ui, 'capabilities'):
                 pass  # no-op; simple attempt below
 
-        files = glob.glob(filename)
+        expanded_filename = os.path.expanduser(filename)
+        files = glob.glob(expanded_filename)
         if not files:
             # In blocking UIs (CLI), re-prompt synchronously
             is_blocking = False
@@ -151,7 +152,8 @@ class LoadFileAction(StepwiseAction):
                     if filename.lower().strip() == 'q':
                         self.tc.run('chat')
                         return Completed({'ok': True, 'loaded': [], 'cancelled': True})
-                    files = glob.glob(filename)
+                    expanded_filename = os.path.expanduser(filename)
+                    files = glob.glob(expanded_filename)
                     if files:
                         break
             else:

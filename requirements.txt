@@ -10,9 +10,6 @@ beautifulsoup4
 tiktoken
 reportlab
 trafilatura
-pypdf
-python-docx
-openpyxl
 llama-cpp-python
 pytz
 mlx

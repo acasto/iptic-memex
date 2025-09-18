@@ -13,6 +13,17 @@ class AssistantFileToolAction(StepwiseAction):
     Modes: read, write, append, edit, summarize, delete, rename, copy
     """
 
+    MARKITDOWN_EXTENSIONS: tuple[str, ...] = (
+        '.pdf',
+        '.docx',
+        '.xlsx',
+        '.xls',
+        '.pptx',
+        '.msg',
+        '.mp3',
+        '.wav',
+    )
+
     def __init__(self, session):
         self.session = session
         self.fs_handler = session.get_action('assistant_fs_handler')
@@ -35,6 +46,7 @@ class AssistantFileToolAction(StepwiseAction):
             'description': (
                 "Read or modify files in the workspace. Modes: read, write, append, edit, summarize, delete, "
                 "rename, copy. Use 'content' for write/append/edit. "
+                "Can read any text based file as well as pdf, docx, xlsx, xls, pptx, msg, mp3, wav, jpg, png. "
                 "For editing longer files consider using a programmatic approach. "
             ),
             'required': ['mode', 'file'],
@@ -53,6 +65,9 @@ class AssistantFileToolAction(StepwiseAction):
             },
             'auto_submit': True,
         }
+
+    def run(self, *args, **kwargs):
+        return super().run(*args, **kwargs)
 
     # ---- Stepwise protocol -------------------------------------------------
     def start(self, args: Dict, content: str = "") -> Completed:
@@ -134,24 +149,9 @@ class AssistantFileToolAction(StepwiseAction):
 
         kind = self._detect_kind(resolved_path)
         try:
-            if kind == 'pdf':
-                helper = self.session.get_action('read_pdf')
-                if helper:
-                    ok = bool(helper.process(resolved_path, fs_handler=self.fs_handler))
-                    if ok:
-                        return
-            elif kind == 'docx':
-                helper = self.session.get_action('read_docx')
-                if helper:
-                    ok = bool(helper.process(resolved_path, fs_handler=self.fs_handler))
-                    if ok:
-                        return
-            elif kind == 'xlsx':
-                helper = self.session.get_action('read_sheet')
-                if helper:
-                    ok = bool(helper.process(resolved_path, fs_handler=self.fs_handler))
-                    if ok:
-                        return
+            if kind == 'markitdown':
+                if self._run_markitdown(resolved_path):
+                    return
             elif kind == 'image':
                 helper = self.session.get_action('read_image')
                 if helper:
@@ -173,18 +173,27 @@ class AssistantFileToolAction(StepwiseAction):
         except Exception:
             self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Error loading file: {filename}'})
 
-    @staticmethod
-    def _detect_kind(path: str) -> str:
+    @classmethod
+    def _detect_kind(cls, path: str) -> str:
         p = path.lower()
-        if p.endswith('.pdf'):
-            return 'pdf'
-        if p.endswith('.docx'):
-            return 'docx'
-        if p.endswith('.xlsx'):
-            return 'xlsx'
+        if p.endswith(cls.MARKITDOWN_EXTENSIONS):
+            return 'markitdown'
         if p.endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif')):
             return 'image'
         return 'file'
+
+    def _run_markitdown(self, path: str) -> bool:
+        try:
+            helper = self.session.get_action('markitdown')
+        except Exception:
+            helper = None
+        if not helper:
+            return False
+        try:
+            return bool(helper.process(path, fs_handler=self.fs_handler))
+        except Exception:
+            return False
+
 
     def _handle_write(self, filename: str, content: str, force: bool = False) -> None:
         policy = self.session.get_agent_write_policy()
