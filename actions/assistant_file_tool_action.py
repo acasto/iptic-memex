@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from base_classes import StepwiseAction, Completed
 import os
-import tempfile
 from typing import Any, Dict
 from utils.tool_args import get_str, get_bool
 from core.mode_runner import run_completion
@@ -35,7 +34,8 @@ class AssistantFileToolAction(StepwiseAction):
             'args': ['mode', 'file', 'new_name', 'recursive', 'block', 'desc'],
             'description': (
                 "Read or modify files in the workspace. Modes: read, write, append, edit, summarize, delete, "
-                "rename, copy. Use 'content' for write/append/edit."
+                "rename, copy. Use 'content' for write/append/edit. "
+                "For editing longer files consider using a programmatic approach. "
             ),
             'required': ['mode', 'file'],
             'schema': {
@@ -53,7 +53,6 @@ class AssistantFileToolAction(StepwiseAction):
             },
             'auto_submit': True,
         }
-
 
     # ---- Stepwise protocol -------------------------------------------------
     def start(self, args: Dict, content: str = "") -> Completed:
@@ -174,7 +173,8 @@ class AssistantFileToolAction(StepwiseAction):
         except Exception:
             self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Error loading file: {filename}'})
 
-    def _detect_kind(self, path: str) -> str:
+    @staticmethod
+    def _detect_kind(path: str) -> str:
         p = path.lower()
         if p.endswith('.pdf'):
             return 'pdf'
