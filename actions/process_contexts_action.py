@@ -1,5 +1,6 @@
 from base_classes import InteractionAction
 from core.input_limits import enforce_interactive_gate
+from contextlib import nullcontext
 
 
 class ProcessContextsAction(InteractionAction):
@@ -26,82 +27,98 @@ class ProcessContextsAction(InteractionAction):
         output = self.session.utils.output
         contexts = self.session.get_action("process_contexts").get_contexts(self.session)
 
-        if len(contexts) > 0:
-            total_tokens = 0
-            printed_any = False  # Track if we emitted any summary/details output
+        scope_cm = nullcontext()
+        scope_applied = False
+        if auto_submit:
+            try:
+                scope_meta = self.session.get_user_data('__last_tool_scope__')
+            except Exception:
+                scope_meta = None
+            scope_callable = getattr(output, 'tool_scope', None)
+            tool_name = (scope_meta or {}).get('tool_name') if scope_meta else None
+            if callable(scope_callable):
+                scope_cm = scope_callable(
+                    tool_name or 'contexts',
+                    call_id=(scope_meta or {}).get('tool_call_id') if scope_meta else None,
+                    title=(scope_meta or {}).get('title') if scope_meta else None,
+                )
+                scope_applied = True
 
-            # Toggle per-context summary printing via config/params (DEFAULT.show_context_summary)
-            params = self.session.get_params()
-            show_context_summary = params.get('show_context_summary', True)
+        with scope_cm:
+            if contexts:
+                total_tokens = 0
+                printed_any = False
 
-            # Agent-friendly: optionally print context contents (e.g., diffs) for assistant/agent contexts
-            show_context_details = params.get('show_context_details', False)
-            detail_max_chars = params.get('context_detail_max_chars', 4000)
+                params = self.session.get_params()
+                show_context_summary = params.get('show_context_summary', True)
+                show_context_details = params.get('show_context_details', False)
+                detail_max_chars = params.get('context_detail_max_chars', 4000)
 
-            # For interactive chat, add a spacer before summaries/details
-            if (not auto_submit) and (show_context_summary or show_context_details):
-                output.write()
+                if (not auto_submit) and (show_context_summary or show_context_details):
+                    output.write()
 
-            for idx, context in enumerate(contexts):
-                if context['type'] == 'image':
+                for idx, context in enumerate(contexts):
+                    if context['type'] == 'image':
+                        if show_context_summary:
+                            name = context['context'].get()['name']
+                            if auto_submit:
+                                output.write(f"Output of: {name} (image)")
+                            else:
+                                output.write(f"In context: [{idx}] {name} (image)")
+                            printed_any = True
+                        continue
+
+                    context_data = context['context'].get()
+                    content = context_data.get('content', '')
+                    tokens = self.token_counter.count_tiktoken(content) if content else 0
+                    total_tokens += tokens
+
                     if show_context_summary:
-                        name = context['context'].get()['name']
                         if auto_submit:
-                            output.write(f"Output of: {name} (image)")
+                            output.write(f"Output of: {context_data.get('name', 'unnamed')} ({tokens} tokens)")
                         else:
-                            output.write(f"In context: [{idx}] {name} (image)")
+                            output.write(f"In context: [{idx}] {context_data.get('name', 'unnamed')} ({tokens} tokens)")
                         printed_any = True
-                    # No tokens to add for images in this counter
-                    continue
 
-                context_data = context['context'].get()
-                content = context_data.get('content', '')
-                tokens = self.token_counter.count_tiktoken(content) if content else 0
-                total_tokens += tokens
+                    if show_context_details and context['type'] in ('assistant', 'agent') and content:
+                        try:
+                            text_val = str(content)
+                        except Exception:
+                            text_val = ''
+                        if text_val:
+                            if isinstance(detail_max_chars, int) and detail_max_chars > 0 and len(text_val) > detail_max_chars:
+                                output.write(text_val[:detail_max_chars])
+                                output.write(f"\n… (truncated {len(text_val) - detail_max_chars} chars)\n")
+                            else:
+                                output.write(text_val)
+                            printed_any = True
 
-                if show_context_summary:
-                    if auto_submit:
-                        output.write(f"Output of: {context_data.get('name', 'unnamed')} ({tokens} tokens)")
-                    else:
-                        output.write(f"In context: [{idx}] {context_data.get('name', 'unnamed')} ({tokens} tokens)")
-                    printed_any = True
-
-                # Print details for assistant/agent contexts (e.g., diffs, errors) when enabled
-                if show_context_details and context['type'] in ('assistant', 'agent') and content:
+                if auto_submit and total_tokens > 0:
                     try:
-                        text = str(content)
+                        in_agent = bool(getattr(self.session, 'in_agent_mode', lambda: False)())
                     except Exception:
-                        text = ''
-                    if text:
-                        if isinstance(detail_max_chars, int) and detail_max_chars > 0 and len(text) > detail_max_chars:
-                            output.write(text[:detail_max_chars])
-                            output.write(f"\n… (truncated {len(text) - detail_max_chars} chars)\n")
-                        else:
-                            output.write(text)
-                        printed_any = True
+                        in_agent = False
+                    if not in_agent:
+                        decision = enforce_interactive_gate(self.session, total_tokens)
+                        action = decision.get('action')
+                        lim = decision.get('limit')
+                        if action == 'disable_auto':
+                            output.write(f"\nWarning: Total tokens ({total_tokens}) exceed limit ({lim}). Auto-submit disabled.")
+                            self.session.set_flag('auto_submit', False)
+                        elif action == 'feedback':
+                            self.session.add_context('assistant', {
+                                'name': 'assistant_feedback',
+                                'content': f"Warning: Input size ({total_tokens} tokens) exceeds recommended limit ({lim})."
+                            })
 
-            # Interactive large-input gate (centralized)
-            if auto_submit and total_tokens > 0:
-                try:
-                    in_agent = bool(getattr(self.session, 'in_agent_mode', lambda: False)())
-                except Exception:
-                    in_agent = False
-                if not in_agent:
-                    decision = enforce_interactive_gate(self.session, total_tokens)
-                    action = decision.get('action')
-                    lim = decision.get('limit')
-                    if action == 'disable_auto':
-                        output.write(f"\nWarning: Total tokens ({total_tokens}) exceed limit ({lim}). Auto-submit disabled.")
-                        self.session.set_flag('auto_submit', False)
-                    elif action == 'feedback':
-                        self.session.add_context('assistant', {
-                            'name': 'assistant_feedback',
-                            'content': f"Warning: Input size ({total_tokens} tokens) exceeds recommended limit ({lim})."
-                        })
+                if printed_any and (not auto_submit):
+                    output.write()
 
-            # Only emit a trailing spacer in interactive mode
-            if printed_any and (not auto_submit):
-                output.write()
+        if scope_applied:
+            try:
+                self.session.set_user_data('__last_tool_scope__', None)
+            except Exception:
+                pass
 
         return contexts
 

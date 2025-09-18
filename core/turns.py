@@ -516,6 +516,7 @@ class TurnRunner:
                                 args = merged
                         except Exception:
                             pass
+                        desc: Optional[str] = None
                         try:
                             from contextlib import nullcontext
                             self.session.utils.output.stop_spinner()
@@ -546,6 +547,17 @@ class TurnRunner:
                             spinner_cm = nullcontext()
 
                         try:
+                            tool_scope_callable = getattr(self.session.utils.output, 'tool_scope', None)
+                            if callable(tool_scope_callable):
+                                scope_cm = tool_scope_callable(name, call_id=call_id, title=desc)
+                            else:
+                                from contextlib import nullcontext
+                                scope_cm = nullcontext()
+                        except Exception:
+                            from contextlib import nullcontext
+                            scope_cm = nullcontext()
+
+                        try:
                             before_ctx = list(self.session.get_contexts('assistant') or [])
                             before_len = len(before_ctx)
                         except Exception:
@@ -554,68 +566,33 @@ class TurnRunner:
                         try:
                             action = self.session.get_action(handler.get('name'))
                             with spinner_cm:
-                                try:
-                                    if not self.session.in_agent_mode():
-                                        ui = getattr(self.session, 'ui', None)
-                                        blocking = True
-                                        try:
-                                            blocking = bool(ui and ui.capabilities and ui.capabilities.blocking)
-                                        except Exception:
+                                with scope_cm:
+                                    try:
+                                        if not self.session.in_agent_mode():
+                                            ui = getattr(self.session, 'ui', None)
                                             blocking = True
-                                        if blocking:
-                                            self.session.utils.output.write("")
                                             try:
-                                                self.session.utils.output.stop_spinner()
+                                                blocking = bool(ui and ui.capabilities and ui.capabilities.blocking)
                                             except Exception:
-                                                pass
-                                except Exception:
-                                    pass
-                                try:
-                                    from utils.output_utils import OutputLevel
-                                    out_mode = (self.session.get_params().get('agent_output_mode') or '').lower()
-                                    if self.session.in_agent_mode() and out_mode in ('final', 'none'):
-                                        with self.session.utils.output.suppress_below(OutputLevel.WARNING):
+                                                blocking = True
+                                            if blocking:
+                                                self.session.utils.output.write("")
+                                                try:
+                                                    self.session.utils.output.stop_spinner()
+                                                except Exception:
+                                                    pass
+                                    except Exception:
+                                        pass
+                                    try:
+                                        from utils.output_utils import OutputLevel
+                                        out_mode = (self.session.get_params().get('agent_output_mode') or '').lower()
+                                        if self.session.in_agent_mode() and out_mode in ('final', 'none'):
+                                            with self.session.utils.output.suppress_below(OutputLevel.WARNING):
+                                                action.run(args, content)
+                                        else:
                                             action.run(args, content)
-                                    else:
-                                        action.run(args, content)
-                                except KeyboardInterrupt:
-                                    # Cooperative cancellation: mark token and stop executing queued calls
-                                    try:
-                                        self.session.set_flag('turn_cancelled', True)
-                                    except Exception:
-                                        pass
-                                    try:
-                                        tok = self.session.get_cancellation_token()
-                                        if tok and hasattr(tok, 'cancel'):
-                                            tok.cancel('keyboard')
-                                    except Exception:
-                                        pass
-                                    # Emit tool_result for the current call to satisfy provider pairing
-                                    try:
-                                        chat_ctx = self.session.get_context('chat') or self.session.add_context('chat')
-                                        extra = {'tool_call_id': call_id} if call_id else None
-                                        chat_ctx.add('Cancelled', role='tool', extra=extra)
-                                    except Exception:
-                                        pass
-                                    try:
-                                        self.session.add_context('assistant', {
-                                            'name': 'command_error',
-                                            'content': f"Tool '{name}' cancelled by user"
-                                        })
-                                    except Exception:
-                                        pass
-                                    try:
-                                        self.session.utils.logger.tool_end(name=name, call_id=call_id, status='cancelled')
-                                    except Exception:
-                                        pass
-                                    cancelled_during_tools = True
-                                    break
-                                except Exception:
-                                    # Fallback: try once more without output suppression
-                                    try:
-                                        action.run(args, content)
                                     except KeyboardInterrupt:
-                                        # Mirror cancellation handling in the main path
+                                        # Cooperative cancellation: mark token and stop executing queued calls
                                         try:
                                             self.session.set_flag('turn_cancelled', True)
                                         except Exception:
@@ -645,6 +622,42 @@ class TurnRunner:
                                             pass
                                         cancelled_during_tools = True
                                         break
+                                    except Exception:
+                                        # Fallback: try once more without output suppression
+                                        try:
+                                            action.run(args, content)
+                                        except KeyboardInterrupt:
+                                            try:
+                                                self.session.set_flag('turn_cancelled', True)
+                                            except Exception:
+                                                pass
+                                            try:
+                                                tok = self.session.get_cancellation_token()
+                                                if tok and hasattr(tok, 'cancel'):
+                                                    tok.cancel('keyboard')
+                                            except Exception:
+                                                pass
+                                            try:
+                                                chat_ctx = self.session.get_context('chat') or self.session.add_context('chat')
+                                                extra = {'tool_call_id': call_id} if call_id else None
+                                                chat_ctx.add('Cancelled', role='tool', extra=extra)
+                                            except Exception:
+                                                pass
+                                            try:
+                                                self.session.add_context('assistant', {
+                                                    'name': 'command_error',
+                                                    'content': f"Tool '{name}' cancelled by user"
+                                                })
+                                            except Exception:
+                                                pass
+                                            try:
+                                                self.session.utils.logger.tool_end(name=name, call_id=call_id, status='cancelled')
+                                            except Exception:
+                                                pass
+                                            cancelled_during_tools = True
+                                            break
+                                        except Exception as err:
+                                            raise err
                             ran_any = True
                             try:
                                 after_ctx = list(self.session.get_contexts('assistant') or [])
@@ -683,6 +696,17 @@ class TurnRunner:
                             try:
                                 after_ctx2 = list(self.session.get_contexts('assistant') or [])
                                 delta = max(0, len(after_ctx2) - (before_len if 'before_len' in locals() else 0))
+                            except Exception:
+                                delta = 0
+                            try:
+                                self.session.set_user_data('__last_tool_scope__', {
+                                    'tool_name': name,
+                                    'tool_call_id': call_id,
+                                    'title': desc,
+                                })
+                            except Exception:
+                                pass
+                            try:
                                 self.session.utils.logger.tool_end(name=name, call_id=call_id, status='success', result_meta={'assistant_additions': delta})
                             except Exception:
                                 pass

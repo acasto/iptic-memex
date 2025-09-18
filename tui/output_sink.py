@@ -20,6 +20,10 @@ class OutputEvent:
     is_stream: bool = False
     spacing: Optional[List[int]] = None
     spinner_id: Optional[str] = None
+    origin: Optional[str] = None
+    tool_name: Optional[str] = None
+    tool_call_id: Optional[str] = None
+    tool_title: Optional[str] = None
 
 
 class TuiOutput:
@@ -36,6 +40,7 @@ class TuiOutput:
             OutputLevel.ERROR: 'error',
             OutputLevel.CRITICAL: 'critical',
         }
+        self._scope_stack: List[Dict[str, Any]] = []
 
     # ----- helpers -----------------------------------------------------
     def _emit(self, event: OutputEvent) -> None:
@@ -99,6 +104,7 @@ class TuiOutput:
             flush=bool(flush),
             spacing=spacing_norm,
             is_stream=(end == ''),
+            **self._current_scope_payload(),
         )
         self._emit(event)
 
@@ -136,7 +142,7 @@ class TuiOutput:
     def spinner(self, message: str = '', style: Optional[str] = None):
         spinner_id = str(uuid.uuid4())
         self._spinner_stack.append(spinner_id)
-        self._emit(OutputEvent(type='spinner', text=message, spinner_id=spinner_id))
+        self._emit(OutputEvent(type='spinner', text=message, spinner_id=spinner_id, **self._current_scope_payload()))
         try:
             yield self
         finally:
@@ -148,11 +154,89 @@ class TuiOutput:
             sid = self._spinner_stack.pop() if self._spinner_stack else None
         if not sid:
             return
-        self._emit(OutputEvent(type='spinner_done', spinner_id=sid))
+        self._emit(OutputEvent(type='spinner_done', spinner_id=sid, **self._current_scope_payload()))
 
     @contextmanager
     def suppress_stdout_blanks(self, suppress_blank_lines: bool = True, collapse_bursts: bool = True):
         yield self
+
+    class _ToolScopeContext:
+        def __init__(
+            self,
+            outer: 'TuiOutput',
+            meta: Dict[str, Any],
+            *,
+            autostart: bool = False,
+            autoend: bool = False,
+        ) -> None:
+            self._outer = outer
+            self._meta = meta
+            self._autostart = autostart
+            self._autoend = autoend
+            self._entered = False
+
+        def __enter__(self) -> 'TuiOutput._ToolScopeContext':
+            if not self._entered:
+                self._outer._scope_stack.append(self._meta)
+                self._entered = True
+                if self._autostart:
+                    title = self._meta.get('title') or self._meta.get('tool_name')
+                    if title:
+                        self._outer.info(title)
+            return self
+
+        def status(self, message: str, *, level: str = 'info', **kwargs: Any) -> None:
+            level = (level or 'info').lower()
+            if level == 'debug':
+                self._outer.debug(message, **kwargs)
+            elif level == 'warning':
+                self._outer.warning(message, **kwargs)
+            elif level == 'error':
+                self._outer.error(message, **kwargs)
+            elif level == 'critical':
+                self._outer.critical(message, **kwargs)
+            else:
+                self._outer.info(message, **kwargs)
+
+        def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+            if self._entered and self._outer._scope_stack:
+                self._outer._scope_stack.pop()
+            if self._autoend and exc_type is None:
+                title = self._meta.get('title') or self._meta.get('tool_name')
+                if title:
+                    self._outer.info(f"Completed: {title}")
+
+    def tool_scope(
+        self,
+        name: str,
+        call_id: Optional[str] = None,
+        *,
+        title: Optional[str] = None,
+        autostart: bool = False,
+        autoend: bool = False,
+    ) -> 'TuiOutput._ToolScopeContext':
+        meta = {
+            'origin': 'tool',
+            'tool_name': name,
+            'tool_call_id': call_id,
+            'tool_title': title,
+            'title': title,
+        }
+        return TuiOutput._ToolScopeContext(self, meta, autostart=autostart, autoend=autoend)
+
+    def current_tool_scope(self) -> Optional[Dict[str, Any]]:
+        return self._scope_stack[-1] if self._scope_stack else None
+
+    def _current_scope_payload(self) -> Dict[str, Any]:
+        scope = self.current_tool_scope()
+        if not scope:
+            return {}
+        return {
+            'origin': scope.get('origin'),
+            'tool_name': scope.get('tool_name'),
+            'tool_call_id': scope.get('tool_call_id'),
+            'tool_title': scope.get('tool_title') or scope.get('title'),
+        }
 
 
 __all__ = ['TuiOutput', 'OutputEvent']

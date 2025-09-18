@@ -99,7 +99,7 @@ class MarkitdownAction(InteractionAction):
                 },
             )
             try:
-                self.session.ui.emit("status", {"message": f"Loaded via MarkItDown: {basename}"})
+                self.session.utils.output.info(f"Loaded via MarkItDown: {basename}")
             except Exception:
                 pass
             return True
@@ -111,7 +111,7 @@ class MarkitdownAction(InteractionAction):
 
     def _emit_error(self, message: str) -> None:
         try:
-            self.session.ui.emit("error", {"message": message})
+            self.session.utils.output.error(message)
         except Exception:
             pass
 

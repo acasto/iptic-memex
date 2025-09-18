@@ -27,6 +27,7 @@ class AssistantWebsearchToolAction(InteractionAction):
     def set_search_model(session, model_name=None):
         """Set the search model in session tools (Stepwise-friendly prompt)."""
         ui = getattr(session, 'ui', None)
+        output = getattr(session.utils, 'output', None)
         if not model_name:
             options = [
                 'basic (sonar) - Basic web search',
@@ -50,16 +51,24 @@ class AssistantWebsearchToolAction(InteractionAction):
 
         model_name = (model_name or '').lower()
         if model_name not in AssistantWebsearchToolAction.SEARCH_MODELS:
-            if ui:
-                try: ui.emit('error', {'message': f"Invalid model: {model_name}"})
-                except Exception: pass
+            try:
+                if output:
+                    output.error(f"Invalid model: {model_name}")
+                elif ui and hasattr(ui, 'emit'):
+                    ui.emit('error', {'message': f"Invalid model: {model_name}"})
+            except Exception:
+                pass
             return False
 
         full_name = AssistantWebsearchToolAction.SEARCH_MODELS[model_name]
         session.get_tools()['search_model'] = full_name
-        if ui:
-            try: ui.emit('status', {'message': f"Search model set to: {full_name}"})
-            except Exception: pass
+        try:
+            if output:
+                output.info(f"Search model set to: {full_name}")
+            elif ui and hasattr(ui, 'emit'):
+                ui.emit('status', {'message': f"Search model set to: {full_name}"})
+        except Exception:
+            pass
         return True
 
     def validate_search_model(self, model_name):
@@ -221,7 +230,7 @@ class AssistantWebsearchToolAction(InteractionAction):
                     summary = base_text
                 except Exception as e:
                     try:
-                        self.session.ui.emit('warning', {'message': f"Citations extraction error: {e}"})
+                        self.session.utils.output.warning(f"Citations extraction error: {e}")
                     except Exception:
                         pass
 

@@ -85,6 +85,22 @@ async def handle_api_stream(app, request: Request):
             try:
                 item = dict(data)
                 item['type'] = event_type
+                scope_meta = None
+                try:
+                    scope_fn = getattr(web_output, 'current_tool_scope', None)
+                    if callable(scope_fn):
+                        scope_meta = scope_fn()
+                except Exception:
+                    scope_meta = None
+                if scope_meta and event_type in {'status', 'warning', 'error', 'critical'}:
+                    item.setdefault('origin', scope_meta.get('origin') or 'tool')
+                    if scope_meta.get('tool_name'):
+                        item.setdefault('tool', scope_meta.get('tool_name'))
+                    if scope_meta.get('tool_call_id'):
+                        item.setdefault('tool_call_id', scope_meta.get('tool_call_id'))
+                    title = scope_meta.get('title') or scope_meta.get('tool_title')
+                    if title:
+                        item.setdefault('title', title)
                 emitted.append(item)
             except Exception:
                 pass
@@ -307,7 +323,9 @@ async def handle_api_stream(app, request: Request):
             item = await queue.get()
             # Support both dict tokens from WebOutput and (typ, data) tuples
             if isinstance(item, dict) and item.get('type') == 'token':
-                yield f"event: token\ndata: {json.dumps({'text': item.get('text', '')})}\n\n"
+                payload = dict(item)
+                payload.pop('type', None)
+                yield f"event: token\ndata: {json.dumps(payload)}\n\n"
                 continue
             try:
                 typ, data = item

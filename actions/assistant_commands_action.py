@@ -342,11 +342,17 @@ class AssistantCommandsAction(InteractionAction):
                     if self.session.in_agent_mode():
                         from contextlib import nullcontext
                         spinner_cm = nullcontext()
+                        scope_callable = getattr(self.session.utils.output, 'tool_scope', None)
+                        if callable(scope_callable):
+                            scope_cm = scope_callable((command_name or '').lower(), call_id=None, title=None)
+                        else:
+                            scope_cm = nullcontext()
                     else:
                         # Try to provide a helpful one-line summary for the spinner
                         try:
                             summary = None
                             a = cmd.get('args') or {}
+                            desc = None
                             d = a.get('desc') if isinstance(a, dict) else None
                             if isinstance(d, str):
                                 d = d.strip()
@@ -361,10 +367,18 @@ class AssistantCommandsAction(InteractionAction):
                                         d = joined
                             if isinstance(d, str) and len(d) > 120:
                                 d = d[:117] + '...'
+                            desc = d
                             msg = f"Tool calling: {(command_name or '').lower()}" + (f" — {d}" if d else "")
                         except Exception:
                             msg = f"Tool calling: {(command_name or '').lower()}"
+                            desc = None
                         spinner_cm = self.session.utils.output.spinner(msg)
+                        scope_callable = getattr(self.session.utils.output, 'tool_scope', None)
+                        if callable(scope_callable):
+                            scope_cm = scope_callable((command_name or '').lower(), call_id=None, title=desc)
+                        else:
+                            from contextlib import nullcontext
+                            scope_cm = nullcontext()
 
                     # Log pseudo-tool begin
                     try:
@@ -372,11 +386,12 @@ class AssistantCommandsAction(InteractionAction):
                     except Exception:
                         pass
                     with spinner_cm:
-                        if handler["type"] == "method":
-                            method = getattr(self, handler["name"])
-                            method(cmd['args'], cmd['content'])
-                        else:
-                            action = self.session.get_action(handler["name"])
+                        with scope_cm:
+                            if handler["type"] == "method":
+                                method = getattr(self, handler["name"])
+                                method(cmd['args'], cmd['content'])
+                            else:
+                                action = self.session.get_action(handler["name"])
                             try:
                                 action.run(cmd['args'], cmd['content'])
                             except Exception as need_exc:

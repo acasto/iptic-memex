@@ -20,10 +20,13 @@ class OutputBridge:
         self._chat_view: Optional["ChatTranscript"] = None
         self._status_log: Optional["StatusPanel"] = None
         self._spinner_messages: Dict[str, str] = {}
+        self._active_tool_message_id: Optional[str] = None
 
     # --- widget wiring -------------------------------------------------
     def set_chat_view(self, chat_view: Optional["ChatTranscript"]) -> None:
         self._chat_view = chat_view
+        if chat_view is None:
+            self._active_tool_message_id = None
 
     def set_status_log(self, status_log: Optional["StatusPanel"]) -> None:
         self._status_log = status_log
@@ -65,27 +68,58 @@ class OutputBridge:
         }.get(level, "ⓘ")
         message = f"{prefix} {text}" if text else prefix
         if before_id:
-            chat.insert_message_before(before_id, role, message)
+            if role == "tool" and self._active_tool_message_id:
+                try:
+                    chat.append_text(self._active_tool_message_id, ("\n" if chat.entries else "") + message)
+                    return
+                except Exception:
+                    pass
+            inserted_id = chat.insert_message_before(before_id, role, message)
+            if role == "tool":
+                self._active_tool_message_id = inserted_id
         else:
-            chat.add_message(role, message)
+            if role == "tool":
+                if self._active_tool_message_id:
+                    try:
+                        chat.append_text(self._active_tool_message_id, "\n" + message)
+                        return
+                    except Exception:
+                        pass
+                try:
+                    entries = getattr(chat, 'entries', []) or []
+                    for i in range(len(entries) - 1, -1, -1):
+                        e = entries[i]
+                        if getattr(e, 'role', None) == 'assistant':
+                            inserted_id = chat.insert_message_before(e.msg_id, role, message)
+                            self._active_tool_message_id = inserted_id
+                            return
+                except Exception:
+                    pass
+            new_id = chat.add_message(role, message)
+            if role == "tool":
+                self._active_tool_message_id = new_id
 
     # --- event handling ------------------------------------------------
     def handle_output_event(self, event: OutputEvent, active_message_id: Optional[str]) -> None:
         if event.type == "write":
             text = event.text or ""
             if event.is_stream and active_message_id and self._chat_view:
+                self._active_tool_message_id = None
                 self._chat_view.append_text(active_message_id, text)
                 return
             stripped = text.rstrip("\n")
             if not stripped:
                 return
             level = event.level or "info"
+            is_tool = (event.origin or "").lower() == "tool"
+            role = "tool" if is_tool else "system"
+            before_id = active_message_id if (is_tool and active_message_id) else None
             self.record_status(stripped, level)
             self.display_status_message(
                 stripped,
                 level,
-                before_id=active_message_id,
-                role="tool" if active_message_id else "system",
+                before_id=before_id,
+                role=role,
             )
             self.log_status(stripped, level)
             return
@@ -96,6 +130,14 @@ class OutputBridge:
             self.log_status(label, "info")
             if event.spinner_id:
                 self._spinner_messages[event.spinner_id] = label
+            # Surface tool spinner messages inline when streaming toward an assistant bubble
+            if label.startswith("Tool calling:") and active_message_id:
+                self.display_status_message(
+                    label,
+                    "info",
+                    before_id=active_message_id,
+                    role="tool",
+                )
             return
 
         if event.type == "spinner_done":
@@ -128,3 +170,4 @@ class OutputBridge:
     def reset(self) -> None:
         self._spinner_messages.clear()
         self._status_history.clear()
+        self._active_tool_message_id = None

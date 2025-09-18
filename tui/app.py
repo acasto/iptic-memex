@@ -187,6 +187,30 @@ if TEXTUAL_AVAILABLE:
             self.call_from_thread(self._output_bridge.handle_output_event, event, active_id)
 
         def _handle_ui_event(self, event_type: str, data: Dict[str, Any]) -> None:
+            scope_meta = None
+            try:
+                scope_fn = getattr(self._tui_output, 'current_tool_scope', None)
+                if callable(scope_fn):
+                    scope_meta = scope_fn()
+            except Exception:
+                scope_meta = None
+            if scope_meta and event_type in {'status', 'warning', 'error', 'critical'}:
+                message = str(data.get('message') or data.get('text') or '').strip()
+                if message:
+                    level = event_type if event_type in {'warning', 'error', 'critical'} else 'info'
+                    text = message if message.endswith('\n') else message + '\n'
+                    evt = OutputEvent(
+                        type='write',
+                        text=text,
+                        level=level,
+                        origin=scope_meta.get('origin') or 'tool',
+                        tool_name=scope_meta.get('tool_name'),
+                        tool_call_id=scope_meta.get('tool_call_id'),
+                        tool_title=scope_meta.get('title') or scope_meta.get('tool_title'),
+                    )
+                    active_id = getattr(self.turn_executor, "active_message_id", None)
+                    self.call_from_thread(self._output_bridge.handle_output_event, evt, active_id)
+                    return
             self.call_from_thread(self._output_bridge.handle_ui_event, event_type, data)
 
         # ----- input handling -----------------------------------------

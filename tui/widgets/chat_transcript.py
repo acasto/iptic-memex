@@ -128,6 +128,12 @@ class ChatTranscript(RichLog):
             title, style = self.ROLE_STYLES.get(entry.role, ("Other", "cyan"))
             title = self._role_titles.get(entry.role, title)
             style = self._role_styles.get(entry.role, style)
+            padding = (1, 2)
+            if entry.role == "tool":
+                padding = (0, 1)
+            elif entry.role == "command":
+                padding = (0, 1)
+
             if entry.role == "assistant":
                 try:
                     content = Markdown(entry.text or "")
@@ -137,6 +143,6 @@ class ChatTranscript(RichLog):
                 content = Text(entry.text or "", style="white")
             else:
                 content = Text(entry.text or "", style="default")
-            panel = Panel(content, title=title, border_style=style, padding=(1, 2), box=box.ROUNDED)
+            panel = Panel(content, title=title, border_style=style, padding=padding, box=box.ROUNDED)
             self.write(panel)
             self.write("")

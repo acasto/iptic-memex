@@ -41,7 +41,7 @@ class ReadImageAction(InteractionAction):
                     # Non-tool path: let ImageContext read from path
                     self.session.add_context('image', path)
                 try:
-                    self.session.ui.emit('status', {'message': f"Loaded image: {os.path.basename(path)}"})
+                    self.session.utils.output.info(f"Loaded image: {os.path.basename(path)}")
                 except Exception:
                     pass
                 return True
@@ -86,14 +86,14 @@ class ReadImageAction(InteractionAction):
                 'content': summary
             })
             try:
-                self.session.ui.emit('status', {'message': f"Loaded image summary: {os.path.basename(path)}"})
+                self.session.utils.output.info(f"Loaded image summary: {os.path.basename(path)}")
             except Exception:
                 pass
             return True
 
         except Exception:
             try:
-                self.session.ui.emit('error', {'message': f"Failed to process image: {path}"})
+                self.session.utils.output.error(f"Failed to process image: {path}")
             except Exception:
                 pass
             return False
@@ -132,4 +132,3 @@ class ReadImageAction(InteractionAction):
 
     def run(self, args=None, content=None):
         pass
-

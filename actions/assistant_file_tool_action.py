@@ -132,7 +132,7 @@ class AssistantFileToolAction(StepwiseAction):
                     if filename:
                         self.session.add_context('file', filename)
                         try:
-                            self.session.ui.emit('status', {'message': f'Loaded file: {filename}'})
+                            self.session.utils.output.info(f'Loaded file: {filename}')
                         except Exception:
                             pass
                         return Completed({'ok': True, 'file': filename, 'confirmed': True})
@@ -167,7 +167,7 @@ class AssistantFileToolAction(StepwiseAction):
             name = os.path.basename(resolved_path)
             self.session.add_context('file', {'name': name, 'content': str(content)})
             try:
-                self.session.ui.emit('status', {'message': f'Loaded file: {filename}'})
+                self.session.utils.output.info(f'Loaded file: {filename}')
             except Exception:
                 pass
         except Exception:
