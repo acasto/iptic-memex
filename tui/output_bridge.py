@@ -42,7 +42,14 @@ class OutputBridge:
         if len(self._status_history) > self._status_limit:
             self._status_history = self._status_history[-self._status_limit :]
 
-    def display_status_message(self, text: str, level: str) -> None:
+    def display_status_message(
+        self,
+        text: str,
+        level: str,
+        *,
+        before_id: Optional[str] = None,
+        role: str = "system",
+    ) -> None:
         if level == "debug":
             return
         chat = self._chat_view
@@ -57,7 +64,10 @@ class OutputBridge:
             "critical": "❌",
         }.get(level, "ⓘ")
         message = f"{prefix} {text}" if text else prefix
-        chat.add_message("system", message)
+        if before_id:
+            chat.insert_message_before(before_id, role, message)
+        else:
+            chat.add_message(role, message)
 
     # --- event handling ------------------------------------------------
     def handle_output_event(self, event: OutputEvent, active_message_id: Optional[str]) -> None:
@@ -71,7 +81,12 @@ class OutputBridge:
                 return
             level = event.level or "info"
             self.record_status(stripped, level)
-            self.display_status_message(stripped, level)
+            self.display_status_message(
+                stripped,
+                level,
+                before_id=active_message_id,
+                role="tool" if active_message_id else "system",
+            )
             self.log_status(stripped, level)
             return
 

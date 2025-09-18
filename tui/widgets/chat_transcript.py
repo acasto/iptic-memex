@@ -22,6 +22,8 @@ class ChatTranscript(RichLog):
         "user": ("You", "bold blue"),
         "assistant": ("Assistant", "bold green"),
         "system": ("System", "bold magenta"),
+        "tool": ("Tool", "bold cyan"),
+        "command": ("Command", "bold yellow"),
     }
 
     def __init__(
@@ -46,6 +48,22 @@ class ChatTranscript(RichLog):
         msg_id = uuid.uuid4().hex
         self.entries.append(
             ChatEntry(msg_id=msg_id, role=role or "assistant", text=text or "", streaming=streaming)
+        )
+        self._render_entries()
+        return msg_id
+
+    def insert_message_before(self, before_id: str, role: str, text: str) -> str:
+        """Insert a message before an existing entry identified by ``before_id``."""
+
+        msg_id = uuid.uuid4().hex
+        insert_at = len(self.entries)
+        for idx, entry in enumerate(self.entries):
+            if entry.msg_id == before_id:
+                insert_at = idx
+                break
+        self.entries.insert(
+            insert_at,
+            ChatEntry(msg_id=msg_id, role=role or "system", text=text or "", streaming=False),
         )
         self._render_entries()
         return msg_id

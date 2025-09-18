@@ -248,24 +248,24 @@ if TEXTUAL_AVAILABLE:
         async def _dispatch_slash_command(self, text: str) -> None:
             registry = self.command_registry
             if not registry:
-                self._emit_status('Command registry unavailable.', 'error')
+                self._emit_status('Command registry unavailable.', 'error', role='command')
                 return
             try:
                 chat_commands = self.session.get_action('chat_commands')
             except Exception:
                 chat_commands = None
             if not chat_commands:
-                self._emit_status('Commands action unavailable.', 'error')
+                self._emit_status('Commands action unavailable.', 'error', role='command')
                 return
             try:
                 parsed = chat_commands.match(text)
             except Exception as exc:
-                self._emit_status(f'Command error: {exc}', 'error')
+                self._emit_status(f'Command error: {exc}', 'error', role='command')
                 return
             if not parsed:
                 return
             if parsed.get('kind') == 'error':
-                self._emit_status(parsed.get('message', 'Invalid command'), 'warning')
+                self._emit_status(parsed.get('message', 'Invalid command'), 'warning', role='command')
                 return
             handler = {
                 'type': parsed.get('kind'),
@@ -290,7 +290,7 @@ if TEXTUAL_AVAILABLE:
             if self.command_hint:
                 self.command_hint.styles.visibility = "hidden"
             if not self._command_controller.has_commands:
-                self._emit_status('No commands available.', 'warning')
+                self._emit_status('No commands available.', 'warning', role='command')
                 return
             palette = CommandPalette(self._command_controller.command_items)
             self.push_screen(palette, self._on_command_selected)
@@ -332,7 +332,7 @@ if TEXTUAL_AVAILABLE:
                 except Exception:
                     pass
                 if not ok:
-                    self._emit_status(err or 'Command failed.', 'error')
+                    self._emit_status(err or 'Command failed.', 'error', role='command')
                 self._refresh_context_panel()
                 self.turn_executor.check_auto_submit()
                 self._clear_command_hint()
@@ -364,7 +364,7 @@ if TEXTUAL_AVAILABLE:
             if path and path[0] == 'clear' and (len(path) < 2 or not path[1]):
                 if self.chat_view:
                     self.chat_view.clear_messages()
-                self._emit_status('Screen cleared.', 'info')
+                self._emit_status('Screen cleared.', 'info', role='command')
                 self._clear_command_hint()
                 return None
 
@@ -409,7 +409,7 @@ if TEXTUAL_AVAILABLE:
                 has_path_arg = any((str(arg).strip()) for arg in argv)
                 if not has_path_arg:
                     self._emit_status('Provide a file path before loading.', 'warning', display=False)
-                    self._emit_status('Add a file path or use Tab to complete one, then press Enter.', 'warning')
+                    self._emit_status('Add a file path or use Tab to complete one, then press Enter.', 'warning', role='command')
                     command_bits = [segment for segment in (path or []) if segment]
                     if command_bits:
                         base = '/' + ' '.join(command_bits)
@@ -559,14 +559,14 @@ if TEXTUAL_AVAILABLE:
 
             if not payload.get('ok', True):
                 message = payload.get('error') or 'Command failed.'
-                self._emit_status(message, 'error')
+                self._emit_status(message, 'error', role='command')
                 return
 
             mode = payload.get('mode')
             if mode == 'list' and 'chats' in payload:
                 chats = payload.get('chats') or []
                 if not chats:
-                    self._emit_status('No chat files found.', 'info')
+                    self._emit_status('No chat files found.', 'info', role='command')
                 else:
                     lines = [f"Chats ({len(chats)}):"]
                     for item in chats[:20]:
@@ -574,12 +574,12 @@ if TEXTUAL_AVAILABLE:
                         lines.append(f" • {name}")
                     if len(chats) > 20:
                         lines.append(f"… and {len(chats) - 20} more")
-                    self._emit_status('\n'.join(lines), 'info')
+                    self._emit_status('\n'.join(lines), 'info', role='command')
                 return
 
             if mode == 'load' and payload.get('loaded'):
                 filename = payload.get('filename') or payload.get('path')
-                self._emit_status(f"Loaded chat from {filename}", 'info')
+                self._emit_status(f"Loaded chat from {filename}", 'info', role='command')
                 if self.chat_view:
                     self.chat_view.clear_messages()
                     self._render_existing_history()
@@ -587,20 +587,27 @@ if TEXTUAL_AVAILABLE:
 
             if mode == 'save' and payload.get('saved'):
                 filename = payload.get('filename') or payload.get('path')
-                self._emit_status(f"Saved chat to {filename}", 'info')
+                self._emit_status(f"Saved chat to {filename}", 'info', role='command')
                 return
 
             # Generic fallback: surface minimal confirmation
             if payload.get('ok'):
                 label = ' '.join(path or []) if path else 'command'
-                self._emit_status(f"/{label} completed.", 'info')
+                self._emit_status(f"/{label} completed.", 'info', role='command')
                 if payload.get('model'):
                     self._on_model_changed(str(payload.get('model')))
 
-        def _emit_status(self, text: str, level: str, *, display: bool = True) -> None:
+        def _emit_status(
+            self,
+            text: str,
+            level: str,
+            *,
+            display: bool = True,
+            role: str = "system",
+        ) -> None:
             self._output_bridge.record_status(text, level)
             if display:
-                self._output_bridge.display_status_message(text, level)
+                self._output_bridge.display_status_message(text, level, role=role)
             self._output_bridge.log_status(text, level)
 
         def _status_bar_text(self, model: str, provider: str, stream_enabled: bool) -> str:
@@ -657,7 +664,7 @@ if TEXTUAL_AVAILABLE:
                 model_map = {str(name): {} for name in list(models_raw)}
 
             if not model_map:
-                self._emit_status('No models available to select.', 'error')
+                self._emit_status('No models available to select.', 'error', role='command')
                 return None
 
             current_model = str((self.session.get_params() or {}).get('model') or '').strip()
@@ -719,7 +726,7 @@ if TEXTUAL_AVAILABLE:
                     if not filename:
                         chats = await asyncio.to_thread(action._list_chats)
                         if not chats:
-                            self._emit_status('No chat files found.', 'warning')
+                            self._emit_status('No chat files found.', 'warning', role='command')
                             return True
                         choices = []
                         for item in chats:
@@ -732,14 +739,14 @@ if TEXTUAL_AVAILABLE:
                             InteractionModal('choice', {'prompt': 'Select chat to load', 'choices': choices})
                         )
                         if not selection:
-                            self._emit_status('Load chat cancelled.', 'warning')
+                            self._emit_status('Load chat cancelled.', 'warning', role='command')
                             return True
                         filename = str(selection)
                     result = await asyncio.to_thread(action._handle_headless, {'mode': 'load', 'file': filename})
                     self._handle_command_result(path, result)
                     return True
             except Exception as exc:
-                self._emit_status(f'Manage chats error: {exc}', 'error')
+                self._emit_status(f'Manage chats error: {exc}', 'error', role='command')
                 return True
             return False
 
@@ -785,7 +792,7 @@ if TEXTUAL_AVAILABLE:
                         basename = candidate
                         full_path = os.path.join(os.path.expanduser(chats_directory), basename)
                 except Exception as exc:
-                    self._emit_status(f'Invalid filename: {exc}', 'error')
+                    self._emit_status(f'Invalid filename: {exc}', 'error', role='command')
                     candidate = None
                     continue
 
