@@ -21,7 +21,6 @@ class LoadProjectAction(StepwiseAction):
             'Add a doc',
             'Add multiline input',
             'Add web content',
-            'Add code snippet (Python)',
             'Remove context item',
             'Save project',
             'Quit',
@@ -43,8 +42,6 @@ class LoadProjectAction(StepwiseAction):
                     self.session.get_action('load_multiline').run()
                 elif sel == 'Add web content':
                     self.session.get_action('fetch_from_web').run()
-                elif sel == 'Add code snippet (Python)':
-                    self.session.get_action('fetch_code_snippet').run()
                 elif sel == 'Remove context item':
                     self.session.get_action('clear_context').run()
                 elif sel == 'Save project':
@@ -75,7 +72,6 @@ class LoadProjectAction(StepwiseAction):
             'Add a doc': 'load_doc',
             'Add multiline input': 'load_multiline',
             'Add web content': 'fetch_from_web',
-            'Add code snippet (Python)': 'fetch_code_snippet',
             'Remove context item': 'clear_context',
         }
         if sel in mapping:

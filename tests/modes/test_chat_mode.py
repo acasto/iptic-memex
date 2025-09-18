@@ -109,7 +109,7 @@ class Session:
     def remove_context_type(self, name): self._contexts.pop(name, None)
     def get_action(self, name): return self._actions.get(name)
     def get_provider(self): return Provider()
-    def handle_exit(self): return True
+    def handle_exit(self, confirm=True): return True
 
 
 def test_chat_mode_single_turn_non_stream_captures_output():

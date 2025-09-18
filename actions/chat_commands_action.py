@@ -228,7 +228,7 @@ class ChatCommandsAction(InteractionAction):
             pass
 
     def handle_quit(self):
-        if self.session.handle_exit():
+        if self.session.handle_exit(confirm=False):
             quit()
 
     # ----- helpers -------------------------------------------------------------

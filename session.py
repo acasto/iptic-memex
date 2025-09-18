@@ -493,19 +493,23 @@ class Session:
                 if not self.context[context_type]:
                     del self.context[context_type]
 
-    def handle_exit(self):
-        """Handle exit functionality - backward compatibility"""
-        # This would typically handle cleanup and user confirmation
-        # For now, return True to indicate exit should proceed
-        try:
-            response = self.utils.input.get_input(
-                self.utils.output.style_text("Hit Ctrl-C or enter 'y' to quit: ", "red")
-            )
-            if response.lower() != 'y':
-                return False
-        except (KeyboardInterrupt, EOFError):
-            self.utils.output.write()
-            return True
+    def handle_exit(self, confirm: bool = True) -> bool:
+        """Handle exit functionality - backward compatibility.
+
+        Args:
+            confirm: When True, prompt the user before exiting.
+        """
+        # Optionally prompt the user before exiting
+        if confirm:
+            try:
+                response = self.utils.input.get_input(
+                    self.utils.output.style_text("Hit Ctrl-C or enter 'y' to quit: ", "red")
+                )
+                if response.lower() != 'y':
+                    return False
+            except (KeyboardInterrupt, EOFError):
+                self.utils.output.write()
+                return True
 
         # Run cleanup tasks
         if self.provider and hasattr(self.provider, 'cleanup'):

@@ -25,7 +25,7 @@ envisioned a device that would compress and store all of their knowledge. https:
   - Internal actions that run headless completions inherit this behavior automatically (no per‑action overrides needed).
   
 - **Advanced Context Management**
-  - Load content from text files, PDFs, DOCX, XLSX, and even images.
+  - Load content from text files, PDFs, Word (DOCX), Excel (XLS/XLSX), PowerPoint (PPTX), Outlook MSG, audio (MP3/WAV), and images—now unified through Microsoft's MarkItDown for rich Markdown extraction.
   - For models without vision support you can load a summary of an image as describe by a model with vision support.
   - Fetch and integrate web content using simplified extraction (Trafilatura) or raw scraping (BeautifulSoup).
   - Add multiline text, code snippets, or specific segments from files into your conversation context.
@@ -300,7 +300,7 @@ Persona Review quickstart
   - **Chat Mode Quick Reference (slash commands)**
   - Type `/help` to see commands; tab-completion shows `/…` suggestions at the prompt.
   - **Context Loading**
-    - `/load file`, `/load code`, `/load multiline` Import content from files (auto-detects pdf/docx/xlsx/images) or multiline text.
+    - `/load file`, `/load multiline` Import content from files (auto-detects pdf/docx/xls/xlsx/pptx/msg/mp3/wav/images) or multiline text.
     - `/load web`, `/load search` Add web content or perform a web search with summarized results.
     - `/load raw` Load unformatted text; useful for loading saved 'full' conversations to avoid double formatting.
     - `/clear context` Clear the current turn context.

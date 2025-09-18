@@ -51,7 +51,6 @@ class UserCommandsRegistryAction(InteractionAction):
                     'file':      {'type': 'action', 'name': 'load_file', 'complete': {'type': 'builtin', 'name': 'file_paths'}},
                     'raw':       {'type': 'action', 'name': 'load_raw'},
                     'rag':       {'type': 'action', 'name': 'load_rag'},
-                    'code':      {'type': 'action', 'name': 'fetch_code_snippet'},
                     'multiline': {'type': 'action', 'name': 'load_multiline'},
                     'web':       {'type': 'action', 'name': 'fetch_from_web'} ,
                     'chat':      {'type': 'action', 'name': 'manage_chats', 'args': ['load'], 'complete': {'type': 'builtin', 'name': 'chat_paths'}},
@@ -366,7 +365,7 @@ class UserCommandsRegistryAction(InteractionAction):
                 return True, None
             if name == 'handle_quit':
                 try:
-                    if self.session.handle_exit():
+                    if self.session.handle_exit(confirm=False):
                         quit()
                 except Exception:
                     pass
