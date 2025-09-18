@@ -215,14 +215,51 @@ class LlamaCppProvider(APIProvider):
         completion_str = ""
         start_time = time()
 
-        # Stream the response tokens
-        for chunk in response:
-            if 'choices' in chunk and len(chunk['choices']) > 0:
-                choice = chunk['choices'][0]
-                content = choice.get('delta', {}).get('content')
-                if content:
-                    completion_str += content
-                    yield content
+        # Cancellation helpers
+        try:
+            token = self.session.get_cancellation_token()
+        except Exception:
+            token = None
+
+        def _cancel_requested() -> bool:
+            try:
+                if token and getattr(token, 'is_cancelled', None) and token.is_cancelled():
+                    return True
+            except Exception:
+                pass
+            try:
+                return bool(self.session.get_flag('turn_cancelled'))
+            except Exception:
+                return False
+
+        cancelled_early = False
+
+        def _close_response() -> None:
+            close_fn = getattr(response, 'close', None)
+            if callable(close_fn):
+                try:
+                    close_fn()
+                except Exception:
+                    pass
+
+        try:
+            for chunk in response:
+                if _cancel_requested():
+                    cancelled_early = True
+                    break
+
+                if 'choices' in chunk and len(chunk['choices']) > 0:
+                    choice = chunk['choices'][0]
+                    content = choice.get('delta', {}).get('content')
+                    if content:
+                        completion_str += content
+                        yield content
+        except GeneratorExit:
+            # Stream closed upstream (e.g., Ctrl+C). Mark as cancelled and propagate cleanup.
+            cancelled_early = True
+        finally:
+            if cancelled_early:
+                _close_response()
 
         # Tokenize the completed response (encode to bytes)
         completion_tokens = self.llm.tokenize(completion_str.encode('utf-8'), add_bos=False)
