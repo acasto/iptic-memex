@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 from textual import events
+from textual.binding import Binding
 from textual.message import Message
 from textual.widgets import TextArea
 
 
 class ChatInput(TextArea):
     """Multiline-aware footer input with send shortcuts."""
+
+    BINDINGS = [
+        Binding("ctrl+k", "app.open_commands", "Commands", priority=True),
+    ]
 
     class SendRequested(Message):
         """Message emitted when the user wants to send the input."""

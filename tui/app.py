@@ -12,7 +12,7 @@ try:
     from textual.app import App, ComposeResult
     from textual.binding import Binding
     from textual.containers import Horizontal, Vertical
-    from textual.widgets import Button, Footer, Static
+    from textual.widgets import Footer, Static
     TEXTUAL_AVAILABLE = True
 except ImportError:  # pragma: no cover - surfaced when textual missing
     TEXTUAL_AVAILABLE = False
@@ -32,6 +32,8 @@ from utils.output_utils import OutputHandler
 if TEXTUAL_AVAILABLE:
     from tui.screens.command_palette import CommandPalette
     from tui.screens.interaction_modal import InteractionModal
+    from tui.screens.reader_overlay import ReaderOverlay
+    from tui.utils.clipboard import ClipboardHelper, ClipboardOutcome
     from tui.widgets.chat_transcript import ChatTranscript
     from tui.widgets.command_hint import CommandHint
     from tui.widgets.context_summary import ContextSummary
@@ -50,13 +52,10 @@ if TEXTUAL_AVAILABLE:
             Binding("ctrl+s", "toggle_stream", "Toggle stream"),
             Binding("ctrl+k", "open_commands", "Commands"),
             Binding("f8", "show_status", "Status", priority=True),
-            Binding("ctrl+c", "cancel_turn", "Cancel turn", priority=True),
-            Binding("alt+up", "scroll_chat_up", show=False, priority=True),
-            Binding("alt+down", "scroll_chat_down", show=False, priority=True),
-            Binding("pageup", "scroll_chat_page_up", show=False, priority=True),
-            Binding("pagedown", "scroll_chat_page_down", show=False, priority=True),
-            Binding("ctrl+u", "scroll_chat_page_up", show=False, priority=True),
-            Binding("ctrl+d", "scroll_chat_page_down", show=False, priority=True),
+            Binding("alt+c", "cancel_turn", "Cancel turn", priority=True),
+            Binding("meta+c", "cancel_turn", "Cancel turn", show=False, priority=True),
+            Binding("f7", "open_reader", "Reader", priority=True),
+            Binding("ctrl+shift+c", "copy_current_message", "Copy message", show=False, priority=True),
         ]
 
         def __init__(self, session, builder=None) -> None:
@@ -69,8 +68,6 @@ if TEXTUAL_AVAILABLE:
             self.status_log: Optional[StatusPanel] = None
             self.context_panel: Optional[ContextSummary] = None
             self.input: Optional[ChatInput] = None
-            self.send_button: Optional[Button] = None
-
             self.command_registry = self.session.get_action('user_commands_registry')
             self.command_hint: Optional[CommandHint] = None
             self._command_controller = CommandController()
@@ -110,13 +107,37 @@ if TEXTUAL_AVAILABLE:
             self._tui_output = TuiOutput(self._handle_output_event)
             self.session.utils.replace_output(self._tui_output)
 
+            self._reader_overlay: Optional[ReaderOverlay] = None
+            self._clipboard_helper = ClipboardHelper()
+            self._last_clipboard_outcome: Optional[ClipboardOutcome] = None
+            self._copy_warning_threshold = 100_000
+            self._reader_open = False
+            self._status_modal: Optional[StatusModal] = None
+            self._status_open = False
+            self._base_screen = None
+            self._status_spinner_frames = [
+                "⠋",
+                "⠙",
+                "⠹",
+                "⠸",
+                "⠼",
+                "⠴",
+                "⠦",
+                "⠧",
+                "⠇",
+                "⠏",
+            ]
+            self._status_spinner_index = 0
+            self._status_spinner_symbol: Optional[str] = None
+            self._status_spinner_timer = None
+
         # ----- layout --------------------------------------------------
         def compose(self) -> ComposeResult:
             params = self.session.get_params() or {}
             model_name = params.get('model', 'unknown')
             provider = params.get('provider', 'unknown')
             status = Static(
-                self._status_bar_text(model_name, provider, self._stream_enabled),
+                self._status_bar_text(model_name, provider, self._stream_enabled, self._status_spinner_symbol),
                 id="status_bar",
             )
             yield status
@@ -140,8 +161,6 @@ if TEXTUAL_AVAILABLE:
                     self.input = ChatInput(placeholder="Type a message or '/' for commands")
                     self._input_completion.set_input(self.input)
                     yield self.input
-                    self.send_button = Button("Send", id="send_button")
-                    yield self.send_button
 
             yield Footer()
 
@@ -164,12 +183,12 @@ if TEXTUAL_AVAILABLE:
             self._load_commands()
             self._refresh_context_panel()
             self._render_existing_history()
-            # Configure input suggestions (Textual 0.27+)
+            self._base_screen = self.screen
             try:
-                if hasattr(self.input, 'suggest_on'):
-                    self.input.suggest_on = 'typing'  # type: ignore[attr-defined]
+                self._status_spinner_timer = self.set_interval(0.2, self._tick_status_spinner)
             except Exception:
-                pass
+                self._status_spinner_timer = None
+            # Inline suggester disabled; CommandHint drives suggestions
 
         # ----- scheduling helpers -------------------------------------
         def _schedule_task(self, coro: Awaitable[Any]) -> None:
@@ -264,10 +283,6 @@ if TEXTUAL_AVAILABLE:
                 message = event.get('message')
                 if message:
                     self._emit_status(message, 'info')
-
-        def on_button_pressed(self, event: Button.Pressed) -> None:  # type: ignore[override]
-            if event.button.id == "send_button":
-                self._submit_input_text(self.input.text if self.input else '')
 
         async def _dispatch_slash_command(self, text: str) -> None:
             registry = self.command_registry
@@ -531,25 +546,41 @@ if TEXTUAL_AVAILABLE:
             return await future
 
 
+        def _get_reader_overlay(self) -> ReaderOverlay:
+            if self._reader_overlay is None:
+                self._reader_overlay = ReaderOverlay()
+            return self._reader_overlay
+
+        def _copy_text_to_clipboard(self, text: str) -> ClipboardOutcome:
+            def primary(value: str) -> None:
+                super(MemexTUIApp, self).copy_to_clipboard(value)
+
+            outcome = self._clipboard_helper.copy(text, primary)
+            self._last_clipboard_outcome = outcome
+            return outcome
+
+        def copy_to_clipboard(self, text: str) -> None:  # type: ignore[override]
+            outcome = self._copy_text_to_clipboard(text)
+            if not outcome.success:
+                raise RuntimeError(outcome.error or "clipboard unavailable")
+
         def _scroll_chat(self, mode: str) -> None:
             if not self.chat_view:
                 return
-            try:
-                if hasattr(self.chat_view, 'auto_scroll'):
-                    self.chat_view.auto_scroll = False
-            except Exception:
-                pass
-            try:
-                if mode == 'up':
-                    self.chat_view.scroll_up(animate=False, immediate=True)
-                elif mode == 'down':
-                    self.chat_view.scroll_down(animate=False, immediate=True)
-                elif mode == 'page_up':
-                    self.chat_view.scroll_page_up(animate=False)
-                elif mode == 'page_down':
-                    self.chat_view.scroll_page_down(animate=False)
-            except Exception:
-                pass
+            if self._base_screen is not None and self.screen is not self._base_screen:
+                return
+            if mode == 'up':
+                self.chat_view.move_cursor(-1)
+            elif mode == 'down':
+                self.chat_view.move_cursor(1)
+            elif mode == 'page_up':
+                self.chat_view.page_cursor(-1)
+            elif mode == 'page_down':
+                self.chat_view.page_cursor(1)
+            elif mode == 'home':
+                self.chat_view.jump_home()
+            elif mode == 'end':
+                self.chat_view.jump_end()
 
         def _mouse_in_chat(self, event: events.MouseEvent) -> bool:
             if not self.chat_view:
@@ -634,11 +665,30 @@ if TEXTUAL_AVAILABLE:
                 self._output_bridge.display_status_message(text, level, role=role)
             self._output_bridge.log_status(text, level)
 
-        def _status_bar_text(self, model: str, provider: str, stream_enabled: bool) -> str:
+        def _status_bar_text(self, model: str, provider: str, stream_enabled: bool, spinner: Optional[str] = None) -> str:
+            stream_label = 'on' if stream_enabled else 'off'
+            if spinner and stream_enabled:
+                stream_label = f"{stream_label} {spinner}"
             return (
                 f"iptic-memex TUI · Model: {model or 'unknown'} · Provider: {provider or 'unknown'} · "
-                f"Stream: {'on' if stream_enabled else 'off'}"
+                f"Stream: {stream_label}"
             )
+
+        def _tick_status_spinner(self) -> None:
+            streaming = False
+            try:
+                streaming = bool(self.chat_view and self.chat_view.has_streaming_messages())
+            except Exception:
+                streaming = False
+            if streaming:
+                self._status_spinner_index = (self._status_spinner_index + 1) % len(self._status_spinner_frames)
+                self._status_spinner_symbol = self._status_spinner_frames[self._status_spinner_index]
+            else:
+                if self._status_spinner_symbol is None:
+                    return
+                self._status_spinner_symbol = None
+                self._status_spinner_index = 0
+            self._update_status_bar()
 
         def _update_status_bar(self) -> None:
             try:
@@ -648,7 +698,7 @@ if TEXTUAL_AVAILABLE:
             params = self.session.get_params() or {}
             model_name = params.get('model', 'unknown')
             provider = params.get('provider', 'unknown')
-            bar.update(self._status_bar_text(model_name, provider, self._stream_enabled))
+            bar.update(self._status_bar_text(model_name, provider, self._stream_enabled, self._status_spinner_symbol))
 
         def _apply_response_label(self, params: Optional[Dict[str, Any]] = None) -> None:
             params = params or (self.session.get_params() or {})
@@ -920,20 +970,64 @@ if TEXTUAL_AVAILABLE:
                 self.set_focus(self.input)
 
         def action_show_status(self) -> None:
+            if self._status_open and self._status_modal:
+                self._status_modal.dismiss(None)
+                return
             history = self._output_bridge.status_history
-            self.push_screen(StatusModal(history), lambda _: None)
+            self._status_modal = StatusModal(history)
+            self._status_open = True
+            self.push_screen(self._status_modal, lambda _: self._on_status_close())
 
-        def action_scroll_chat_up(self) -> None:
-            self._scroll_chat('up')
+        def action_open_reader(self) -> None:
+            if not self.chat_view:
+                return
+            if self._reader_open and self._reader_overlay:
+                self._reader_overlay.dismiss(None)
+                return
+            message = self.chat_view.current_message()
+            if not message:
+                self._emit_status('No message selected.', 'info', display=False)
+                return
+            overlay = self._get_reader_overlay()
+            overlay.load_message(message)
+            self._reader_open = True
+            self.push_screen(overlay, lambda _: self._on_reader_close())
 
-        def action_scroll_chat_down(self) -> None:
-            self._scroll_chat('down')
+        def action_copy_current_message(self) -> None:
+            if not self.chat_view:
+                return
+            message = self.chat_view.current_message()
+            if not message:
+                self._emit_status('No message selected to copy.', 'info', display=False)
+                return
+            if getattr(self, '_reader_open', False) and self._reader_overlay:
+                selected = self._reader_overlay.get_selected_text() or ""
+                if selected:
+                    text = selected
+                else:
+                    text = message.text or ""
+            else:
+                text = message.text or ""
+            outcome = self._copy_text_to_clipboard(text)
+            if outcome.success:
+                method = 'OSC-52' if outcome.method == 'osc52' else outcome.method
+                self._emit_status(f'Copied message via {method}.', 'info', role='system')
+                if len(text) > self._copy_warning_threshold:
+                    self._emit_status(
+                        'Copied large selection; some terminals may truncate clipboard data.',
+                        'warning',
+                        role='system',
+                    )
+            else:
+                detail = outcome.error or 'clipboard unavailable'
+                self._emit_status(f'Clipboard copy failed: {detail}', 'error')
 
-        def action_scroll_chat_page_up(self) -> None:
-            self._scroll_chat('page_up')
+        def _on_reader_close(self) -> None:
+            self._reader_open = False
 
-        def action_scroll_chat_page_down(self) -> None:
-            self._scroll_chat('page_down')
+        def _on_status_close(self) -> None:
+            self._status_open = False
+            self._status_modal = None
 
         def action_cancel_turn(self) -> None:
             cancelled = False
@@ -961,6 +1055,38 @@ if TEXTUAL_AVAILABLE:
         def on_key(self, event: events.Key) -> None:
             if not self.input:
                 return
+
+            if event.key == 'escape':
+                in_base_screen = self._base_screen is None or self.screen is self._base_screen
+                if in_base_screen and (self.focused is self.input):
+                    # Only consume ESC to clear hints when the base view is active and input has focus.
+                    self._input_completion.clear_command_hint()
+                    try:
+                        self.set_focus(self.input)
+                    except Exception:
+                        pass
+                    event.prevent_default()
+                    event.stop()
+                    return
+                # Otherwise let ESC bubble to modals / other screens.
+
+            in_base_screen = self._base_screen is None or self.screen is self._base_screen
+            if in_base_screen:
+                nav_map = {
+                    'up': 'up',
+                    'down': 'down',
+                    'pageup': 'page_up',
+                    'pagedown': 'page_down',
+                    'home': 'home',
+                    'end': 'end',
+                }
+                mode = nav_map.get(event.key)
+                if mode:
+                    event.prevent_default()
+                    event.stop()
+                    self._scroll_chat(mode)
+                    return
+
             focused_input = self.focused is self.input
             if event.key == 'tab' and focused_input:
                 event.prevent_default()
@@ -992,6 +1118,12 @@ if TEXTUAL_AVAILABLE:
         def _cleanup(self) -> None:
             for task in list(self._pending_tasks):
                 task.cancel()
+            if self._status_spinner_timer is not None:
+                try:
+                    self._status_spinner_timer.stop()
+                except Exception:
+                    pass
+                self._status_spinner_timer = None
             try:
                 if hasattr(self._ui_adapter, 'set_event_handler'):
                     self._ui_adapter.set_event_handler(lambda *_: None)  # type: ignore[attr-defined]

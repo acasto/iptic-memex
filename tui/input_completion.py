@@ -78,7 +78,17 @@ class InputCompletionManager:
             self._update_input_suggestions(value, [])
             return
 
+        # If value is an exact top-level command without trailing space, hide hints
+        if self._is_exact_top_command(value):
+            self.clear_command_hint()
+            self._update_input_suggestions(value, [])
+            return
+
         suggestions, highlight = find_command_suggestions(value)
+        if not suggestions:
+            self.clear_command_hint()
+            self._update_input_suggestions(value, [])
+            return
         if self._command_hint:
             try:
                 self._command_hint.update_suggestions(suggestions, prefix=highlight)
@@ -179,49 +189,42 @@ class InputCompletionManager:
                 seen.add(value)
                 deduped.append(value)
         self._all_suggestion_strings = deduped
+        # Disable Textual's inline suggester; rely on CommandHint overlay instead.
         try:
-            from textual.suggester import SuggestFromList  # type: ignore
-
-            if deduped:
-                self._input.suggester = SuggestFromList(deduped, case_sensitive=False)
-            else:
-                self._input.suggester = None
+            if hasattr(self._input, "suggester"):
+                self._input.suggester = None  # type: ignore[attr-defined]
         except Exception:
             pass
+
+    def _is_exact_top_command(self, line: str) -> bool:
+        text = (line or "").rstrip()
+        if not text.startswith('/') or text.endswith(' '):
+            return False
+        name = text[1:]
+        try:
+            for item in self._top_level_commands:
+                title = (item.title or '').strip().lstrip('/')
+                if title == name:
+                    return True
+        except Exception:
+            pass
+        return False
 
     def _update_input_suggestions(self, line: str, items: List[CommandItem]) -> None:
         if not self._input:
             return
         try:
-            if not hasattr(self._input, "suggestions"):
-                return
             file_active = self._detect_file_completion_context(line)[0]
             if file_active:
-                suggestions = self._file_path_completion_values(line)
-                if suggestions:
-                    self._input.suggestions = suggestions  # type: ignore[attr-defined]
-                else:
-                    self._input.suggestions = []  # type: ignore[attr-defined]
-                if hasattr(self._input, "suggester"):
-                    self._input.suggester = None  # type: ignore[attr-defined]
+                # Show file completion choices in CommandHint only
+                _ = self._file_path_completion_values(line)
                 self._show_file_completion_hint()
                 return
             self._last_file_completion_hint = None
             if not line.startswith("/"):
-                self._input.suggestions = []  # type: ignore[attr-defined]
                 return
-            suggs: List[str] = []
-            for it in items:
-                suggs.append(self._format_suggestion(it.title))
-            uniq: List[str] = []
-            seen = set()
-            for s in suggs:
-                if s not in seen:
-                    seen.add(s)
-                    uniq.append(s)
-            self._input.suggestions = uniq  # type: ignore[attr-defined]
-            if hasattr(self._input, "suggest_on"):
-                self._input.suggest_on = "typing"  # type: ignore[attr-defined]
+            # For slash commands, CommandHint is updated by handle_input_changed
+            # Nothing to feed into TextArea's inline suggestions.
         except Exception:
             pass
 

@@ -26,7 +26,11 @@ Screen {
     border-top: solid $surface;
 }
 
+/* Remove fixed-height experiment; let the flexible rules below control sizes */
+
 Footer {
+    dock: bottom;
+    height: auto;
 }
 
 #command_palette {
@@ -46,6 +50,18 @@ Footer {
     min-height: 1;
     margin-bottom: 1;
     color: $text;
+    layout: grid;
+    grid-size: 2;         /* two columns, auto rows */
+    grid-gutter: 0;
+    padding: 0;
+    layer: default;
+}
+
+#command_hint>.hint-item {
+    height: auto;
+    overflow: hidden;
+    text-wrap: wrap;
+    padding: 0 1;
 }
 
 #input_controls {
