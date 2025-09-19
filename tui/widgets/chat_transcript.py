@@ -111,6 +111,15 @@ class ChatTranscript(RichLog):
             self._cursor = len(self.messages) - 1
         self._render_messages()
 
+    def stop_streaming(self, msg_id: str) -> None:
+        idx = self._find_index(msg_id)
+        if idx is None:
+            return
+        message = self.messages[idx]
+        message.streaming = False
+        self._prepare_message(message)
+        self._render_messages()
+
     def clear_messages(self) -> None:
         self.messages.clear()
         self._cursor = None

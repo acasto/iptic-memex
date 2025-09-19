@@ -91,8 +91,11 @@ class TurnExecutor:
     # --- internal helpers ---------------------------------------------
     def _finish_turn(self, msg_id: Optional[str], result: Any) -> None:
         if msg_id and self._chat_view:
-            text = (result.last_text or "").strip() if hasattr(result, "last_text") else ""
-            self._chat_view.update_message(msg_id, text or "(no response)", streaming=False)
+            if self._stream_enabled:
+                self._chat_view.stop_streaming(msg_id)
+            else:
+                text = (result.last_text or "").strip() if hasattr(result, "last_text") else ""
+                self._chat_view.update_message(msg_id, text or "(no response)", streaming=False)
         self._active_message_id = None
         self._emit_status("Assistant ready.", "debug", display=False)
         self._refresh_contexts()
