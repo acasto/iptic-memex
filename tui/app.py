@@ -52,7 +52,7 @@ if TEXTUAL_AVAILABLE:
             Binding("ctrl+s", "toggle_stream", "Toggle stream"),
             Binding("ctrl+k", "open_commands", "Commands"),
             Binding("f8", "show_status", "Status", priority=True),
-            Binding("alt+c", "cancel_turn", "Cancel turn", priority=True),
+            Binding("ctrl+s", "cancel_turn", "Cancel turn", priority=True),
             Binding("meta+c", "cancel_turn", "Cancel turn", show=False, priority=True),
             Binding("f7", "open_reader", "Reader", priority=True),
             Binding("ctrl+shift+c", "copy_current_message", "Copy message", show=False, priority=True),
