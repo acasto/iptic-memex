@@ -19,6 +19,7 @@ class CommandHint(Static):
     def __init__(self, *args, max_items: Optional[int] = DEFAULT_MAX, **kwargs) -> None:
         super().__init__(*args, markup=True, **kwargs)
         self.max_items = max_items
+        self._suggestion_widgets: List[Static] = []
         self.styles.visibility = "hidden"
         try:
             # Remove from layout until there is content
@@ -47,6 +48,7 @@ class CommandHint(Static):
             self.remove_children()
         except Exception:
             self.update("")
+        self._suggestion_widgets = []
 
         for item in items:
             if prefix:
@@ -58,13 +60,23 @@ class CommandHint(Static):
                 line = Text.assemble(name, Text(f" — {help_text}", style='dim'))
             else:
                 line = name
-            self.mount(Static(line, classes="hint-item"))
+            widget = Static(line, classes="hint-item")
+            self.mount(widget)
+            self._suggestion_widgets.append(widget)
 
         self.styles.visibility = "visible"
         try:
             self.styles.display = "block"
         except Exception:
             pass
+
+    def highlight_suggestion(self, index: Optional[int]) -> None:
+        """Apply a highlight style to the suggestion at the given index."""
+        for i, widget in enumerate(self._suggestion_widgets):
+            if i == index:
+                widget.add_class("highlight")
+            else:
+                widget.remove_class("highlight")
 
     def show_message(self, message: str) -> None:
         """Display an informational message in place of command suggestions."""

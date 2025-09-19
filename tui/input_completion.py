@@ -68,6 +68,9 @@ class InputCompletionManager:
         else:
             self._reset_tab_cycle()
 
+        if self._command_hint:
+            self._command_hint.highlight_suggestion(None)
+
         if not value.startswith("/"):
             self.clear_command_hint()
             self._update_input_suggestions(value, [])
@@ -79,7 +82,7 @@ class InputCompletionManager:
             return
 
         # If value is an exact top-level command without trailing space, hide hints
-        if self._is_exact_top_command(value):
+        if not value.endswith(" ") and self._is_exact_top_command(value):
             self.clear_command_hint()
             self._update_input_suggestions(value, [])
             return
@@ -96,6 +99,78 @@ class InputCompletionManager:
                 pass
         self._update_input_suggestions(value, suggestions)
 
+    def accept_suggestion(
+        self,
+        focus_input: Callable[[], None],
+        find_command_suggestions: Callable[[str], Tuple[List[CommandItem], str]],
+    ) -> bool:
+        """If a suggestion is highlighted, accept it."""
+        cycle = self._tab_cycle_state
+        if not cycle or cycle.get("mode") not in {"command", "file"}:
+            return False
+
+        suggestions = list(cycle.get("suggestions") or [])
+        index = int(cycle.get("index", -1))
+
+        if not (0 <= index < len(suggestions)):
+            return False
+
+        chosen = suggestions[index]
+        self._apply_programmatic_value(chosen, focus_input)
+        self._reset_tab_cycle()
+        if self._command_hint:
+            self._command_hint.highlight_suggestion(None)
+
+        # Re-trigger suggestions for subcommands
+        self.handle_input_changed(chosen, find_command_suggestions=find_command_suggestions)
+        return True
+
+    def _handle_file_tab_completion(
+        self, current: str, cycle: Dict[str, Any], focus_input: Callable[[], None]
+    ) -> None:
+        file_suggestions = self._file_path_completion_values(current)
+        abs_dir = self._last_file_completion_abs_dir
+        need_seed = (
+            cycle.get("mode") != "file"
+            or cycle.get("prefix") != current
+            or cycle.get("abs_dir") != abs_dir
+            or not cycle.get("suggestions")
+        )
+        if need_seed:
+            self._tab_cycle_state = {
+                "mode": "file",
+                "prefix": current,
+                "applied": current,
+                "index": -1,
+                "suggestions": file_suggestions,
+                "abs_dir": abs_dir,
+            }
+            self._show_file_completion_hint()
+            return
+
+        suggestions_list = list(cycle.get("suggestions") or [])
+        if not suggestions_list:
+            return
+        index = (int(cycle.get("index", -1)) + 1) % len(suggestions_list)
+        chosen = suggestions_list[index]
+        cycle.update({"index": index})
+        self._tab_cycle_state = {**cycle, "applied": chosen}
+        self._apply_programmatic_value(chosen, focus_input)
+
+    def _find_common_prefix(self, suggestions: List[str]) -> str:
+        if not suggestions:
+            return ""
+        if len(suggestions) == 1:
+            return suggestions[0]
+        prefix = suggestions[0]
+        for s in suggestions[1:]:
+            while not s.startswith(prefix):
+                prefix = prefix[:-1]
+                if not prefix:
+                    return ""
+        return prefix
+
+
     def handle_tab_completion(
         self,
         *,
@@ -109,52 +184,44 @@ class InputCompletionManager:
 
         file_active, _, _, _ = self._detect_file_completion_context(current)
         if file_active:
-            file_suggestions = self._file_path_completion_values(current)
-            abs_dir = self._last_file_completion_abs_dir
-            need_seed = (
-                cycle.get("mode") != "file"
-                or cycle.get("prefix") != current
-                or cycle.get("abs_dir") != abs_dir
-                or not cycle.get("suggestions")
-            )
-            if need_seed:
-                self._tab_cycle_state = {
-                    "mode": "file",
-                    "prefix": current,
-                    "applied": current,
-                    "index": -1,
-                    "suggestions": file_suggestions,
-                    "abs_dir": abs_dir,
-                }
-                self._show_file_completion_hint()
-                return
-
-            suggestions_list = list(cycle.get("suggestions") or [])
-            if not suggestions_list:
-                return
-            index = (int(cycle.get("index", -1)) + 1) % len(suggestions_list)
-            chosen = suggestions_list[index]
-            cycle.update({"index": index})
-            self._tab_cycle_state = {**cycle, "applied": chosen}
-            self._apply_programmatic_value(chosen, focus_input)
+            self._handle_file_tab_completion(current, cycle, focus_input)
             return
 
         suggestions_items, _ = find_command_suggestions(current)
-        if suggestions_items:
-            suggestions_list = [self._format_suggestion(item.title) for item in suggestions_items]
-        else:
-            suggestions_list = list(self._all_suggestion_strings)
+        suggestions_list = [self._format_suggestion(item.title) for item in suggestions_items]
+
         if not suggestions_list:
+            if self._command_hint:
+                self._command_hint.highlight_suggestion(None)
             return
-        chosen = suggestions_list[0]
-        self._tab_cycle_state = {
-            "mode": "command",
-            "prefix": current,
-            "applied": chosen,
-            "index": 0,
-            "suggestions": suggestions_list,
-        }
-        self._apply_programmatic_value(chosen, focus_input)
+
+        is_new_cycle = (
+            cycle.get("mode") != "command"
+            or cycle.get("prefix") != current
+            or not cycle.get("suggestions")
+        )
+
+        if is_new_cycle:
+            index = 0
+            common_prefix = self._find_common_prefix(suggestions_list)
+            self._tab_cycle_state = {
+                "mode": "command",
+                "prefix": current,
+                "index": index,
+                "suggestions": suggestions_list,
+                "common_prefix": common_prefix,
+            }
+            if common_prefix != current:
+                self._apply_programmatic_value(common_prefix, focus_input)
+        else:
+            suggestions = list(cycle.get("suggestions") or [])
+            if not suggestions:
+                return
+            index = (int(cycle.get("index", -1)) + 1) % len(suggestions)
+            self._tab_cycle_state["index"] = index
+
+        if self._command_hint:
+            self._command_hint.highlight_suggestion(index)
 
     # --- utilities -----------------------------------------------------
     def _apply_programmatic_value(self, value: str, focus_input: Callable[[], None]) -> None:

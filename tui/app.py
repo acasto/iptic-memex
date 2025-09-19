@@ -234,6 +234,15 @@ if TEXTUAL_AVAILABLE:
 
         # ----- input handling -----------------------------------------
         async def on_chat_input_send_requested(self, message: "ChatInput.SendRequested") -> None:
+            def _focus_input():
+                if self.input:
+                    self.set_focus(self.input)
+
+            if self._input_completion.accept_suggestion(
+                _focus_input, self._command_controller.find_command_suggestions
+            ):
+                message.stop()
+                return
             message.stop()
             self._submit_input_text(message.text)
 
