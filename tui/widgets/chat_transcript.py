@@ -268,13 +268,26 @@ class ChatTranscript(RichLog):
 
         if highlighted:
             border_style = f"bold {border_style}" if "bold" not in border_style else border_style
-        return Panel(
-            message.rich,
-            title=header,
-            border_style=border_style,
-            padding=padding,
-            box=box.ROUNDED if not highlighted else box.HEAVY,
-        )
+        try:
+            return Panel(
+                message.rich,
+                title=header,
+                border_style=border_style,
+                padding=padding,
+                box=box.ROUNDED if not highlighted else box.HEAVY,
+            )
+        except Exception:
+            # Fallback to a safe default if a custom style is invalid for this Rich version
+            _, safe_style = self.ROLE_STYLES.get(message.role, ("Other", "cyan"))
+            if highlighted and "bold" not in safe_style:
+                safe_style = f"bold {safe_style}"
+            return Panel(
+                message.rich,
+                title=header,
+                border_style=safe_style,
+                padding=padding,
+                box=box.ROUNDED if not highlighted else box.HEAVY,
+            )
 
     def _find_index(self, msg_id: str) -> Optional[int]:
         for idx, entry in enumerate(self.messages):

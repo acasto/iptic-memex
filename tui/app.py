@@ -76,7 +76,7 @@ if TEXTUAL_AVAILABLE:
             self._chat_role_titles: Dict[str, str] = {}
             self._chat_role_styles: Dict[str, str] = {}
             params = self.session.get_params() or {}
-            self._apply_response_label(params)
+            self._apply_role_labels(params)
 
             self._stream_enabled: bool = bool((self.session.get_params() or {}).get('stream'))
             self._pending_tasks: set[asyncio.Task[Any]] = set()
@@ -709,21 +709,42 @@ if TEXTUAL_AVAILABLE:
             provider = params.get('provider', 'unknown')
             bar.update(self._status_bar_text(model_name, provider, self._stream_enabled, self._status_spinner_symbol))
 
-        def _apply_response_label(self, params: Optional[Dict[str, Any]] = None) -> None:
+        def _apply_role_labels(self, params: Optional[Dict[str, Any]] = None) -> None:
             params = params or (self.session.get_params() or {})
-            response_label = str(params.get('response_label') or '').strip()
-            response_label_color = str(params.get('response_label_color') or '').strip()
 
             titles: Dict[str, str] = {}
             styles: Dict[str, str] = {}
-            if response_label:
-                titles['assistant'] = response_label
-            if response_label_color:
-                color_tokens = {token.lower() for token in response_label_color.replace('-', ' ').split()}
-                color_style = response_label_color
-                if 'bold' not in color_tokens:
-                    color_style = f"bold {response_label_color}"
-                styles['assistant'] = color_style
+
+            def normalize_color(value: str) -> str:
+                collapsed = value.replace('_', '').replace('-', '').replace(' ', '').lower()
+                aliases = {
+                    # Map gray variants to Rich-safe equivalents.
+                    # Use dim white for generic gray for broad theme compatibility.
+                    'gray': 'dim white',
+                    'grey': 'dim white',
+                    'darkgray': 'grey30',
+                    'darkgrey': 'grey30',
+                    'lightgray': 'grey70',
+                    'lightgrey': 'grey70',
+                }
+                return aliases.get(collapsed, value)
+
+            def apply(role: str, label_key: str, color_key: str, *, bold_default: bool) -> None:
+                label_raw = str(params.get(label_key) or '').strip()
+                color_raw = str(params.get(color_key) or '').strip()
+                if color_raw:
+                    color_raw = normalize_color(color_raw)
+                if label_raw:
+                    titles[role] = label_raw
+                if color_raw:
+                    color_tokens = {token.lower() for token in color_raw.replace('-', ' ').split()}
+                    color_style = color_raw
+                    if bold_default and 'bold' not in color_tokens and 'dim' not in color_tokens:
+                        color_style = f"bold {color_raw}"
+                    styles[role] = color_style
+
+            apply('assistant', 'response_label', 'response_label_color', bold_default=True)
+            apply('user', 'user_label', 'user_label_color', bold_default=False)
 
             self._chat_role_titles = titles
             self._chat_role_styles = styles
@@ -736,7 +757,7 @@ if TEXTUAL_AVAILABLE:
             if new_stream != self._stream_enabled:
                 self._stream_enabled = new_stream
                 self.turn_executor.set_stream_enabled(new_stream)
-            self._apply_response_label(params)
+            self._apply_role_labels(params)
             self._update_status_bar()
 
         async def _prompt_model_choice(self) -> Optional[str]:
