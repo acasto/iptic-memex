@@ -21,6 +21,8 @@ class OutputBridge:
         self._status_log: Optional["StatusPanel"] = None
         self._spinner_messages: Dict[str, str] = {}
         self._active_tool_message_id: Optional[str] = None
+        self._active_command_message_id: Optional[str] = None
+        self._last_emit: Optional[Tuple[str, str, str]] = None  # (role, level, text)
 
     # --- widget wiring -------------------------------------------------
     def set_chat_view(self, chat_view: Optional["ChatTranscript"]) -> None:
@@ -76,9 +78,17 @@ class OutputBridge:
                     return
                 except Exception:
                     pass
+            if role == "command" and self._active_command_message_id:
+                try:
+                    chat.append_text(self._active_command_message_id, ("\n" if chat.entries else "") + message)
+                    return
+                except Exception:
+                    pass
             inserted_id = chat.insert_message_before(before_id, role, message)
             if role == "tool":
                 self._active_tool_message_id = inserted_id
+            if role == "command":
+                self._active_command_message_id = inserted_id
         else:
             if role == "tool":
                 if self._active_tool_message_id:
@@ -97,6 +107,29 @@ class OutputBridge:
                             return
                 except Exception:
                     pass
+            if role == "command":
+                if self._active_command_message_id:
+                    try:
+                        chat.append_text(self._active_command_message_id, "\n" + message)
+                        return
+                    except Exception:
+                        pass
+                # Try to reuse the most recent command bubble if present
+                try:
+                    entries = getattr(chat, 'entries', []) or []
+                    for i in range(len(entries) - 1, -1, -1):
+                        e = entries[i]
+                        if getattr(e, 'role', None) == 'command':
+                            # Append instead of creating a new bubble
+                            chat.append_text(e.msg_id, "\n" + message)
+                            self._active_command_message_id = e.msg_id
+                            return
+                except Exception:
+                    pass
+                # Otherwise create a new command bubble at the end
+                new_id = chat.add_message(role, message)
+                self._active_command_message_id = new_id
+                return
             new_id = chat.add_message(role, message)
             if role == "tool":
                 self._active_tool_message_id = new_id
@@ -114,7 +147,10 @@ class OutputBridge:
                 return
             level = event.level or "info"
             is_tool = (event.origin or "").lower() == "tool"
+            is_command = (event.origin or "").lower() == "command"
             role = "tool" if is_tool else "system"
+            if is_command:
+                role = "command"
             before_id = active_message_id if (is_tool and active_message_id) else None
             self.record_status(stripped, level)
             self.display_status_message(
@@ -173,3 +209,8 @@ class OutputBridge:
         self._spinner_messages.clear()
         self._status_history.clear()
         self._active_tool_message_id = None
+        self._active_command_message_id = None
+
+    # Public helper to end a command group explicitly
+    def end_command_group(self) -> None:
+        self._active_command_message_id = None

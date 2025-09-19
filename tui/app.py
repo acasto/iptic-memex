@@ -208,24 +208,31 @@ if TEXTUAL_AVAILABLE:
         def _handle_ui_event(self, event_type: str, data: Dict[str, Any]) -> None:
             scope_meta = None
             try:
-                scope_fn = getattr(self._tui_output, 'current_tool_scope', None)
-                if callable(scope_fn):
-                    scope_meta = scope_fn()
+                cur_scope = getattr(self._tui_output, 'current_scope', None)
+                if callable(cur_scope):
+                    scope_meta = cur_scope()
             except Exception:
                 scope_meta = None
-            if scope_meta and event_type in {'status', 'warning', 'error', 'critical'}:
+            if event_type in {'status', 'warning', 'error', 'critical'}:
                 message = str(data.get('message') or data.get('text') or '').strip()
                 if message:
                     level = event_type if event_type in {'warning', 'error', 'critical'} else 'info'
                     text = message if message.endswith('\n') else message + '\n'
+                    # Optional explicit scope from actions: 'command'|'system'|'tool'
+                    explicit = str(data.get('scope') or '').strip().lower()
+                    origin = 'system'
+                    if explicit in {'tool', 'command', 'system'}:
+                        origin = explicit
+                    elif scope_meta:
+                        origin = scope_meta.get('origin') or 'system'
                     evt = OutputEvent(
                         type='write',
                         text=text,
                         level=level,
-                        origin=scope_meta.get('origin') or 'tool',
+                        origin=origin,
                         tool_name=scope_meta.get('tool_name'),
                         tool_call_id=scope_meta.get('tool_call_id'),
-                        tool_title=scope_meta.get('title') or scope_meta.get('tool_title'),
+                        tool_title=(data.get('title') or data.get('label') or scope_meta.get('title') or scope_meta.get('tool_title')),
                     )
                     active_id = getattr(self.turn_executor, "active_message_id", None)
                     self.call_from_thread(self._output_bridge.handle_output_event, evt, active_id)
@@ -305,6 +312,12 @@ if TEXTUAL_AVAILABLE:
                 self._handle_context_events(result)
             self._refresh_context_panel()
             self.turn_executor.check_auto_submit()
+            # After the user turn (and summaries) have been handled, close the
+            # current command group so future statuses start a fresh bubble.
+            try:
+                self._output_bridge.end_command_group()
+            except Exception:
+                pass
 
         def _handle_context_events(self, result: Any) -> None:
             events = getattr(result, 'context_events', None)
@@ -345,7 +358,11 @@ if TEXTUAL_AVAILABLE:
             if not parsed:
                 return
             if parsed.get('kind') == 'error':
-                self._emit_status(parsed.get('message', 'Invalid command'), 'warning', role='command')
+                try:
+                    self._output_bridge.end_command_group()
+                except Exception:
+                    pass
+                self._emit_status(parsed.get('message', 'Invalid command'), 'warning', role='system')
                 try:
                     self.session.utils.logger.tui_event('command_parse_invalid', {
                         'message': parsed.get('message'),
@@ -411,7 +428,33 @@ if TEXTUAL_AVAILABLE:
             if not handler:
                 self._emit_status('Invalid command handler.', 'error', display=False)
                 return None
-            if handler.get('type') == 'builtin':
+            # Decide scope: system vs command
+            def _is_system_scoped(h: Dict[str, Any], p: List[str]) -> bool:
+                ui = (h or {}).get('ui') or {}
+                scope = (ui.get('status_scope') or '').strip().lower() if isinstance(ui, dict) else ''
+                if scope == 'system':
+                    return True
+                # Fallback static set
+                primary = (p[0] if p else '') or ''
+                secondary = (p[1] if len(p) > 1 else '') or ''
+                sys_pairs = {
+                    ('show', 'usage'), ('show', 'cost'), ('show', 'models'), ('show', 'messages'), ('show', 'contexts'),
+                    ('rag', 'status'), ('mcp', 'status'), ('mcp', 'doctor'), ('reprint', ''),
+                }
+                return (primary, secondary) in sys_pairs
+
+            def _command_label(p: List[str]) -> str:
+                bits = [seg for seg in (p or []) if seg]
+                return '/' + ' '.join(bits) if bits else '/command'
+            kind = handler.get('type')
+            if kind == 'builtin' or kind == 'builtin-inner':
+                use_system = _is_system_scoped(handler, path)
+                scope_cm = self._tui_output.command_scope(_command_label(path)) if (not use_system and kind == 'builtin') else None
+                # Do not end an existing command group; we want multiple
+                # commands in the same user phase to share one bubble.
+                if scope_cm:
+                    with scope_cm:
+                        return await self._execute_command_handler({**handler, 'type': 'builtin-inner'}, path, extra_argv)
                 if path and path[0] == 'quit':
                     self.action_quit()
                     return None
@@ -529,6 +572,10 @@ if TEXTUAL_AVAILABLE:
                     return None
 
             prev_model = (self.session.get_params() or {}).get('model') if action_name == 'set_model' else None
+            # Wrap action in command scope if not system-scoped
+            use_system = _is_system_scoped(handler, path)
+            scope_cm = self._tui_output.command_scope(_command_label(path)) if not use_system else None
+            # Do not end existing command group here; we keep aggregating
             try:
                 self.session.utils.logger.tui_event('command_action_start', {
                     'path': ' '.join(path or []),
@@ -545,7 +592,11 @@ if TEXTUAL_AVAILABLE:
                 }, component='tui.commands')
             except Exception:
                 pass
-            result = await self._drive_action(action, argv)
+            if scope_cm:
+                with scope_cm:
+                    result = await self._drive_action(action, argv)
+            else:
+                result = await self._drive_action(action, argv)
             try:
                 self.session.utils.logger.tui_event('command_action_done', {
                     'path': ' '.join(path or []),
@@ -561,9 +612,14 @@ if TEXTUAL_AVAILABLE:
                     self._on_model_changed(str(new_model))
             should_refresh_chat = False
             if path:
-                primary = path[0] or ''
-                secondary = path[1] if len(path) > 1 else ''
-                if primary in {'reprint', 'load', 'load chat'}:
+                primary = (path[0] or '').strip()
+                secondary = (path[1] if len(path) > 1 else '').strip()
+                # Only refresh transcript when it meaningfully changes chat history
+                # (e.g., reprint or loading a saved chat file). Do NOT refresh for
+                # '/load file', '/load raw', etc., or we’ll clear status bubbles.
+                if primary == 'reprint':
+                    should_refresh_chat = True
+                elif primary == 'load' and secondary == 'chat':
                     should_refresh_chat = True
                 elif primary == 'clear' and secondary == 'chat':
                     should_refresh_chat = True
@@ -759,6 +815,16 @@ if TEXTUAL_AVAILABLE:
             except Exception:
                 pass
 
+            # If this command loaded contexts, remember its label so context summaries
+            # attach to this command bubble on the next user turn.
+            try:
+                loaded = payload.get('loaded') if isinstance(payload, dict) else None
+                if isinstance(loaded, list) and loaded:
+                    label = '/' + ' '.join([seg for seg in (path or []) if seg])
+                    self.session.set_user_data('__last_command_scope__', {'title': label})
+            except Exception:
+                pass
+
             if not payload.get('ok', True):
                 message = payload.get('error') or 'Command failed.'
                 self._emit_status(message, 'error', role='command')
@@ -794,8 +860,8 @@ if TEXTUAL_AVAILABLE:
 
             # Generic fallback: surface minimal confirmation
             if payload.get('ok'):
-                label = ' '.join(path or []) if path else 'command'
-                self._emit_status(f"/{label} completed.", 'info', role='command')
+                label = '/' + ' '.join([seg for seg in (path or []) if seg]) if path else '/command'
+                self._emit_status(f"{label} completed.", 'info', role='command')
                 if payload.get('model'):
                     self._on_model_changed(str(payload.get('model')))
 

@@ -43,6 +43,20 @@ class ProcessContextsAction(InteractionAction):
                     title=(scope_meta or {}).get('title') if scope_meta else None,
                 )
                 scope_applied = True
+        else:
+            # User-initiated: prefer command scope when available so summaries
+            # group under the prior command bubble (e.g., '/file').
+            try:
+                cmd_meta = self.session.get_user_data('__last_command_scope__')
+            except Exception:
+                cmd_meta = None
+            try:
+                cmd_scope_callable = getattr(output, 'command_scope', None)
+            except Exception:
+                cmd_scope_callable = None
+            if callable(cmd_scope_callable) and isinstance(cmd_meta, dict) and cmd_meta.get('title'):
+                scope_cm = cmd_scope_callable(cmd_meta.get('title'))
+                scope_applied = True
 
         with scope_cm:
             if contexts:
@@ -117,6 +131,10 @@ class ProcessContextsAction(InteractionAction):
         if scope_applied:
             try:
                 self.session.set_user_data('__last_tool_scope__', None)
+            except Exception:
+                pass
+            try:
+                self.session.set_user_data('__last_command_scope__', None)
             except Exception:
                 pass
 

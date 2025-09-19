@@ -227,9 +227,50 @@ class TuiOutput:
     def current_tool_scope(self) -> Optional[Dict[str, Any]]:
         return self._scope_stack[-1] if self._scope_stack else None
 
+    def current_scope(self) -> Optional[Dict[str, Any]]:
+        """Return the current (top) scope metadata dict, or None."""
+        return self._scope_stack[-1] if self._scope_stack else None
+
+    # ----- command scope (for user-run commands) ----------------------
+    class _CommandScopeContext:
+        def __init__(self, outer: 'TuiOutput', meta: Dict[str, Any]) -> None:
+            self._outer = outer
+            self._meta = meta
+            self._entered = False
+
+        def __enter__(self) -> 'TuiOutput._CommandScopeContext':
+            if not self._entered:
+                self._outer._scope_stack.append(self._meta)
+                self._entered = True
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+            if self._entered and self._outer._scope_stack:
+                self._outer._scope_stack.pop()
+
+    def command_scope(self, label: str) -> 'TuiOutput._CommandScopeContext':
+        meta = {
+            'origin': 'command',
+            'command_label': label,
+            'title': label,
+        }
+        return TuiOutput._CommandScopeContext(self, meta)
+
     def _current_scope_payload(self) -> Dict[str, Any]:
         scope = self.current_tool_scope()
         if not scope:
+            # If not a tool scope, check if the top of the stack is a command scope
+            try:
+                scope2 = self._scope_stack[-1] if self._scope_stack else None
+            except Exception:
+                scope2 = None
+            if scope2 and scope2.get('origin') == 'command':
+                return {
+                    'origin': 'command',
+                    'tool_name': None,
+                    'tool_call_id': None,
+                    'tool_title': scope2.get('title'),
+                }
             return {}
         return {
             'origin': scope.get('origin'),
