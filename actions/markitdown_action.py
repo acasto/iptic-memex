@@ -100,6 +100,15 @@ class MarkitdownAction(InteractionAction):
             )
             try:
                 self.session.utils.output.info(f"Loaded via MarkItDown: {basename}")
+                try:
+                    # Mode-agnostic action-level diagnostic
+                    self.session.utils.logger.action_detail(
+                        'markitdown_added',
+                        {'name': basename, 'original_file': path},
+                        component='actions.markitdown',
+                    )
+                except Exception:
+                    pass
             except Exception:
                 pass
             return True

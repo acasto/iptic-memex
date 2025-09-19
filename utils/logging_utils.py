@@ -48,6 +48,7 @@ class LoggingHandler:
         'provider': 'basic',
         'mcp': 'off',
         'rag': 'off',
+        'actions': 'off',
         'tui': 'off',
         'web': 'off',
         'errors': 'basic',
@@ -178,6 +179,20 @@ class LoggingHandler:
     def tui_event(self, kind: str, details: dict, component: str = 'tui'):
         if not self._should_log('tui', 'basic'): return
         self._write(self._prepare_payload(kind, f'{component}', 'tui', 'info', details))
+
+    def tui_detail(self, kind: str, details: dict, component: str = 'tui'):
+        """TUI detail-level helper. Emits only when [LOG].log_tui >= detail."""
+        if not self._should_log('tui', 'detail'): return
+        self._write(self._prepare_payload(kind, f'{component}', 'tui', 'info', details))
+
+    # Actions (mode-agnostic) -------------------------------------------------
+    def action_event(self, kind: str, details: dict, component: str = 'action'):
+        if not self._should_log('actions', 'basic'): return
+        self._write(self._prepare_payload(kind, f'{component}', 'actions', 'info', details))
+
+    def action_detail(self, kind: str, details: dict, component: str = 'action'):
+        if not self._should_log('actions', 'detail'): return
+        self._write(self._prepare_payload(kind, f'{component}', 'actions', 'info', details))
 
     def web_event(self, kind: str, details: dict, component: str = 'web'):
         if not self._should_log('web', 'basic'): return

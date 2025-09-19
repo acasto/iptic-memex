@@ -234,6 +234,16 @@ if TEXTUAL_AVAILABLE:
 
         # ----- input handling -----------------------------------------
         async def on_chat_input_send_requested(self, message: "ChatInput.SendRequested") -> None:
+            # Detail log: record that Enter was pressed and whether a suggestion is being accepted
+            try:
+                text_preview = (message.text or '')[:64]
+                self.session.utils.logger.tui_detail('input_send', {
+                    'has_slash': bool((message.text or '').lstrip().startswith('/')),
+                    'len': len(message.text or ''),
+                    'preview': text_preview,
+                }, component='tui.input')
+            except Exception:
+                pass
             def _focus_input():
                 if self.input:
                     self.set_focus(self.input)
@@ -241,9 +251,21 @@ if TEXTUAL_AVAILABLE:
             if self._input_completion.accept_suggestion(
                 _focus_input, self._command_controller.find_command_suggestions
             ):
+                try:
+                    self.session.utils.logger.tui_detail('accept_suggestion', {
+                        'accepted': True,
+                    }, component='tui.input')
+                except Exception:
+                    pass
                 message.stop()
                 return
             message.stop()
+            try:
+                self.session.utils.logger.tui_detail('accept_suggestion', {
+                    'accepted': False,
+                }, component='tui.input')
+            except Exception:
+                pass
             self._submit_input_text(message.text)
 
         def on_text_area_changed(self, message: TextArea.Changed) -> None:
@@ -306,14 +328,30 @@ if TEXTUAL_AVAILABLE:
                 self._emit_status('Commands action unavailable.', 'error', role='command')
                 return
             try:
+                self.session.utils.logger.tui_detail('command_parse_start', {
+                    'text_len': len(text or ''),
+                    'text_preview': (text or '')[:64],
+                }, component='tui.commands')
                 parsed = chat_commands.match(text)
             except Exception as exc:
                 self._emit_status(f'Command error: {exc}', 'error', role='command')
+                try:
+                    self.session.utils.logger.tui_event('command_parse_error', {
+                        'error': str(exc),
+                    }, component='tui.commands')
+                except Exception:
+                    pass
                 return
             if not parsed:
                 return
             if parsed.get('kind') == 'error':
                 self._emit_status(parsed.get('message', 'Invalid command'), 'warning', role='command')
+                try:
+                    self.session.utils.logger.tui_event('command_parse_invalid', {
+                        'message': parsed.get('message'),
+                    }, component='tui.commands')
+                except Exception:
+                    pass
                 return
             handler = {
                 'type': parsed.get('kind'),
@@ -323,6 +361,13 @@ if TEXTUAL_AVAILABLE:
             }
             path = parsed.get('path') or []
             argv = parsed.get('argv') or []
+            try:
+                self.session.utils.logger.tui_event('command_parsed', {
+                    'path': ' '.join([p for p in path if p]),
+                    'argv_count': len(argv or []),
+                }, component='tui.commands')
+            except Exception:
+                pass
             result = await self._execute_command_handler(handler, path, argv)
             self._handle_turn_result(result)
 
@@ -371,12 +416,20 @@ if TEXTUAL_AVAILABLE:
                     self.action_quit()
                     return None
                 try:
+                    self.session.utils.logger.tui_event('command_builtin_start', {
+                        'path': ' '.join([p for p in path if p]),
+                        'argv_count': len(list(extra_argv or [])),
+                    }, component='tui.commands')
                     ok, err = await asyncio.to_thread(self.command_registry.execute, path, {'argv': list(extra_argv or [])})
                 except SystemExit:
                     self.action_quit()
                     return None
                 try:
-                    self.session.utils.logger.tui_event('command_builtin', {'path': ' '.join(path or []), 'ok': bool(ok)})
+                    self.session.utils.logger.tui_event('command_builtin_done', {
+                        'path': ' '.join(path or []),
+                        'ok': bool(ok),
+                        'error': err or None,
+                    }, component='tui.commands')
                 except Exception:
                     pass
                 if not ok:
@@ -476,9 +529,29 @@ if TEXTUAL_AVAILABLE:
                     return None
 
             prev_model = (self.session.get_params() or {}).get('model') if action_name == 'set_model' else None
+            try:
+                self.session.utils.logger.tui_event('command_action_start', {
+                    'path': ' '.join(path or []),
+                    'action': action_name,
+                    'argv_count': len(argv),
+                }, component='tui.commands')
+            except Exception:
+                pass
+            # Detail: log argv
+            try:
+                self.session.utils.logger.tui_detail('command_action_args', {
+                    'path': ' '.join(path or []),
+                    'argv': list(argv),
+                }, component='tui.commands')
+            except Exception:
+                pass
             result = await self._drive_action(action, argv)
             try:
-                self.session.utils.logger.tui_event('command_action', {'path': ' '.join(path or []), 'action': action_name, 'method': None, 'argv': argv})
+                self.session.utils.logger.tui_event('command_action_done', {
+                    'path': ' '.join(path or []),
+                    'action': action_name,
+                    'ok': bool(result is not None),
+                }, component='tui.commands')
             except Exception:
                 pass
             self._handle_command_result(path, result)
@@ -504,24 +577,77 @@ if TEXTUAL_AVAILABLE:
             return result
 
         async def _drive_action(self, action: Any, argv: List[str]) -> Any:
+            import time
             pending = ('run', argv)
+            start_ts = time.monotonic()
             while True:
                 try:
                     if pending[0] == 'run':
+                        try:
+                            self.session.utils.logger.tui_detail('action_run', {
+                                'action': action.__class__.__name__,
+                                'phase': 'start',
+                                'argv_count': len(argv),
+                            }, component='tui.commands')
+                        except Exception:
+                            pass
                         result = await asyncio.to_thread(action.run, argv)
                     else:
                         token, response = pending[1]
+                        try:
+                            self.session.utils.logger.tui_detail('action_resume', {
+                                'action': action.__class__.__name__,
+                                'phase': 'resume',
+                            }, component='tui.commands')
+                        except Exception:
+                            pass
                         result = await asyncio.to_thread(action.resume, token, response)
                     self._emit_status('Command completed.', 'info', display=False)
+                    try:
+                        dur = time.monotonic() - start_ts
+                        self.session.utils.logger.tui_event('action_done', {
+                            'action': action.__class__.__name__,
+                            'duration_ms': int(dur * 1000),
+                            'ok': True,
+                        }, component='tui.commands')
+                    except Exception:
+                        pass
                     return result
                 except InteractionNeeded as need:
+                    try:
+                        self.session.utils.logger.tui_detail('action_interaction_needed', {
+                            'action': action.__class__.__name__,
+                            'kind': need.kind,
+                        }, component='tui.commands')
+                    except Exception:
+                        pass
                     response = await self._prompt_for_interaction(need)
                     if response is None:
                         self._emit_status('Command cancelled.', 'warning', display=False)
+                        try:
+                            dur = time.monotonic() - start_ts
+                            self.session.utils.logger.tui_event('action_done', {
+                                'action': action.__class__.__name__,
+                                'duration_ms': int(dur * 1000),
+                                'ok': False,
+                                'cancelled': True,
+                            }, component='tui.commands')
+                        except Exception:
+                            pass
                         return None
                     pending = ('resume', (need.state_token, response))
                 except Exception as exc:
                     self._emit_status(f'Command error: {exc}', 'error', display=False)
+                    try:
+                        dur = time.monotonic() - start_ts
+                        self.session.utils.logger.tui_event('action_done', {
+                            'action': action.__class__.__name__,
+                            'duration_ms': int(dur * 1000),
+                            'ok': False,
+                            'error': str(exc),
+                        }, component='tui.commands')
+                    except Exception:
+                        pass
                     return None
 
         async def _prompt_for_interaction(self, need: InteractionNeeded) -> Any:
@@ -620,6 +746,18 @@ if TEXTUAL_AVAILABLE:
 
             if not payload:
                 return
+
+            # Detail log: summarize command outcome without dumping full payload
+            try:
+                self.session.utils.logger.tui_detail('command_result', {
+                    'path': ' '.join(path or []),
+                    'ok': bool(payload.get('ok', True)),
+                    'keys': sorted(list(payload.keys())),
+                    'loaded_count': len(payload.get('loaded') or []) if isinstance(payload.get('loaded'), list) else None,
+                    'mode': payload.get('mode'),
+                }, component='tui.commands')
+            except Exception:
+                pass
 
             if not payload.get('ok', True):
                 message = payload.get('error') or 'Command failed.'

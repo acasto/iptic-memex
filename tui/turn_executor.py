@@ -66,6 +66,14 @@ class TurnExecutor:
     # UI has been updated. It also manages the streaming message lifecycle by creating
     # an assistant message up front and finalizing it in _finish_turn(...).
     async def run(self, message: str) -> Any:
+        try:
+            # Basic TUI log for turn start
+            self.session.utils.logger.tui_event('turn_begin', {
+                'stream': bool(self._stream_enabled),
+                'msg_len': len(message or ''),
+            }, component='tui.turn')
+        except Exception:
+            pass
         if self._chat_view:
             self._active_message_id = self._chat_view.add_message(
                 "assistant",
@@ -86,6 +94,16 @@ class TurnExecutor:
             return None
 
         self._finish_turn(self._active_message_id, result)
+        try:
+            self.session.utils.logger.tui_event('turn_end', {
+                'stream': bool(self._stream_enabled),
+                'ok': bool(result is not None),
+                'turns': getattr(result, 'turns_executed', None),
+                'ran_tools': getattr(result, 'ran_tools', None),
+                'stopped_on_sentinel': getattr(result, 'stopped_on_sentinel', None),
+            }, component='tui.turn')
+        except Exception:
+            pass
         return result
 
     # --- internal helpers ---------------------------------------------

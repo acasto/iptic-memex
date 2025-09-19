@@ -167,15 +167,15 @@ class ChatCommandsAction(InteractionAction):
             fixed = handler.get('args') or []
             if isinstance(fixed, str):
                 fixed = [fixed]
-            all_args = list(fixed) + list(argv)
-            # Legacy-compatible keys for web route preflight (action/method/args)
+            # Important: keep 'args' as fixed-only; UIs that dispatch actions
+            # will append user argv as needed to avoid duplication.
             return {
                 'kind': 'action',
                 'path': [cmd, sub],
                 'argv': argv,
                 'action': handler.get('action'),
                 'method': handler.get('method'),
-                'args': all_args,
+                'args': fixed,
             }
         if handler.get('type') == 'builtin':
             # Keep legacy builtin shape for web routes

@@ -41,6 +41,15 @@ class LoadFileAction(StepwiseAction):
 
     def _load_files(self, patterns: List[str]) -> List[str]:
         loaded: List[str] = []
+        # Detail log: raw argv/patterns
+        try:
+            self.session.utils.logger.action_detail(
+                'loadfile_inputs',
+                {'patterns': list(patterns or [])},
+                component='actions.load_file',
+            )
+        except Exception:
+            pass
         # Compute uploads dir (if present) to detect ephemeral uploaded files
         try:
             project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -48,17 +57,77 @@ class LoadFileAction(StepwiseAction):
             uploads_dir_abs = os.path.abspath(uploads_dir)
         except Exception:
             uploads_dir_abs = None
+        # Build set of already-loaded file paths (by original_file metadata or raw name)
+        existing: set[str] = set()
+        try:
+            for item in (self.session.get_contexts('file') or []):
+                ctx = item.get('context') if isinstance(item, dict) else item
+                data = ctx.get() if hasattr(ctx, 'get') else None
+                if isinstance(data, dict):
+                    orig = (data.get('metadata') or {}).get('original_file') if isinstance(data.get('metadata'), dict) else None
+                    name = data.get('name')
+                    if isinstance(orig, str) and orig:
+                        existing.add(os.path.abspath(os.path.expanduser(orig)))
+                    if isinstance(name, str) and name:
+                        # Names for raw files are the input path
+                        existing.add(os.path.abspath(os.path.expanduser(name)))
+        except Exception:
+            pass
+
+        # Expand patterns, normalize and dedupe
+        expanded_paths: List[str] = []
         for pat in patterns:
             expanded = os.path.expanduser(pat)
             matches = glob.glob(expanded)
             for path in matches:
+                try:
+                    expanded_paths.append(os.path.abspath(path))
+                except Exception:
+                    expanded_paths.append(path)
+        # De-duplicate expansions while preserving order
+        seen_abs: set[str] = set()
+        unique_paths: List[str] = []
+        for p in expanded_paths:
+            if p in seen_abs:
+                continue
+            seen_abs.add(p)
+            unique_paths.append(p)
+
+        # Detail log: expansion result and existing set size
+        try:
+            self.session.utils.logger.action_detail(
+                'loadfile_expanded',
+                {
+                    'expanded_count': len(expanded_paths),
+                    'unique_count': len(unique_paths),
+                    'existing_count': len(existing),
+                },
+                component='actions.load_file',
+            )
+        except Exception:
+            pass
+
+        for path in unique_paths:
                 if os.path.isfile(path):
                     kind = self._detect_kind(path)
                     processed = False
                     if kind == 'markitdown':
                         helper = self.session.get_action('markitdown')
                         if helper:
-                            processed = bool(helper.process(path))
+                            # Skip if already in context
+                            abs_path = os.path.abspath(path)
+                            if abs_path in existing:
+                                try:
+                                    self.session.utils.logger.action_detail(
+                                        'loadfile_skip_existing', {'path': abs_path}, component='actions.load_file'
+                                    )
+                                except Exception:
+                                    pass
+                                processed = True  # treat as success but do not add again
+                            else:
+                                processed = bool(helper.process(path))
+                                if processed:
+                                    existing.add(abs_path)
                     elif kind == 'image':
                         helper = self.session.get_action('read_image')
                         if helper:
@@ -66,7 +135,19 @@ class LoadFileAction(StepwiseAction):
 
                     if not processed:
                         # Default: add as plain text file (path-based, preserves prior behavior)
+                        abs_path = os.path.abspath(path)
+                        if abs_path in existing:
+                            try:
+                                self.session.utils.logger.action_detail(
+                                    'loadfile_skip_existing', {'path': abs_path}, component='actions.load_file'
+                                )
+                            except Exception:
+                                pass
+                            # Already present; skip creating another context, but mark as loaded for UX
+                            loaded.append(path)
+                            continue
                         ctx = self.session.add_context('file', path)
+                        existing.add(abs_path)
                         # If this came from a web upload, adjust metadata and remove temp file
                         try:
                             if uploads_dir_abs and os.path.abspath(path).startswith(uploads_dir_abs):
@@ -110,6 +191,12 @@ class LoadFileAction(StepwiseAction):
                     patterns = [str(args['pattern'])]
             else:
                 patterns = []
+            try:
+                self.session.utils.logger.action_detail(
+                    'loadfile_start', {'argv_count': len(patterns), 'argv': list(patterns)}, component='actions.load_file'
+                )
+            except Exception:
+                pass
             loaded = self._load_files(patterns)
             self.tc.run('chat')
             return Completed({'ok': True, 'loaded': loaded})
@@ -186,6 +273,12 @@ class LoadFileAction(StepwiseAction):
                     patterns = [r]
                 elif isinstance(r, list):
                     patterns = [str(x) for x in r]
+        try:
+            self.session.utils.logger.action_detail(
+                'loadfile_resume', {'argv_count': len(patterns), 'argv': list(patterns)}, component='actions.load_file'
+            )
+        except Exception:
+            pass
         loaded = self._load_files(patterns)
         self.tc.run('chat')
         return Completed({'ok': True, 'loaded': loaded, 'resumed': True})
