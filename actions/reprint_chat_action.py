@@ -1,6 +1,6 @@
 from base_classes import InteractionAction
 from actions.assistant_output_action import AssistantOutputAction  # only for non-stream filter path
-from utils.output_utils import ColorSystem, Style
+from utils.output_utils import ColorSystem, Style, format_cli_label
 import os
 import re
 
@@ -38,14 +38,21 @@ class ReprintChatAction(InteractionAction):
             bypass_filters = ('raw' in tokens)
             fetch_all = ('all' in tokens)
 
+        blocking_ui = bool(getattr(self.session.ui.capabilities, 'blocking', False))
         formatted = ""
         turns = chat.get('all' if fetch_all else None)
         for turn in turns:
             if turn['role'] == 'user':
-                label = self._color_wrap(params.get('user_label', 'User:'), params.get('user_label_color', 'white'))
+                raw_label = params.get('user_label', 'User')
+                color = params.get('user_label_color', 'white')
+                label_text = format_cli_label(raw_label) if blocking_ui else (str(raw_label).strip() or 'User')
+                label = self._color_wrap(label_text, color)
                 message = turn['message'] or ''
             else:
-                label = self._color_wrap(params.get('response_label', 'Assistant:'), params.get('response_label_color', 'white'))
+                raw_label = params.get('response_label', 'Assistant')
+                color = params.get('response_label_color', 'white')
+                label_text = format_cli_label(raw_label) if blocking_ui else (str(raw_label).strip() or 'Assistant')
+                label = self._color_wrap(label_text, color)
                 # Apply output filters unless bypassing
                 if bypass_filters:
                     message = turn['message'] or ''

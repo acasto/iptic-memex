@@ -1,5 +1,6 @@
 from base_classes import InteractionMode
 from core.turns import TurnRunner, TurnOptions
+from utils.output_utils import format_cli_label
 
 
 class ChatMode(InteractionMode):
@@ -28,9 +29,11 @@ class ChatMode(InteractionMode):
         it will continue prompting until they finish.
         """
         # Here, we construct the prompt with colors/styling if desired.
+        params = self.params
+        user_label = format_cli_label(params['user_label'])
         prompt = self.utils.output.style_text(
-            self.params['user_label'],
-            fg=self.params['user_label_color']
+            user_label,
+            fg=params['user_label_color']
         ) + " "
 
         # Call the new get_input() with multiline=True and continuation_char='\\'.
@@ -119,8 +122,9 @@ class ChatMode(InteractionMode):
             stream = bool(params.get('stream'))
 
             # For streaming, print the assistant label before tokens
+            raw_response_label = format_cli_label(params['response_label'])
             response_label = self.utils.output.style_text(
-                params['response_label'],
+                raw_response_label,
                 fg=params['response_label_color']
             )
 

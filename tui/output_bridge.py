@@ -58,8 +58,10 @@ class OutputBridge:
         chat = self._chat_view
         if not chat:
             return
-        if text and text.count("\n") > 4 and ("User:" in text or "Assistant:" in text):
-            return
+        if text and text.count("\n") > 4:
+            markers = ("User:", "Assistant:", "> User:", "> Assistant:", "User ", "Assistant ")
+            if any(marker in text for marker in markers):
+                return
         prefix = {
             "info": "ⓘ",
             "warning": "⚠",

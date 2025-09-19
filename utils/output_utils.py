@@ -12,6 +12,23 @@ from enum import Enum
 from typing import Optional, Dict, Any, List, TextIO, Union
 
 
+def format_cli_label(label: Optional[str]) -> str:
+    """Normalize a role label for CLI output as "> label:"."""
+    clean = (label or '').strip()
+    if not clean:
+        return '> '
+
+    decorated = clean
+    if not decorated.startswith('>'):
+        decorated = f"> {decorated}"
+
+    decorated = decorated.rstrip()
+    if not decorated.endswith(':'):
+        decorated = f"{decorated}:"
+
+    return decorated
+
+
 class OutputLevel(Enum):
     """
     Log or message output levels, in ascending order of importance.

@@ -382,7 +382,7 @@ Then, define your models in `models.ini`:
 provider = my_new_provider
 model_name = <official model name>
 context_size = 8192
-response_label = "> My Model: "
+response_label = My Model
 extra_body = { ... }  ; Optional, for model-specific settings
 ```
 

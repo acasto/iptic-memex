@@ -83,9 +83,9 @@ class Session:
     def __init__(self):
         self.utils = FakeUtils()
         self._params = {
-            "user_label": "You:",
+            "user_label": "You",
             "user_label_color": None,
-            "response_label": "Assistant:",
+            "response_label": "Assistant",
             "response_label_color": None,
             "stream": False,
         }
@@ -121,5 +121,5 @@ def test_chat_mode_single_turn_non_stream_captures_output():
 
     # Verify the assistant label and reply were printed
     out = "".join(m + e for (m, e) in sess.utils.output.lines)
-    assert "Assistant:" in out
+    assert "> Assistant:" in out
     assert "assistant reply" in out
