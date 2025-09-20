@@ -20,8 +20,7 @@ Screen {
 
 #input_row {
     dock: bottom;
-    height: auto;
-    max-height: 20%;
+    height: 12;
     padding: 1 2;
     border-top: solid $surface;
 }
@@ -51,7 +50,7 @@ Footer {
     margin: 0 2;
     height: auto;
     max-height: 10;
-    offset-y: -15;
+    offset-y: -13;
     background: $surface;
     color: $text;
     layout: grid;
