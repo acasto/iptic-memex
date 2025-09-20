@@ -73,6 +73,12 @@ class MarkitdownAction(InteractionAction):
 
             stream = BytesIO(data)
             basename = os.path.basename(path)
+            # Prefer cwd-relative display name for LLM context clarity
+            try:
+                import os as _os
+                display_name = _os.path.relpath(_os.path.abspath(path), _os.getcwd())
+            except Exception:
+                display_name = basename
             extension = os.path.splitext(basename)[1]
             mimetype, _ = mimetypes.guess_type(basename)
             stream_info = StreamInfo(
@@ -83,9 +89,19 @@ class MarkitdownAction(InteractionAction):
             result = converter.convert_stream(stream, stream_info=stream_info)
             markdown = result.markdown or ""
 
+            # Pre-compute token count for downstream emitters (avoids fragile lookups)
+            token_count = 0
+            try:
+                counter = self.session.get_action('count_tokens')
+                if counter:
+                    token_count = int(counter.count_tiktoken(markdown))
+            except Exception:
+                token_count = 0
+
             metadata = {
                 "original_file": path,
                 "converter": "markitdown",
+                "token_count": token_count,
             }
             if getattr(result, "title", None):
                 metadata["title"] = result.title
@@ -93,22 +109,31 @@ class MarkitdownAction(InteractionAction):
             self.session.add_context(
                 "file",
                 {
-                    "name": basename,
+                    "name": display_name,
                     "content": markdown,
                     "metadata": metadata,
                 },
             )
+            # Index token counts by original absolute path for downstream emitters
             try:
-                self.session.utils.output.info(f"Loaded via MarkItDown: {basename}")
-                try:
-                    # Mode-agnostic action-level diagnostic
-                    self.session.utils.logger.action_detail(
-                        'markitdown_added',
-                        {'name': basename, 'original_file': path},
-                        component='actions.markitdown',
-                    )
-                except Exception:
-                    pass
+                idx = self.session.get_user_data('__markitdown_index__') or {}
+                if not isinstance(idx, dict):
+                    idx = {}
+                from os.path import abspath as _abspath
+                idx[_abspath(path)] = {
+                    'display_name': display_name,
+                    'token_count': int(token_count or 0),
+                }
+                self.session.set_user_data('__markitdown_index__', idx)
+            except Exception:
+                pass
+            try:
+                # Mode-agnostic action-level diagnostic only; callers emit user-visible status.
+                self.session.utils.logger.action_detail(
+                    'markitdown_added',
+                    {'name': basename, 'original_file': path, 'token_count': token_count},
+                    component='actions.markitdown',
+                )
             except Exception:
                 pass
             return True

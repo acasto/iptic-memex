@@ -592,9 +592,20 @@ if TEXTUAL_AVAILABLE:
                 }, component='tui.commands')
             except Exception:
                 pass
+            label_for_scope = _command_label(path)
             if scope_cm:
+                # Expose command scope in session for nested actions (e.g., MarkItDown)
+                try:
+                    self.session.set_user_data('__last_command_scope__', {'title': label_for_scope})
+                except Exception:
+                    pass
                 with scope_cm:
                     result = await self._drive_action(action, argv)
+                try:
+                    # Clear after command completes
+                    self.session.set_user_data('__last_command_scope__', None)
+                except Exception:
+                    pass
             else:
                 result = await self._drive_action(action, argv)
             try:
@@ -858,10 +869,18 @@ if TEXTUAL_AVAILABLE:
                 self._emit_status(f"Saved chat to {filename}", 'info', role='command')
                 return
 
-            # Generic fallback: surface minimal confirmation
+            # Generic fallback: surface minimal confirmation for non-context-modifying commands
             if payload.get('ok'):
-                label = '/' + ' '.join([seg for seg in (path or []) if seg]) if path else '/command'
-                self._emit_status(f"{label} completed.", 'info', role='command')
+                primary = (path[0] if path else '') or ''
+                secondary = (path[1] if len(path) > 1 else '')
+                context_modifying = (
+                    (primary == 'load' and secondary in {'file', 'raw', 'multiline'}) or
+                    (primary == 'file') or
+                    (primary == 'clear' and secondary in {'context', 'chat'})
+                )
+                if not context_modifying:
+                    label = '/' + ' '.join([seg for seg in (path or []) if seg]) if path else '/command'
+                    self._emit_status(f"{label} completed.", 'info', role='command')
                 if payload.get('model'):
                     self._on_model_changed(str(payload.get('model')))
 

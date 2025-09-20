@@ -119,17 +119,15 @@ class RagStatusAction(InteractionAction):
 
             rows.append(row)
 
-        # Emit nicely formatted status block
+        # Emit a single consolidated status block (one bubble in TUI/Web; one block in CLI)
         lines = self._format_status_lines(rows)
+        block = "\n".join(lines)
         try:
             out = self.session.utils.output
-            out.write()
-            for line in lines:
-                out.write(line)
-            out.write()
+            out.write(block)
         except Exception:
             try:
-                self.session.ui.emit('status', {'message': "\n".join(lines)})
+                self.session.ui.emit('status', {'message': block})
             except Exception:
                 pass
         return True

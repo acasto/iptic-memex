@@ -72,6 +72,18 @@ class SessionBuilder:
             except Exception:
                 session.ui = None
 
+        # Default visibility policy: in non-blocking UIs (Web/TUI) hide pre-prompt
+        # context summaries; actions will emit per-item status/context updates.
+        try:
+            blocking = bool(getattr(session.ui, 'capabilities', None) and session.ui.capabilities.blocking)
+        except Exception:
+            blocking = True
+        if not blocking:
+            try:
+                session.set_option('show_context_summary', False)
+            except Exception:
+                pass
+
         # Initialize logging early and warn if enabled but not writable
         try:
             log_enabled = bool(session.get_option('LOG', 'active', fallback=False))

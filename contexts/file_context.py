@@ -45,8 +45,14 @@ class FileContext(InteractionContext):
         # Otherwise, file should be a string filename/path
         file_path = self.session.utils.fs.resolve_file_path(file)
         if file_path is not None:
+            import os
+            try:
+                cwd = os.getcwd()
+                display_name = os.path.relpath(file_path, cwd)
+            except Exception:
+                display_name = file
             with open(file_path, 'r') as f:
-                self.file = {'name': file, 'content': f.read()}
+                self.file = {'name': display_name, 'content': f.read()}
 
     def get(self):
         """

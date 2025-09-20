@@ -151,12 +151,75 @@ class AssistantFileToolAction(StepwiseAction):
         try:
             if kind == 'markitdown':
                 if self._run_markitdown(resolved_path):
+                    # MarkItDown added a file context; emit a single tool-scoped context event here
+                    try:
+                        import os as _os
+                        try:
+                            display_name = _os.path.relpath(_os.path.abspath(resolved_path), _os.getcwd())
+                        except Exception:
+                            display_name = os.path.basename(resolved_path)
+                        abs_path = _os.path.abspath(resolved_path)
+                        # Prefer MarkItDown index
+                        md_idx = self.session.get_user_data('__markitdown_index__') or {}
+                        tokens = 0
+                        if isinstance(md_idx, dict) and abs_path in md_idx:
+                            tokens = int((md_idx.get(abs_path) or {}).get('token_count') or 0)
+                        if not tokens:
+                            tokens = self._tokens_for_original_path(abs_path) or self._tokens_for_file_name(display_name)
+                        if not tokens:
+                            # Fallback to the most recent file context
+                            try:
+                                files = self.session.get_contexts('file') or []
+                                if files:
+                                    d = files[-1].get('context').get()
+                                    meta = d.get('metadata') if isinstance(d, dict) and isinstance(d.get('metadata'), dict) else {}
+                                    tokens = int(meta.get('token_count') or 0)
+                                    if not tokens:
+                                        content = d.get('content') if isinstance(d, dict) else None
+                                        if isinstance(content, str) and content:
+                                            tokens = int(self.token_counter.count_tiktoken(content))
+                            except Exception:
+                                pass
+                        try:
+                            self.session.utils.logger.action_detail(
+                                'assistant_file_emit_context',
+                                {
+                                    'name': display_name,
+                                    'tokens': tokens,
+                                    'mode': 'markitdown',
+                                },
+                                component='actions.assistant_file_tool',
+                            )
+                        except Exception:
+                            pass
+                        self.session.ui.emit('context', {
+                            'message': f'Added file: {display_name}' + (f' ({tokens} tokens)' if tokens else ''),
+                            'origin': 'tool',
+                            'kind': 'file',
+                            'name': display_name,
+                            'tokens': tokens,
+                            'action': 'add',
+                        })
+                    except Exception:
+                        pass
                     return
             elif kind == 'image':
                 helper = self.session.get_action('read_image')
                 if helper:
                     ok = bool(helper.process(resolved_path, fs_handler=self.fs_handler))
                     if ok:
+                        # Image added to context by helper; emit a context event
+                        try:
+                            name = os.path.basename(resolved_path)
+                            self.session.ui.emit('context', {
+                                'message': f'Added image: {name}',
+                                'origin': 'tool',
+                                'kind': 'image',
+                                'name': name,
+                                'action': 'add',
+                            })
+                        except Exception:
+                            pass
                         return
 
             # Default: treat as text and add as file context via dict to avoid unrestricted read
@@ -164,9 +227,31 @@ class AssistantFileToolAction(StepwiseAction):
             if content is None:
                 self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Failed to read file: {filename}'})
                 return
-            name = os.path.basename(resolved_path)
-            self.session.add_context('file', {'name': name, 'content': str(content)})
+            import os as _os
             try:
+                display_name = _os.path.relpath(_os.path.abspath(resolved_path), _os.getcwd())
+            except Exception:
+                display_name = os.path.basename(resolved_path)
+            self.session.add_context('file', {'name': display_name, 'content': str(content)})
+            try:
+                # Emit structured context event with token count
+                tokens = 0
+                try:
+                    if self.token_counter:
+                        tokens = int(self.token_counter.count_tiktoken(str(content)))
+                except Exception:
+                    tokens = 0
+                try:
+                    self.session.ui.emit('context', {
+                        'message': f'Added file: {display_name}' + (f' ({tokens} tokens)' if tokens else ''),
+                        'origin': 'tool',
+                        'kind': 'file',
+                        'name': display_name,
+                        'tokens': tokens,
+                        'action': 'add',
+                    })
+                except Exception:
+                    pass
                 self.session.utils.output.info(f'Loaded file: {filename}')
             except Exception:
                 pass
@@ -193,6 +278,55 @@ class AssistantFileToolAction(StepwiseAction):
             return bool(helper.process(path, fs_handler=self.fs_handler))
         except Exception:
             return False
+
+    def _tokens_for_file_name(self, name: str) -> int:
+        try:
+            if not self.token_counter:
+                return 0
+            files = self.session.get_contexts('file') or []
+            for item in reversed(files):
+                ctx = item.get('context') if isinstance(item, dict) else None
+                data = ctx.get() if hasattr(ctx, 'get') else None
+                if isinstance(data, dict) and data.get('name') == name:
+                    content = data.get('content') or ''
+                    if content:
+                        return int(self.token_counter.count_tiktoken(str(content)))
+            return 0
+        except Exception:
+            return 0
+
+    def _tokens_for_original_path(self, abs_path: str) -> int:
+        try:
+            if not self.token_counter:
+                return 0
+            files = self.session.get_contexts('file') or []
+            for item in reversed(files):
+                ctx = item.get('context') if isinstance(item, dict) else None
+                data = ctx.get() if hasattr(ctx, 'get') else None
+                if not isinstance(data, dict):
+                    continue
+                meta = data.get('metadata') if isinstance(data.get('metadata'), dict) else {}
+                if meta.get('original_file') == abs_path:
+                    content = data.get('content') or ''
+                    if content:
+                        return int(self.token_counter.count_tiktoken(str(content)))
+            # Fallback: basename match for markitdown entries
+            base = os.path.basename(abs_path)
+            for item in reversed(files):
+                ctx = item.get('context') if isinstance(item, dict) else None
+                data = ctx.get() if hasattr(ctx, 'get') else None
+                if not isinstance(data, dict):
+                    continue
+                meta = data.get('metadata') if isinstance(data.get('metadata'), dict) else {}
+                if meta.get('converter') == 'markitdown':
+                    orig = str(meta.get('original_file') or '')
+                    if orig.endswith(base):
+                        content = data.get('content') or ''
+                        if content:
+                            return int(self.token_counter.count_tiktoken(str(content)))
+            return 0
+        except Exception:
+            return 0
 
 
     def _handle_write(self, filename: str, content: str, force: bool = False) -> None:

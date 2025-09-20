@@ -79,7 +79,7 @@ class ProcessContextsAction(InteractionAction):
                                 output.write(f"Output of: {name} (image)")
                             else:
                                 output.write(f"In context: [{idx}] {name} (image)")
-                            printed_any = True
+                        printed_any = True
                         continue
 
                     context_data = context['context'].get()

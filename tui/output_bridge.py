@@ -200,8 +200,11 @@ class OutputBridge:
         level = "info"
         if event_type in {"warning", "error", "critical"}:
             level = event_type
+        # Respect origin hints for grouping (tool/command)
+        origin = str((data.get("origin") or "")).lower()
+        role = "tool" if origin == "tool" else ("command" if origin == "command" else "system")
         self.record_status(message, level)
-        self.display_status_message(message, level)
+        self.display_status_message(message, level, role=role)
         self.log_status(message, level)
 
     # --- cleanup -------------------------------------------------------

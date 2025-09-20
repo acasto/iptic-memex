@@ -419,7 +419,7 @@ on('action:done', (ev) => {
   if (d.action === 'reprint_chat') {
     let textOut = d.text || '';
     if (!textOut && Array.isArray(d.updates)) {
-      const parts = d.updates.filter(u => u && u.type === 'status' && u.message).map(u => String(u.message));
+      const parts = d.updates.filter(u => u && (u.type === 'status' || u.type === 'context') && u.message).map(u => String(u.message));
       if (parts.length) textOut = parts.join('\n');
     }
     if (textOut) addAndRenderMessage('assistant', stripAnsi(textOut));
@@ -593,7 +593,7 @@ function renderUpdates(updates) {
   panel.appendChild(header);
   
   for (const u of updates) {
-    if (u && u.message && (u.type === 'status' || u.type === 'warning' || u.type === 'error')) {
+    if (u && u.message && (u.type === 'status' || u.type === 'context' || u.type === 'warning' || u.type === 'error')) {
       renderStatus(u.message, u.type === 'warning' ? 'warn' : (u.type === 'error' ? 'error' : 'info'));
     }
   }

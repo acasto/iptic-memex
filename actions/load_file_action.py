@@ -18,6 +18,7 @@ class LoadFileAction(StepwiseAction):
         self.tc = session.utils.tab_completion
         self.tc.set_session(session)
         self.utils = session.utils
+        self.token_counter = session.get_action('count_tokens')
 
     MARKITDOWN_EXTENSIONS = (
         '.pdf',
@@ -172,6 +173,102 @@ class LoadFileAction(StepwiseAction):
                                 _ = self.session.utils.fs.delete_file(path)
                         except Exception:
                             pass
+
+                    # Emit a context event for the added file (plain text or markitdown-processed)
+                    try:
+                        import os as _os
+                        try:
+                            display_name = _os.path.relpath(_os.path.abspath(path), _os.getcwd())
+                        except Exception:
+                            display_name = os.path.basename(path)
+                        tokens = 0
+                        if not processed:
+                            # Plain file path: content lives in ctx
+                            try:
+                                if self.token_counter and ctx and hasattr(ctx, 'get'):
+                                    data = ctx.get() or {}
+                                    content = data.get('content') or ''
+                                    if isinstance(content, str):
+                                        tokens = int(self.token_counter.count_tiktoken(content))
+                            except Exception:
+                                tokens = 0
+                        else:
+                            # MarkItDown path: find the just-added file context by metadata/name
+                            try:
+                                if self.token_counter:
+                                    # Prefer using MarkItDown index set by the converter
+                                    md_idx = self.session.get_user_data('__markitdown_index__') or {}
+                                    abs_path = _os.path.abspath(path)
+                                    if isinstance(md_idx, dict) and abs_path in md_idx:
+                                        entry = md_idx.get(abs_path) or {}
+                                        tokens = int(entry.get('token_count') or 0)
+                                    # If unavailable, search contexts
+                                    files = self.session.get_contexts('file') or []
+                                    for item in reversed(files):
+                                        c = item.get('context') if isinstance(item, dict) else None
+                                        d = c.get() if hasattr(c, 'get') else None
+                                        if not isinstance(d, dict):
+                                            continue
+                                        meta = d.get('metadata') if isinstance(d.get('metadata'), dict) else {}
+                                        if not tokens and (meta.get('original_file') == abs_path or d.get('name') == display_name):
+                                            tokens = int(meta.get('token_count') or 0)
+                                            if not tokens:
+                                                content = d.get('content') or ''
+                                                if isinstance(content, str) and content:
+                                                    tokens = int(self.token_counter.count_tiktoken(content))
+                                            break
+                                    if not tokens:
+                                        # Fallback: match by converter + basename
+                                        base = _os.path.basename(path)
+                                        for item in reversed(files):
+                                            c = item.get('context') if isinstance(item, dict) else None
+                                            d = c.get() if hasattr(c, 'get') else None
+                                            if not isinstance(d, dict):
+                                                continue
+                                            meta = d.get('metadata') if isinstance(d.get('metadata'), dict) else {}
+                                            if meta.get('converter') == 'markitdown':
+                                                orig = str(meta.get('original_file') or '')
+                                                if orig.endswith(base):
+                                                    tokens = int(meta.get('token_count') or 0)
+                                                    if not tokens:
+                                                        content = d.get('content') or ''
+                                                        if isinstance(content, str) and content:
+                                                            tokens = int(self.token_counter.count_tiktoken(content))
+                                                    break
+                                    if not tokens and files:
+                                        # Fallback: assume most recent file context came from this conversion
+                                        try:
+                                            d = files[-1].get('context').get()
+                                            content = d.get('content') if isinstance(d, dict) else None
+                                            if isinstance(content, str) and content:
+                                                tokens = int(self.token_counter.count_tiktoken(content))
+                                        except Exception:
+                                            pass
+                            except Exception:
+                                tokens = 0
+                        try:
+                            self.session.utils.logger.action_detail(
+                                'loadfile_emit_context',
+                                {
+                                    'name': display_name,
+                                    'tokens': tokens,
+                                    'processed': bool(processed),
+                                },
+                                component='actions.load_file',
+                            )
+                        except Exception:
+                            pass
+                        self.session.ui.emit('context', {
+                            'message': f"Added file: {display_name}" + (f" ({tokens} tokens)" if tokens else ''),
+                            'origin': 'command',
+                            'title': '/load file',
+                            'kind': 'file',
+                            'name': display_name,
+                            'tokens': tokens,
+                            'action': 'add',
+                        })
+                    except Exception:
+                        pass
 
                     loaded.append(path)
         return loaded

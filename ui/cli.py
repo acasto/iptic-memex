@@ -90,7 +90,16 @@ class CLIUI(UI):
     def emit(self, event_type: str, data: Dict[str, Any]) -> None:
         out = self.session.utils.output
         et = (event_type or 'status').lower()
-        if et == 'warning':
+        if et == 'context':
+            # In CLI, avoid redundancy when pre-prompt summaries are enabled.
+            try:
+                show_summary = bool(self.session.get_params().get('show_context_summary', True))
+            except Exception:
+                show_summary = True
+            if not show_summary:
+                out.write(str(data.get('message', '')))
+            return
+        elif et == 'warning':
             out.warning(str(data.get('message', '')))
         elif et == 'error':
             out.error(str(data.get('message', '')))

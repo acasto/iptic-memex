@@ -571,6 +571,50 @@ max_completion_tokens = 4096
   - Raw‑only final: `echo "Do X" | python main.py --steps 2 -r --agent-output final -f -`
   - Deny writes: `python main.py --steps 3 --agent-writes deny -f plan.md`
 
+### Status System (Events + Scopes)
+
+Actions and core emit lightweight status signals that UIs render consistently across CLI/Web/TUI.
+
+- Event types:
+  - `status`, `warning`, `error`, `progress` (existing)
+  - `context` (new): “something entered current turn context”
+
+- Scope metadata (grouping):
+  - `origin`: `tool` | `command` | `system`
+  - `tool_call_id` (official tools), `title` (e.g., `/load file`)
+  - CLI prints lines; TUI/Web group events into bubbles by origin/scope.
+
+- Baseline system visibility (framework-owned):
+  - TurnRunner and Assistant Commands emit a spinner line `Tool calling: <name> — <desc?>` and wrap tool output in `tool_scope` so UIs can place the line near the active assistant bubble.
+
+- Context summaries (pre‑prompt):
+  - CLI shows “In context: …” via `ProcessContextsAction` by default (`[DEFAULT].show_context_summary = True`).
+  - Web/TUI default to hidden summaries; per‑action context events are used instead. Core sets this in `core/session_builder` for non‑blocking UIs.
+
+- Path + tokens conventions:
+  - File names in context are stored as cwd‑relative paths (not absolute/basename) for project clarity.
+  - MarkItDown runs as a helper only; it does not emit UI lines. It sets file context metadata:
+    - `{converter:'markitdown', original_file:<abs>, token_count:<int>}` and an index `__markitdown_index__` in `session.user_data` keyed by original abs path.
+  - Emitters (e.g., `load_file`, `assistant_file_tool`) should prefer `metadata.token_count` and only fall back to counting from content if missing.
+
+- Action authoring guidelines:
+  - For context adds/removes, emit a single `context` event:
+    - `session.ui.emit('context', { 'message': f"Added file: {name} ({tokens} tokens)", 'origin': 'command'|'tool', 'kind': 'file'|'image'|..., 'name': name, 'tokens': tokens, 'action': 'add', 'title': '/load file' })`
+  - For multi‑line blocks (status tables, etc.), print once using a consolidated write:
+    - `out.write("\n".join(lines))` (avoid one write per line, which becomes multiple bubbles in TUI).
+  - Do not rely on pre‑prompt summaries in non‑blocking UIs; use `context` events for visibility.
+  - Keep helpers (like MarkItDown) silent; delegate user‑visible emits to the caller that knows the scope (tool vs command).
+
+- Mode behavior (defaults):
+  - CLI: shows pre‑prompt summaries; suppresses `context` events when summaries are enabled to avoid duplicates.
+  - Web/TUI: hide pre‑prompt summaries; show per‑action `context`/`status` lines grouped in bubbles.
+  - TUI suppresses generic “/<command> completed” for context‑modifying commands.
+
+- Where to hook in code:
+  - Tool spinner/scope: `core/turns.py` and `actions/assistant_commands_action.py`.
+  - Context emits: `actions/load_file_action.py`, `actions/assistant_file_tool_action.py`, helpers like `actions/markitdown_action.py` (metadata/index only).
+  - CLI/Web/TUI sinks and scoping: `utils/output_utils.py` (tool_scope), `tui/output_sink.py`, `web/output_sink.py`, and `web/routes/stream.py` (attach scope on emits).
+
 ## MCP Integration (Provider Pass‑Through + App‑Side)
 
 - Global Gate

@@ -41,7 +41,32 @@ class ReadImageAction(InteractionAction):
                     # Non-tool path: let ImageContext read from path
                     self.session.add_context('image', path)
                 try:
-                    self.session.utils.output.info(f"Loaded image: {os.path.basename(path)}")
+                    name = os.path.basename(path)
+                    origin = 'tool'
+                    title = None
+                    try:
+                        scope_fn = getattr(self.session.utils.output, 'current_tool_scope', None)
+                        scope_meta = scope_fn() if callable(scope_fn) else None
+                        if isinstance(scope_meta, dict) and scope_meta.get('origin') == 'command':
+                            origin = 'command'
+                            title = scope_meta.get('title') or scope_meta.get('tool_title')
+                        elif not scope_meta:
+                            cmd_meta = self.session.get_user_data('__last_command_scope__') or {}
+                            if isinstance(cmd_meta, dict) and cmd_meta.get('title'):
+                                origin = 'command'
+                                title = cmd_meta.get('title')
+                    except Exception:
+                        pass
+                    payload = {
+                        'message': f'Added image: {name}',
+                        'origin': origin,
+                        'kind': 'image',
+                        'name': name,
+                        'action': 'add',
+                    }
+                    if title:
+                        payload['title'] = title
+                    self.session.ui.emit('context', payload)
                 except Exception:
                     pass
                 return True
@@ -86,7 +111,32 @@ class ReadImageAction(InteractionAction):
                 'content': summary
             })
             try:
-                self.session.utils.output.info(f"Loaded image summary: {os.path.basename(path)}")
+                name = os.path.basename(path)
+                origin = 'tool'
+                title = None
+                try:
+                    scope_fn = getattr(self.session.utils.output, 'current_tool_scope', None)
+                    scope_meta = scope_fn() if callable(scope_fn) else None
+                    if isinstance(scope_meta, dict) and scope_meta.get('origin') == 'command':
+                        origin = 'command'
+                        title = scope_meta.get('title') or scope_meta.get('tool_title')
+                    elif not scope_meta:
+                        cmd_meta = self.session.get_user_data('__last_command_scope__') or {}
+                        if isinstance(cmd_meta, dict) and cmd_meta.get('title'):
+                            origin = 'command'
+                            title = cmd_meta.get('title')
+                except Exception:
+                    pass
+                payload = {
+                    'message': f'Added description: {name}',
+                    'origin': origin,
+                    'kind': 'multiline_input',
+                    'name': f'Description of: {name}',
+                    'action': 'add',
+                }
+                if title:
+                    payload['title'] = title
+                self.session.ui.emit('context', payload)
             except Exception:
                 pass
             return True
