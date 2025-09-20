@@ -14,32 +14,43 @@ class ShowAction(InteractionAction):
         """
         if args is None:
             return
+        out = getattr(self.session, 'utils', None)
+        out = getattr(out, 'output', None)
+        # Fallback to UI emits if output handler is unavailable
+        def emit_block(text: str) -> None:
+            if out:
+                out.write(text)
+            else:
+                try:
+                    self.session.ui.emit('status', {'message': text})
+                except Exception:
+                    pass
+        def emit_error(text: str) -> None:
+            if out:
+                out.error(text)
+            else:
+                try:
+                    self.session.ui.emit('error', {'message': text})
+                except Exception:
+                    pass
 
         if args[0] == 'settings':
             settings = self.session.get_session_state()
-            sorted_params = sorted(settings['params'].items())
-            lines = ["Params:", "---------------------------------"]
+            sorted_params = sorted(settings.get('params', {}).items())
+            lines = ["Settings:", "---------------------------------"]
             for key, value in sorted_params:
                 if key == 'api_key':
                     value = '********'
                 lines.append(f"{key}: {value}")
-            lines.append("")
-            try:
-                self.session.ui.emit('status', {'message': "\n".join(lines)})
-            except Exception:
-                pass
+            emit_block("\n".join(lines))
 
         if args[0] == 'tool-settings':
-            tools = self.session.get_tools()
+            tools = self.session.get_tools() or {}
             sorted_tools = sorted(tools.items())
-            lines = ["Tools:", "---------------------------------"]
+            lines = ["Tool Settings:", "---------------------------------"]
             for key, value in sorted_tools:
                 lines.append(f"{key}: {value}")
-            lines.append("")
-            try:
-                self.session.ui.emit('status', {'message': "\n".join(lines)})
-            except Exception:
-                pass
+            emit_block("\n".join(lines))
 
         if args[0] == 'tools':
             """Show currently active assistant tools (after config gating)."""
@@ -88,22 +99,14 @@ class ShowAction(InteractionAction):
                 else:
                     lines.append('(none)')
                 lines.append("")
-                try:
-                    self.session.ui.emit('status', {'message': "\n".join(lines)})
-                except Exception:
-                    pass
+                emit_block("\n".join(lines))
             except Exception as e:
-                try:
-                    self.session.ui.emit('error', {'message': f'Error showing tools: {e}'})
-                except Exception:
-                    pass
+                emit_error(f'Error showing tools: {e}')
 
         if args[0] == 'models':
-            sections = list(self.session.list_models().keys())
-            try:
-                self.session.ui.emit('status', {'message': "\n".join(sections)})
-            except Exception:
-                pass
+            sections = list((self.session.list_models() or {}).keys())
+            lines = ["Models:"] + sections if sections else ["Models:", "(none)"]
+            emit_block("\n".join(lines))
 
         if args[0] == 'messages':
             try:
@@ -112,10 +115,7 @@ class ShowAction(InteractionAction):
                 if prompt_context:
                     prompt_data = prompt_context.get()
                     if prompt_data and prompt_data.get('content'):
-                        try:
-                            self.session.ui.emit('status', {'message': '=== SYSTEM PROMPT ===\n' + prompt_data['content'] + '\n' + ('='*50) + '\n'})
-                        except Exception:
-                            pass
+                        emit_block('=== SYSTEM PROMPT ===\n' + prompt_data['content'] + '\n' + ('='*50) + '\n')
 
                 # Then show the conversation messages
                 if len(args) > 1 and args[1] == 'all':
@@ -124,28 +124,23 @@ class ShowAction(InteractionAction):
                     if chat_context:
                         messages = chat_context.get("all")
                     else:
-                        try:
-                            self.session.ui.emit('status', {'message': 'No chat context available'})
-                        except Exception:
-                            pass
+                        emit_error('No chat context available')
                         return
                 else:
                     # Get messages from provider (which delegates to chat context)
                     provider = self.session.get_provider()
                     if provider:
-                        messages = provider.get_messages()
-                    else:
                         try:
-                            self.session.ui.emit('status', {'message': 'No provider available'})
-                        except Exception:
-                            pass
+                            messages = provider.get_messages()
+                        except Exception as e:
+                            emit_error(f'Error retrieving messages: {e}')
+                            return
+                    else:
+                        emit_error('No provider available')
                         return
                 
                 if not messages:
-                    try:
-                        self.session.ui.emit('status', {'message': 'No conversation messages to display'})
-                    except Exception:
-                        pass
+                    emit_block('No conversation messages to display')
                     return
                 
                 # Display messages with proper formatting
@@ -201,71 +196,70 @@ class ShowAction(InteractionAction):
                     lines.append("\n".join(entry) + "\n")
 
             except Exception as e:
-                try:
-                    self.session.ui.emit('error', {'message': f'Error displaying messages: {e}'})
-                except Exception:
-                    pass
+                emit_error(f'Error displaying messages: {e}')
                 return
 
             # Emit or print assembled lines
-            try:
-                self.session.ui.emit('status', {'message': "\n".join(lines)})
-            except Exception:
-                pass
+            emit_block("\n".join(lines))
 
         if args[0] == 'contexts':
-            contexts = self.session.get_action('process_contexts').get_contexts(self.session)
-            if len(contexts) == 0:
-                try:
-                    self.session.ui.emit('status', {'message': 'No contexts to clear.'})
-                except Exception:
-                    pass
-                return True
-            lines = []
-            for idx, context in enumerate(contexts):
-                lines.append(f"[{idx}] {context['context'].get()['name']}")
-                lines.append(f"Content: {context['context'].get()['content']}")
-            lines.append("")
             try:
-                self.session.ui.emit('status', {'message': "\n".join(lines)})
+                process = self.session.get_action('process_contexts')
             except Exception:
-                pass
+                process = None
+            contexts = process.get_contexts(self.session) if process else []
+            if len(contexts) == 0:
+                emit_block('No contexts to clear.')
+                return True
+            lines = ["Contexts:"]
+            for idx, context in enumerate(contexts):
+                try:
+                    meta = context['context'].get()
+                    name = meta.get('name')
+                    content = meta.get('content')
+                except Exception:
+                    name = '(unknown)'
+                    content = ''
+                lines.append(f"[{idx}] {name}")
+                lines.append(f"Content: {content}")
+            emit_block("\n".join(lines))
 
         if args[0] == 'usage':
-            usage = self.session.get_provider().get_usage()
-            lines = [f"{key}: {value}" for key, value in usage.items()]
-            lines.append("")
+            prov = self.session.get_provider()
+            if not prov:
+                emit_block('No provider available; no usage recorded yet.')
+                return
             try:
-                self.session.ui.emit('status', {'message': "\n".join(lines)})
-            except Exception:
-                pass
+                usage = prov.get_usage() or {}
+            except Exception as e:
+                emit_error(f'Error reading usage: {e}')
+                return
+            if not usage:
+                emit_block('No usage recorded yet.')
+                return
+            lines = ["Usage:"] + [f"{key}: {value}" for key, value in usage.items()]
+            emit_block("\n".join(lines))
 
         if args[0] == 'cost':
-            cost = self.session.get_provider().get_cost()
+            prov = self.session.get_provider()
+            if not prov:
+                emit_block('No provider available; no cost data.')
+                return
+            try:
+                cost = prov.get_cost()
+            except Exception as e:
+                emit_error(f'Error calculating cost: {e}')
+                return
             if not cost:
-                try:
-                    self.session.ui.emit('status', {'message': 'Cost calculation not available for this model'})
-                except Exception:
-                    pass
+                emit_block('Cost calculation not available for this model')
                 return
-
-            input_cost = cost.get('input_cost', 0)
-            output_cost = cost.get('output_cost', 0)
-
-            lines = [f"input_cost: ${input_cost:.4f}", f"output_cost: ${output_cost:.4f}"]
-
-            if input_cost == 0 and output_cost == 0:
-                try:
-                    self.session.ui.emit('status', {'message': "\n".join(lines)})
-                except Exception:
-                    pass
-                return
-
+            input_cost = float(cost.get('input_cost', 0) or 0)
+            output_cost = float(cost.get('output_cost', 0) or 0)
+            lines = ["Cost:", f"input_cost: ${input_cost:.4f}", f"output_cost: ${output_cost:.4f}"]
             for key, value in cost.items():
                 if key not in ['input_cost', 'output_cost']:
-                    lines.append(f"{key}: ${value:.4f}")
-            lines.append("")
-            try:
-                self.session.ui.emit('status', {'message': "\n".join(lines)})
-            except Exception:
-                pass
+                    try:
+                        lines.append(f"{key}: ${float(value):.4f}")
+                    except Exception:
+                        lines.append(f"{key}: {value}")
+            emit_block("\n".join(lines))

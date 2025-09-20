@@ -34,6 +34,7 @@ if TEXTUAL_AVAILABLE:
     from tui.screens.interaction_modal import InteractionModal
     from tui.screens.reader_overlay import ReaderOverlay
     from tui.utils.clipboard import ClipboardHelper, ClipboardOutcome
+    from tui.utils.ui_bridge import UIEventProxy
     from tui.widgets.chat_transcript import ChatTranscript
     from tui.widgets.command_hint import CommandHint
     from tui.widgets.context_summary import ContextSummary
@@ -84,9 +85,17 @@ if TEXTUAL_AVAILABLE:
             self._pending_tasks: set[asyncio.Task[Any]] = set()
 
             self._ui_adapter = getattr(self.session, 'ui', None)
+            # Ensure we can receive UI.emit events even if the adapter lacks a hook
             if hasattr(self._ui_adapter, 'set_event_handler'):
                 try:
                     self._ui_adapter.set_event_handler(self._handle_ui_event)
+                except Exception:
+                    pass
+            else:
+                try:
+                    proxy = UIEventProxy(self._ui_adapter, self._handle_ui_event)
+                    self.session.ui = proxy  # route future emits through the proxy
+                    self._ui_adapter = proxy
                 except Exception:
                     pass
             try:
@@ -117,21 +126,7 @@ if TEXTUAL_AVAILABLE:
             self._status_modal: Optional[StatusModal] = None
             self._status_open = False
             self._base_screen = None
-            self._status_spinner_frames = [
-                "⠋",
-                "⠙",
-                "⠹",
-                "⠸",
-                "⠼",
-                "⠴",
-                "⠦",
-                "⠧",
-                "⠇",
-                "⠏",
-            ]
-            self._status_spinner_index = 0
-            self._status_spinner_symbol: Optional[str] = None
-            self._status_spinner_timer = None
+            # Header spinner removed: simplify status bar (no animated glyph)
 
         # ----- layout --------------------------------------------------
         def compose(self) -> ComposeResult:
@@ -139,7 +134,7 @@ if TEXTUAL_AVAILABLE:
             model_name = params.get('model', 'unknown')
             provider = params.get('provider', 'unknown')
             status = Static(
-                self._status_bar_text(model_name, provider, self._stream_enabled, self._status_spinner_symbol),
+                self._status_bar_text(model_name, provider, self._stream_enabled),
                 id="status_bar",
             )
             yield status
@@ -186,10 +181,7 @@ if TEXTUAL_AVAILABLE:
             self._refresh_context_panel()
             self._render_existing_history()
             self._base_screen = self.screen
-            try:
-                self._status_spinner_timer = self.set_interval(0.2, self._tick_status_spinner)
-            except Exception:
-                self._status_spinner_timer = None
+            # No header spinner timer needed
             # Inline suggester disabled; CommandHint drives suggestions
 
         # ----- scheduling helpers -------------------------------------
@@ -398,6 +390,18 @@ if TEXTUAL_AVAILABLE:
                 self._command_controller.subcommand_map,
             )
 
+        def _reload_commands(self) -> None:
+            """Rebuild command specs from the registry to reflect gating changes.
+
+            Useful after toggles like `/mcp on|off` which alter can_run gates.
+            """
+            try:
+                # Recreate the registry action to allow it to re-evaluate gates
+                self.command_registry = self.session.get_action('user_commands_registry')
+            except Exception:
+                pass
+            self._load_commands()
+
         def action_open_commands(self) -> None:
             if self.command_hint:
                 self.command_hint.styles.visibility = "hidden"
@@ -479,6 +483,8 @@ if TEXTUAL_AVAILABLE:
                     pass
                 if not ok:
                     self._emit_status(err or 'Command failed.', 'error', role='command')
+                # Command gating may have changed (e.g., /mcp on|off)
+                self._reload_commands()
                 self._refresh_context_panel()
                 self.turn_executor.check_auto_submit()
                 self._clear_command_hint()
@@ -619,6 +625,8 @@ if TEXTUAL_AVAILABLE:
             except Exception:
                 pass
             self._handle_command_result(path, result)
+            # Rebuild command list in case the action changed gates
+            self._reload_commands()
             if action_name == 'set_model':
                 new_model = (self.session.get_params() or {}).get('model')
                 if new_model and new_model != prev_model:
@@ -706,7 +714,8 @@ if TEXTUAL_AVAILABLE:
                         return None
                     pending = ('resume', (need.state_token, response))
                 except Exception as exc:
-                    self._emit_status(f'Command error: {exc}', 'error', display=False)
+                    # Surface command errors in the transcript so users see what went wrong
+                    self._emit_status(f'Command error: {exc}', 'error', display=True, role='command')
                     try:
                         dur = time.monotonic() - start_ts
                         self.session.utils.logger.tui_event('action_done', {
@@ -899,30 +908,12 @@ if TEXTUAL_AVAILABLE:
                 self._output_bridge.display_status_message(text, level, role=role)
             self._output_bridge.log_status(text, level)
 
-        def _status_bar_text(self, model: str, provider: str, stream_enabled: bool, spinner: Optional[str] = None) -> str:
+        def _status_bar_text(self, model: str, provider: str, stream_enabled: bool) -> str:
             stream_label = 'on' if stream_enabled else 'off'
-            if spinner and stream_enabled:
-                stream_label = f"{stream_label} {spinner}"
             return (
                 f"iptic-memex TUI · Model: {model or 'unknown'} · Provider: {provider or 'unknown'} · "
                 f"Stream: {stream_label}"
             )
-
-        def _tick_status_spinner(self) -> None:
-            streaming = False
-            try:
-                streaming = bool(self.chat_view and self.chat_view.has_streaming_messages())
-            except Exception:
-                streaming = False
-            if streaming:
-                self._status_spinner_index = (self._status_spinner_index + 1) % len(self._status_spinner_frames)
-                self._status_spinner_symbol = self._status_spinner_frames[self._status_spinner_index]
-            else:
-                if self._status_spinner_symbol is None:
-                    return
-                self._status_spinner_symbol = None
-                self._status_spinner_index = 0
-            self._update_status_bar()
 
         def _update_status_bar(self) -> None:
             try:
@@ -932,7 +923,7 @@ if TEXTUAL_AVAILABLE:
             params = self.session.get_params() or {}
             model_name = params.get('model', 'unknown')
             provider = params.get('provider', 'unknown')
-            bar.update(self._status_bar_text(model_name, provider, self._stream_enabled, self._status_spinner_symbol))
+            bar.update(self._status_bar_text(model_name, provider, self._stream_enabled))
 
         def _apply_role_labels(self, params: Optional[Dict[str, Any]] = None) -> None:
             params = params or (self.session.get_params() or {})
@@ -1373,12 +1364,7 @@ if TEXTUAL_AVAILABLE:
         def _cleanup(self) -> None:
             for task in list(self._pending_tasks):
                 task.cancel()
-            if self._status_spinner_timer is not None:
-                try:
-                    self._status_spinner_timer.stop()
-                except Exception:
-                    pass
-                self._status_spinner_timer = None
+            # No spinner timer to stop
             try:
                 if hasattr(self._ui_adapter, 'set_event_handler'):
                     self._ui_adapter.set_event_handler(lambda *_: None)  # type: ignore[attr-defined]

@@ -54,14 +54,17 @@ class McpAction(InteractionAction):
 
     # --- list helpers -------------------------------------------------------
     def _print(self, msg: str) -> None:
+        # Prefer the session output handler so TUI/CLI/Web render consistently
         try:
-            blocking = bool(self.session.ui and getattr(self.session.ui.capabilities, 'blocking', False))
-        except Exception:
-            blocking = True
-        if not blocking and self.session.ui:
-            self.session.ui.emit('status', {'message': msg})
-        else:
             self.session.utils.output.write(msg)
+            return
+        except Exception:
+            pass
+        # Fallback to UI emit when output handler is unavailable
+        try:
+            self.session.ui.emit('status', {'message': msg})
+        except Exception:
+            pass
 
     def _print_kv_list(self, title: str, data: dict):
         lines = [title + ":"]
