@@ -46,15 +46,19 @@ Footer {
 }
 
 #command_hint {
-    width: 1fr;
-    min-height: 1;
-    margin-bottom: 1;
+    layer: modal;
+    dock: bottom;
+    margin: 0 2;
+    height: auto;
+    max-height: 10;
+    offset-y: -15;
+    background: $surface;
     color: $text;
     layout: grid;
-    grid-size: 2;         /* two columns, auto rows */
+    grid-size: 2;
     grid-gutter: 0;
-    padding: 0;
-    layer: default;
+    padding: 0 1;
+    border: solid $primary;
 }
 
 #command_hint>.hint-item {

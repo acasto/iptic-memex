@@ -47,6 +47,8 @@ if TEXTUAL_AVAILABLE:
 
         CSS_PATH = "styles/app.tcss"
 
+        LAYERS = ("main", "modal")
+
         BINDINGS = [
             Binding("ctrl+q", "quit", "Quit"),
             Binding("ctrl+s", "toggle_stream", "Toggle stream"),
@@ -153,10 +155,11 @@ if TEXTUAL_AVAILABLE:
                 self.turn_executor.set_chat_view(self.chat_view)
                 yield self.chat_view
 
+            self.command_hint = CommandHint(id="command_hint")
+            self._input_completion.set_command_hint(self.command_hint)
+            yield self.command_hint
+
             with Vertical(id="input_row"):
-                self.command_hint = CommandHint(id="command_hint")
-                self._input_completion.set_command_hint(self.command_hint)
-                yield self.command_hint
                 with Horizontal(id="input_controls"):
                     self.input = ChatInput(placeholder="Type a message or '/' for commands")
                     self._input_completion.set_input(self.input)
@@ -172,8 +175,7 @@ if TEXTUAL_AVAILABLE:
                     self.chat_view.can_focus = False
                 except Exception:
                     pass
-            if self.command_hint:
-                self.command_hint.styles.visibility = "hidden"
+
             self._emit_status("Welcome to iptic-memex TUI. Press Ctrl+S to toggle streaming.", 'info')
             try:
                 params = self.session.get_params() or {}
