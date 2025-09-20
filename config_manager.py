@@ -334,11 +334,41 @@ class SessionConfig:
         # Apply overrides (this will override the model if explicitly set)
         params.update(self.overrides)
         
+        # Normalize selected path-like options to be app-relative when not absolute
+        try:
+            params = self._normalize_paths(params)
+        except Exception:
+            # Best-effort; keep params even if normalization fails
+            pass
+
         # Cache the result
         self._cached_params = params
         self._current_model = model
         
         return params
+
+    # --- internal helpers ---------------------------------------------------
+    def _app_root(self) -> str:
+        """Directory considered the application root (where main.py lives)."""
+        # This module (config_manager.py) sits in the project root next to main.py
+        return os.path.dirname(os.path.abspath(__file__))
+
+    def _resolve_app_relative(self, path: Any) -> Any:
+        """Expand `~` and make relative paths resolve against the app root."""
+        if not isinstance(path, str) or not path:
+            return path
+        expanded = os.path.expanduser(path)
+        if os.path.isabs(expanded):
+            return expanded
+        return os.path.join(self._app_root(), expanded)
+
+    def _normalize_paths(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply app-relative resolution to known directory/file options."""
+        out = dict(params)
+        # chats_directory should not follow CWD; make it app-relative if not absolute
+        if 'chats_directory' in out:
+            out['chats_directory'] = self._resolve_app_relative(out.get('chats_directory'))
+        return out
     
     def set_option(self, key: str, value: Any) -> None:
         """Set a runtime override"""

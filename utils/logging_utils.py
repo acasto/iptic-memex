@@ -216,21 +216,34 @@ class LoggingHandler:
 
     def _open_logfile(self) -> Optional[str]:
         try:
-            explicit = self._get('file', '') or ''
+            # Determine application root (directory containing main.py; one level above utils/)
+            app_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+            explicit = (self._get('file', '') or '').strip()
             per_run = bool(self._get('per_run', True))
-            log_dir = self._get('dir', 'logs') or 'logs'
+            raw_dir = self._get('dir', 'logs') or 'logs'
+
+            # Resolve directory: absolute stays; relative -> app_root/<dir>
+            raw_dir = os.path.expanduser(raw_dir)
+            log_dir = raw_dir if os.path.isabs(raw_dir) else os.path.join(app_root, raw_dir)
             os.makedirs(log_dir, exist_ok=True)
-            if explicit.strip():
-                path = os.path.expanduser(explicit.strip())
+
+            # Resolve explicit file path when provided
+            if explicit:
+                explicit = os.path.expanduser(explicit)
+                path = explicit if os.path.isabs(explicit) else os.path.join(log_dir, explicit)
             else:
-                if per_run:
-                    path = os.path.join(log_dir, f'memex-{self._run_id}.log')
-                else:
-                    path = os.path.join(log_dir, 'memex.log')
+                filename = f'memex-{self._run_id}.log' if per_run else 'memex.log'
+                path = os.path.join(log_dir, filename)
+
+            # Ensure parent dir exists for the file (in case explicit includes subfolders)
+            os.makedirs(os.path.dirname(path) or log_dir, exist_ok=True)
+
             # Touch file
             with open(path, 'a', encoding='utf-8'):
                 pass
-            # Manage latest symlink optionally
+
+            # Manage latest symlink optionally (keep inside resolved log_dir)
             if bool(self._get('symlink_latest', True)):
                 try:
                     latest = os.path.join(log_dir, 'latest.log')
