@@ -2,7 +2,7 @@ import { apiStatus, apiParams, actionStart } from './api.js';
 import './controller.js';
 import { on, emit } from './bus.js';
 import { RafTextAppender } from './raf_batch.js';
-import { getState, setState, subscribe, addMessage, appendMessage, clearMessages } from './store.js';
+import { getState, setState, subscribe, addMessage, appendMessage, updateMessage, clearMessages } from './store.js';
 
 const log = document.getElementById('log');
 const emptyState = document.getElementById('emptyState');
@@ -72,6 +72,8 @@ msg?.addEventListener('input', updateTextareaHeight);
 
 // Store-backed message rendering with modern chat bubbles and markdown support
 const _nodes = new Map(); // id -> { el, msg }
+const _scopeIndex = new Map(); // scopeKey -> messageId
+const _scopeStreamStarted = new Map(); // messageId -> true when streaming content appended
 let _typingIndicator = null;
 
 function updateEmptyState() {
@@ -219,6 +221,8 @@ window.copyCodeBlock = function(button) {
 function clearMessagesDOM() {
   log.innerHTML = ''; // Clear all children
   _nodes.clear();
+  _scopeIndex.clear();
+  _scopeStreamStarted.clear();
   updateJumpVisibility();
   updateEmptyState();
 }
@@ -227,68 +231,125 @@ function stripAnsi(str) {
   try { return String(str).replace(/\u001b\[[0-9;]*m/g, ''); } catch { return str; }
 }
 
+function avatarLabelForRole(role) {
+  switch (role) {
+    case 'user':
+      return 'U';
+    case 'assistant':
+      return 'AI';
+    case 'tool':
+      return 'T';
+    case 'command':
+      return 'C';
+    default:
+      return 'AI';
+  }
+}
+
 function renderMessageNode(msg) {
   const auto = isAtBottom(log);
   const hadAny = _nodes.size > 0;
+  const isScope = msg.role === 'tool' || msg.role === 'command';
   let node = _nodes.get(msg.id);
-  
+
   if (node) {
-    const contentSpan = node.el.querySelector('.content');
-    const text = msg.text || '';
-    // Check if the message contains code blocks or markdown
-    if (text.includes('```') || text.includes('`') || text.includes('##') || text.includes('**')) {
-      contentSpan.innerHTML = processMarkdown(text);
-      // Re-run Prism highlighting on new content
-      if (typeof Prism !== 'undefined') {
-        Prism.highlightAllUnder(contentSpan);
+    const messageEl = node.el;
+    const contentSpan = messageEl.querySelector('.content');
+    if (contentSpan) {
+      if (isScope) {
+        messageEl.classList.add('scope-companion');
+        contentSpan.classList.add('scope-content');
+        const titleText = msg.title || '';
+        let header = contentSpan.querySelector('.scope-header');
+        if (titleText) {
+          if (!header) {
+            header = document.createElement('div');
+            header.className = 'scope-header';
+            contentSpan.prepend(header);
+          }
+          header.textContent = titleText;
+        } else if (header) {
+          header.remove();
+        }
+        let body = contentSpan.querySelector('.scope-body');
+        if (!body) {
+          body = document.createElement('div');
+          body.className = 'scope-body';
+          contentSpan.appendChild(body);
+        }
+        body.textContent = msg.text || '';
+      } else {
+        contentSpan.classList.remove('scope-content');
+        const text = msg.text || '';
+        if (text.includes('```') || text.includes('`') || text.includes('##') || text.includes('**')) {
+          contentSpan.innerHTML = processMarkdown(text);
+          if (typeof Prism !== 'undefined') {
+            Prism.highlightAllUnder(contentSpan);
+          }
+        } else {
+          contentSpan.textContent = text;
+        }
       }
-    } else {
-      contentSpan.textContent = text;
     }
-    
-    if (auto) scrollToBottom(log); 
+    node.msg = msg;
+    if (auto) scrollToBottom(log);
     else updateJumpVisibility();
     return contentSpan;
   }
 
-  // Create new message bubble
   const messageEl = document.createElement('div');
   messageEl.className = `msg ${msg.role}`;
   messageEl.setAttribute('role', 'logitem');
-  
+  if (isScope) messageEl.classList.add('scope-companion');
+
   const avatar = document.createElement('div');
   avatar.className = 'avatar';
-  avatar.textContent = msg.role === 'user' ? 'U' : 'AI';
+  avatar.textContent = avatarLabelForRole(msg.role);
   avatar.setAttribute('aria-hidden', 'true');
-  
+
   const content = document.createElement('div');
   content.className = 'content';
-  
-  const text = msg.text || '';
-  // Check if the message contains code blocks or markdown
-  if (text.includes('```') || text.includes('`') || text.includes('##') || text.includes('**')) {
-    content.innerHTML = processMarkdown(text);
-    // Run Prism highlighting
-    if (typeof Prism !== 'undefined') {
-      Prism.highlightAllUnder(content);
+  if (isScope) content.classList.add('scope-content');
+
+  if (isScope) {
+    if (msg.title) {
+      const header = document.createElement('div');
+      header.className = 'scope-header';
+      header.textContent = msg.title;
+      content.appendChild(header);
     }
+    const body = document.createElement('div');
+    body.className = 'scope-body';
+    body.textContent = msg.text || '';
+    content.appendChild(body);
   } else {
-    content.textContent = text;
+    const text = msg.text || '';
+    if (text.includes('```') || text.includes('`') || text.includes('##') || text.includes('**')) {
+      content.innerHTML = processMarkdown(text);
+      if (typeof Prism !== 'undefined') {
+        Prism.highlightAllUnder(content);
+      }
+    } else {
+      content.textContent = text;
+    }
   }
-  
+
   messageEl.appendChild(avatar);
   messageEl.appendChild(content);
-  
-  // Insert before typing indicator if it exists, otherwise at end
-  if (_typingIndicator) {
+
+  const anchorId = msg.anchorId;
+  if (anchorId && _nodes.has(anchorId)) {
+    const anchorNode = _nodes.get(anchorId).el;
+    log.insertBefore(messageEl, anchorNode);
+  } else if (_typingIndicator) {
     log.insertBefore(messageEl, _typingIndicator);
   } else {
     log.appendChild(messageEl);
   }
-  
-  if (auto && hadAny) scrollToBottom(log); 
+
+  if (auto && hadAny) scrollToBottom(log);
   else updateJumpVisibility();
-  
+
   _nodes.set(msg.id, { el: messageEl, msg });
   updateEmptyState();
   return content;
@@ -300,6 +361,136 @@ function addAndRenderMessage(role, text) {
   const msg = st.messages.find(m => m.id === id);
   if (msg) renderMessageNode(msg);
   return id;
+}
+
+function makeScopeKey(origin, toolCallId, title, anchorId) {
+  const anchor = anchorId || 'global';
+  const keyPart = toolCallId || title || 'scope';
+  return `${anchor}::${origin || 'scope'}::${keyPart}`;
+}
+
+function ensureScopeMessage({ origin, title, tool_call_id, tool, anchorId }) {
+  const role = origin === 'command' ? 'command' : 'tool';
+  const displayTitle = title || (role === 'command' ? (tool || 'Command activity') : (tool ? `Tool: ${tool}` : 'Tool activity'));
+  const scopeKey = makeScopeKey(role, tool_call_id, displayTitle, anchorId);
+  let existingId = _scopeIndex.get(scopeKey);
+  if (existingId && !_nodes.has(existingId)) {
+    _scopeIndex.delete(scopeKey);
+    existingId = null;
+  }
+  if (!existingId) {
+    const anchorPart = anchorId || 'global';
+    const prefix = `${anchorPart}::${role}::`;
+    let fallbackKey = null;
+    for (const [key, value] of _scopeIndex.entries()) {
+      if (key.startsWith(prefix)) {
+        fallbackKey = key;
+        existingId = value;
+        break;
+      }
+    }
+    if (existingId) {
+      if (fallbackKey && fallbackKey !== scopeKey) {
+        _scopeIndex.delete(fallbackKey);
+      }
+      _scopeIndex.set(scopeKey, existingId);
+    }
+  }
+  if (!existingId) {
+    existingId = addMessage({
+      role,
+      text: '',
+      title: displayTitle,
+      anchorId: anchorId || null,
+      scopeId: scopeKey,
+      toolCallId: tool_call_id || null,
+      origin,
+    });
+    _scopeIndex.set(scopeKey, existingId);
+    const st = getState();
+    const msg = st.messages.find(m => m.id === existingId);
+    if (msg) {
+      renderMessageNode(msg);
+    }
+    _scopeStreamStarted.delete(existingId);
+  } else if (displayTitle) {
+    const st = getState();
+    const existingMsg = st.messages.find(m => m.id === existingId);
+    if (existingMsg && existingMsg.title !== displayTitle) {
+      const nextMessages = st.messages.map(m => (m.id === existingId ? { ...m, title: displayTitle } : m));
+      setState({ messages: nextMessages });
+      const updatedMsg = nextMessages.find(m => m.id === existingId);
+      if (updatedMsg) {
+        renderMessageNode(updatedMsg);
+      }
+    }
+  }
+  return existingId;
+}
+
+function appendScopeStreamingChunk(messageId, chunk) {
+  if (!messageId) return;
+  const text = chunk == null ? '' : String(chunk);
+  if (!text) return;
+  const st = getState();
+  const current = st.messages.find(m => m.id === messageId);
+  if (!_scopeStreamStarted.get(messageId)) {
+    const hasText = current && typeof current.text === 'string' && current.text.trim().length > 0;
+    if (hasText && current.text && !current.text.endsWith('\n')) {
+      appendMessage(messageId, '\n');
+    }
+    _scopeStreamStarted.set(messageId, true);
+  }
+  appendMessage(messageId, text);
+  const updated = getState().messages.find(m => m.id === messageId);
+  if (updated) renderMessageNode(updated);
+}
+
+function setScopeMessageText(messageId, text) {
+  if (!messageId) return;
+  const value = text == null ? '' : String(text);
+  updateMessage(messageId, { text: value });
+  _scopeStreamStarted.delete(messageId);
+  const updated = getState().messages.find(m => m.id === messageId);
+  if (updated) renderMessageNode(updated);
+}
+
+function ingestScopeUpdates(updates, anchorId) {
+  if (!Array.isArray(updates)) return;
+  for (const update of updates) {
+    if (!update) continue;
+    console.log('[scope-update]', update);
+    const origin = (update.origin || '').toLowerCase();
+    if (origin !== 'tool' && origin !== 'command') continue;
+    const text = update.message || update.text;
+    if (!text) continue;
+    const scopeMessageId = ensureScopeMessage({
+      origin,
+      title: update.title || update.tool_title || update.label || update.command_label || update.scope_title,
+      tool_call_id: update.tool_call_id || update.toolCallId || null,
+      tool: update.tool || update.tool_name || null,
+      anchorId,
+    });
+    setScopeMessageText(scopeMessageId, text);
+  }
+}
+
+function partitionUpdatesForScopes(updates) {
+  if (!Array.isArray(updates)) {
+    return { scopeUpdates: [], panelUpdates: [] };
+  }
+  const scopeUpdates = [];
+  const panelUpdates = [];
+  for (const update of updates) {
+    if (!update) continue;
+    const origin = (update.origin || '').toLowerCase();
+    if (origin === 'tool' || origin === 'command') {
+      scopeUpdates.push(update);
+    } else {
+      panelUpdates.push(update);
+    }
+  }
+  return { scopeUpdates, panelUpdates };
 }
 
 async function refreshStatus() {
@@ -336,6 +527,18 @@ function sendStream(text) {
   // Wire bus listeners scoped by messageId
   const offToken = on('sse:token', (ev) => {
     const d = ev && ev.detail; if (!d || d.messageId !== messageId) return;
+    const origin = (d.origin || '').toLowerCase();
+    if (origin === 'tool' || origin === 'command') {
+      const scopeMessageId = ensureScopeMessage({
+        origin,
+        title: d.title || d.tool_title || d.label || null,
+        tool_call_id: d.tool_call_id || null,
+        tool: d.tool || d.tool_name || null,
+        anchorId: msgId,
+      });
+      appendScopeStreamingChunk(scopeMessageId, d.text || '');
+      return;
+    }
     const wasAtBottom = isAtBottom(log);
     appender.append(d && d.text ? d.text : '');
     // Auto-scroll if we were at bottom before new content
@@ -347,12 +550,34 @@ function sendStream(text) {
       updateJumpVisibility();
     }
   });
+
+  const offUpdate = on('sse:update', (ev) => {
+    const d = ev && ev.detail;
+    if (!d || d.messageId !== messageId) return;
+    const origin = (d.origin || '').toLowerCase();
+    console.log('[scope-update-event]', d);
+    if (origin !== 'tool' && origin !== 'command') return;
+    const scopeMessageId = ensureScopeMessage({
+      origin,
+      title: d.title || d.tool_title || d.label || null,
+      tool_call_id: d.tool_call_id || null,
+      tool: d.tool || d.tool_name || null,
+      anchorId: msgId,
+    });
+    const text = d.message || d.text || '';
+    if (!text) return;
+    setScopeMessageText(scopeMessageId, text);
+  });
   
   const offDone = on('sse:done', (ev) => {
     const d = ev && ev.detail; if (!d || d.messageId !== messageId) return;
     try {
       node.el.classList.remove('streaming');
-      if (d && d.updates) setPanelUpdates(d.updates);
+      if (d && d.updates) {
+        const { scopeUpdates, panelUpdates } = partitionUpdatesForScopes(d.updates);
+        setPanelUpdates(panelUpdates);
+        ingestScopeUpdates(scopeUpdates, msgId);
+      }
       if (d && d.needs_interaction && d.state_token) renderInteraction(d.needs_interaction, d.state_token);
       
       const finalText = target.textContent || '';
@@ -372,7 +597,7 @@ function sendStream(text) {
       }
       
       appendMessage(msgId, target.textContent || target.innerText || '');
-    } finally { offToken(); offDone(); offErr(); }
+    } finally { offToken(); offUpdate(); offDone(); offErr(); }
   });
   
   const offErr = on('sse:error', (ev) => {
@@ -381,7 +606,7 @@ function sendStream(text) {
       node.el.classList.remove('streaming');
       target.textContent += ' [error] ' + (d && d.message ? d.message : '');
       appendMessage(msgId, target.textContent || '');
-    } finally { offToken(); offDone(); offErr(); }
+    } finally { offToken(); offUpdate(); offDone(); offErr(); }
   });
 
   // Show Stop while active
@@ -395,8 +620,12 @@ on('chat:response', (ev) => {
   const d = ev && ev.detail; if (!d) return;
   hideTypingIndicator();
   const textOut = d.text || '';
-  if (d.updates) setPanelUpdates(d.updates);
-  addAndRenderMessage('assistant', textOut || '[empty]');
+  const assistantId = addAndRenderMessage('assistant', textOut || '[empty]');
+  if (d.updates) {
+    const { scopeUpdates, panelUpdates } = partitionUpdatesForScopes(d.updates);
+    setPanelUpdates(panelUpdates);
+    ingestScopeUpdates(scopeUpdates, assistantId);
+  }
   if (d.handled && d.command === 'clear_chat') {
     clearMessages();
     setState({ updates: [] });
@@ -406,7 +635,11 @@ on('chat:response', (ev) => {
 on('action:needs', (ev) => {
   const d = ev && ev.detail; if (!d) return;
   hideTypingIndicator();
-  if (d.updates) setPanelUpdates(d.updates);
+  if (d.updates) {
+    const { scopeUpdates, panelUpdates } = partitionUpdatesForScopes(d.updates);
+    setPanelUpdates(panelUpdates);
+    ingestScopeUpdates(scopeUpdates, null);
+  }
   if (d.needs && d.stateToken) renderInteraction(d.needs, d.stateToken);
   if (d.text) addAndRenderMessage('assistant', d.text);
 });
@@ -426,7 +659,11 @@ on('action:done', (ev) => {
     return;
   }
   // No special handling for manage_chats here; load flow uses direct API in window.loadChat
-  if (d.updates) setPanelUpdates(d.updates);
+  if (d.updates) {
+    const { scopeUpdates, panelUpdates } = partitionUpdatesForScopes(d.updates);
+    setPanelUpdates(panelUpdates);
+    ingestScopeUpdates(scopeUpdates, null);
+  }
   if (d.text) addAndRenderMessage('assistant', d.text);
   if (d.payload && d.payload.cleared === true) {
     clearMessages();

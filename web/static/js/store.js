@@ -46,7 +46,16 @@ export function subscribe(fn) {
 
 // Convenience helpers for messages
 export function addMessage(msg) {
-  const m = { id: msg.id || generateUUID(), role: msg.role, text: msg.text || '' };
+  const m = {
+    id: msg.id || generateUUID(),
+    role: msg.role,
+    text: msg.text || '',
+    title: msg.title || '',
+    anchorId: msg.anchorId || null,
+    scopeId: msg.scopeId || null,
+    toolCallId: msg.toolCallId || null,
+    origin: msg.origin || null,
+  };
   state = { ...state, messages: [...state.messages, m] };
   emit('store:change', { state, patch: { messages: state.messages } });
   return m.id;
@@ -60,6 +69,17 @@ export function appendMessage(id, chunk) {
     state = { ...state, messages: n };
     emit('store:change', { state, patch: { messages: n } });
   }
+}
+
+export function updateMessage(id, patch) {
+  if (!patch) return;
+  const idx = state.messages.findIndex(m => m.id === id);
+  if (idx < 0) return;
+  const next = { ...state.messages[idx], ...patch };
+  const messages = state.messages.slice();
+  messages[idx] = next;
+  state = { ...state, messages };
+  emit('store:change', { state, patch: { messages } });
 }
 
 export function clearMessages() {

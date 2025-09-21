@@ -1,7 +1,7 @@
 import { emit } from './bus.js';
 
 // Open SSE connection. Optional messageId is used for bus event correlation.
-export function openEventSource(token, { onToken, onDone, onError, messageId } = {}) {
+export function openEventSource(token, { onToken, onDone, onError, onUpdate, messageId } = {}) {
   const es = new EventSource('/api/stream?token=' + encodeURIComponent(token));
   es.addEventListener('token', ev => {
     let data = null; try { data = JSON.parse(ev.data); } catch {}
@@ -9,6 +9,11 @@ export function openEventSource(token, { onToken, onDone, onError, messageId } =
     if (onToken) { try { onToken(data); } catch {} }
     // Bus path
     emit('sse:token', { ...(data || {}), messageId });
+  });
+  es.addEventListener('update', ev => {
+    let data = null; try { data = JSON.parse(ev.data); } catch {}
+    if (onUpdate) { try { onUpdate(data); } catch {} }
+    emit('sse:update', { ...(data || {}), messageId });
   });
   es.addEventListener('done', ev => {
     let data = null; try { data = JSON.parse(ev.data); } catch {}

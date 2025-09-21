@@ -11,6 +11,7 @@ In a later step, this can be extended to push tokens into an asyncio.Queue for S
 from typing import Any, Dict, List, Optional, Union
 from contextlib import contextmanager
 import asyncio
+import uuid
 
 
 class WebOutput:
@@ -22,6 +23,8 @@ class WebOutput:
         # Optional cooperative cancellation hook: a callable returning True when cancel is requested
         self.cancel_check = None
         self._scope_stack: List[Dict[str, Any]] = []
+        self._spinner_messages: Dict[str, str] = {}
+        self._spinner_stack: List[str] = []
 
     def set_async(self, loop: asyncio.AbstractEventLoop, queue: asyncio.Queue) -> None:
         self._loop = loop
@@ -47,6 +50,38 @@ class WebOutput:
             self._emitted = True
         except Exception:
             pass
+
+    def _emit_update(self, payload: Dict[str, Any]) -> None:
+        if not self._loop or not self._queue:
+            return
+        try:
+            self._loop.call_soon_threadsafe(self._queue.put_nowait, ("update", payload))
+        except Exception:
+            pass
+
+    def _current_scope_payload(self) -> Dict[str, Any]:
+        scope = self.current_tool_scope()
+        if not scope:
+            # also consider command scope on stack
+            meta = self._scope_stack[-1] if self._scope_stack else None
+        else:
+            meta = scope
+        if not isinstance(meta, dict):
+            return {}
+        payload = {}
+        origin = meta.get('origin')
+        if origin:
+            payload['origin'] = origin
+        tool = meta.get('tool_name')
+        if tool:
+            payload['tool'] = tool
+        call_id = meta.get('tool_call_id')
+        if call_id:
+            payload['tool_call_id'] = call_id
+        title = meta.get('title') or meta.get('tool_title')
+        if title:
+            payload['title'] = title
+        return payload
 
     # --- core API ---
     def write(
@@ -114,13 +149,52 @@ class WebOutput:
         # For web, return plain text; actual styling happens in the browser
         return text
 
-    # spinner support (no-op for web)
+    # spinner support (stream updates for scope status)
     @contextmanager
     def spinner(self, message: str = "", style: Optional[str] = None):  # noqa: D401
-        yield self
+        spinner_id = str(uuid.uuid4())
+        label = message or "Working..."
+        self._spinner_messages[spinner_id] = label
+        self._spinner_stack.append(spinner_id)
+        payload = {
+            'type': 'status',
+            'message': label,
+        }
+        payload.update(self._current_scope_payload())
+        if 'origin' not in payload:
+            payload['origin'] = 'tool'
+        if 'title' not in payload and label:
+            payload['title'] = label
+        self._emit_update(payload)
+        try:
+            yield self
+        finally:
+            self.stop_spinner(spinner_id)
 
-    def stop_spinner(self) -> None:
-        pass
+    def stop_spinner(self, spinner_id: Optional[str] = None) -> None:
+        sid = spinner_id
+        if not sid:
+            sid = self._spinner_stack.pop() if self._spinner_stack else None
+        else:
+            try:
+                self._spinner_stack.remove(sid)
+            except ValueError:
+                pass
+        if not sid:
+            return
+        label = self._spinner_messages.pop(sid, None)
+        if not label:
+            return
+        payload = {
+            'type': 'status',
+            'message': f"{label} – done",
+        }
+        payload.update(self._current_scope_payload())
+        if 'origin' not in payload:
+            payload['origin'] = 'tool'
+        if 'title' not in payload and label:
+            payload['title'] = label
+        self._emit_update(payload)
 
     # stdout suppression helper used in Agent Mode; return a no-op context
     @contextmanager

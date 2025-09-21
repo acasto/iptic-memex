@@ -215,7 +215,7 @@ async def handle_api_stream(app, request: Request):
                         scope_meta = scope_fn()
                 except Exception:
                     scope_meta = None
-                if scope_meta and event_type in {'status', 'warning', 'error', 'critical', 'context'}:
+                if scope_meta and event_type in {'status', 'warning', 'error', 'critical', 'context', 'spinner'}:
                     item.setdefault('origin', scope_meta.get('origin') or 'tool')
                     if scope_meta.get('tool_name'):
                         item.setdefault('tool', scope_meta.get('tool_name'))
@@ -225,6 +225,11 @@ async def handle_api_stream(app, request: Request):
                     if title:
                         item.setdefault('title', title)
                 emitted.append(item)
+                if event_type in {'status', 'warning', 'error', 'critical', 'spinner'}:
+                    try:
+                        loop.call_soon_threadsafe(queue.put_nowait, ("update", item))
+                    except Exception:
+                        pass
             except Exception:
                 pass
         if original_emit:
@@ -350,6 +355,9 @@ async def handle_api_stream(app, request: Request):
                 continue
             if typ == 'token':
                 yield f"event: token\ndata: {json.dumps(data)}\n\n"
+            elif typ == 'update':
+                yield f"event: update\ndata: {json.dumps(data)}\n\n"
+                continue
             elif typ == 'done':
                 yield f"event: done\ndata: {json.dumps(data)}\n\n"
                 break
