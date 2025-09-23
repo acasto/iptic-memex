@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from base_classes import InteractionAction
 import os
-from pathlib import Path
+import shutil
+import subprocess
+from typing import Optional
+
+from base_classes import InteractionAction, InteractionNeeded
 
 
 class AssistantFsHandlerAction(InteractionAction):
@@ -17,76 +20,63 @@ class AssistantFsHandlerAction(InteractionAction):
         # Get base directory configuration (allow CLI override via session.get_option)
         base_dir = session.get_option('TOOLS', 'base_directory', fallback='working')
         if base_dir == 'working' or base_dir == '.':
-            self._base_dir = os.getcwd()
+            self._base_dir = os.path.abspath(os.getcwd())
         else:
-            self._base_dir = os.path.expanduser(base_dir)
+            self._base_dir = os.path.abspath(os.path.expanduser(base_dir))
 
-    def validate_path(self, file_path: str) -> str | None:
-        """
-        Validate a path is within the allowed base directory.
-        Returns the resolved path if valid, None if not.
-        """
+    def validate_path(self, file_path: str, must_exist: Optional[bool] = None) -> Optional[str]:
+        """Validate and resolve path with safety checks."""
+        if not file_path:
+            return None
+
         try:
-            if not file_path:
-                return None
-
-            # Expand user and make relative paths resolve against the configured base dir,
-            # not the current working directory. This keeps tool behavior consistent when
-            # --base-dir points outside the process CWD.
             expanded = os.path.expanduser(file_path)
             if not os.path.isabs(expanded):
                 candidate = os.path.join(self._base_dir, expanded)
             else:
                 candidate = expanded
 
-            resolved_path = os.path.abspath(candidate)
-            if not self.is_path_in_base(self._base_dir, resolved_path):
+            resolved_path = os.path.realpath(os.path.abspath(candidate))
+
+            try:
+                common_path = os.path.commonpath([resolved_path, self._base_dir])
+            except ValueError:
+                common_path = None
+
+            if not common_path or common_path != self._base_dir:
                 self.session.add_context('assistant', {
                     'name': 'fs_error',
                     'content': f'Path {file_path} is outside allowed directory'
                 })
                 return None
+
+            if must_exist is True and not os.path.exists(resolved_path):
+                self.session.add_context('assistant', {
+                    'name': 'fs_error',
+                    'content': f'Path does not exist: {file_path}'
+                })
+                return None
+            if must_exist is False and os.path.exists(resolved_path):
+                self.session.add_context('assistant', {
+                    'name': 'fs_error',
+                    'content': f'Path already exists: {file_path}'
+                })
+                return None
+
             return resolved_path
-        except Exception as e:
+
+        except Exception as exc:
             self.session.add_context('assistant', {
                 'name': 'fs_error',
-                'content': f'Error validating path: {str(e)}'
+                'content': f'Error validating path: {exc}'
             })
             return None
 
-    @staticmethod
-    def is_path_in_base(base_dir: str, check_path: str) -> bool:
-        """
-        Verify if check_path is within base_dir, handling symlinks and case sensitivity.
-        """
-        try:
-            # Handle empty paths
-            if not base_dir or not check_path:
-                return False
+    def resolve_path(self, file_path: str, must_exist: Optional[bool] = None) -> Optional[str]:
+        """Alias for validate_path for backward compatibility"""
+        return self.validate_path(file_path, must_exist)
 
-            # Resolve paths
-            base_path = Path(os.path.expandvars(os.path.expanduser(base_dir))).resolve()
-            check = Path(os.path.expandvars(os.path.expanduser(check_path)))
-
-            # Make check path absolute if relative
-            if not check.is_absolute():
-                check = (Path.cwd() / check).resolve()
-            else:
-                check = check.resolve()
-
-            # Verify the base is a directory
-            if not base_path.exists() or not base_path.is_dir():
-                return False
-
-            # Handle case sensitivity based on platform
-            if os.name == 'nt':  # Windows
-                return str(check).lower().startswith(str(base_path).lower())
-            return str(check).startswith(str(base_path))
-
-        except Exception:
-            return False
-
-    def read_file(self, file_path: str, binary=False, encoding='utf-8'):
+    def read_file(self, file_path: str, binary: bool = False, encoding: str = 'utf-8'):
         """Read a file with path validation"""
         resolved_path = self.validate_path(file_path)
         if resolved_path is None:
@@ -124,6 +114,13 @@ class AssistantFsHandlerAction(InteractionAction):
 
         # Show diff if requested and file exists
         show_diff = self.session.get_tools().get('show_diff_with_confirm', False)
+        # Allow actions to suppress helper-side diff printing when they present
+        # a diff in the confirmation modal.
+        try:
+            if bool(self.session.get_user_data('__suppress_fs_diff__')):
+                show_diff = False
+        except Exception:
+            pass
         if show_diff and os.path.exists(resolved_path) and not binary and not append:
             try:
                 original_content = self.read_file(file_path, binary=False, encoding=encoding)
@@ -139,31 +136,41 @@ class AssistantFsHandlerAction(InteractionAction):
                     'content': f'Error generating diff: {str(e)}'
                 })
 
-        # Check if the file exists and get confirmation if needed
-        needs_confirm = show_diff or self.session.get_tools().get('write_confirm', True)
+        # Check if the file exists and get confirmation if needed. Showing a diff should
+        # not force a confirmation when the user has disabled confirmations.
+        needs_confirm = bool(self.session.get_tools().get('write_confirm', True))
         if os.path.exists(resolved_path):
             if not force and needs_confirm:
                 self.session.utils.output.stop_spinner()
                 mode = "append to" if append else "overwrite"
-                if not self._confirm(f"File {file_path} exists. Confirm {mode}? [y/N]: ", default=False):
+                try:
+                    if not self._confirm(f"File {file_path} exists. Confirm {mode}? [y/N]: ", default=False):
+                        self.session.add_context('assistant', {
+                            'name': 'fs_info',
+                            'content': f'File operation cancelled by user'
+                        })
+                        return False
+                except InteractionNeeded:
+                    # Re-raise so calling action can handle it
+                    raise
+        elif not force and needs_confirm:
+            self.session.utils.output.stop_spinner()
+            try:
+                if not self._confirm(f"Confirm write to new file {file_path}? [y/N]: ", default=False):
                     self.session.add_context('assistant', {
                         'name': 'fs_info',
                         'content': f'File operation cancelled by user'
                     })
                     return False
-        elif not force and needs_confirm:
-            self.session.utils.output.stop_spinner()
-            if not self._confirm(f"Confirm write to new file {file_path}? [y/N]: ", default=False):
-                self.session.add_context('assistant', {
-                    'name': 'fs_info',
-                    'content': f'File operation cancelled by user'
-                })
-                return False
+            except InteractionNeeded:
+                # Re-raise so calling action can handle it
+                raise
 
         # Determine mode based on binary and append flags
         if binary:
             mode = 'ab' if append else 'wb'
             kwargs = {}
+            written_content = content
         else:
             mode = 'a' if append else 'w'
             kwargs = {'encoding': encoding}
@@ -191,43 +198,51 @@ class AssistantFsHandlerAction(InteractionAction):
                         'ensure_trailing_newline',
                         self.session.get_tools().get('ensure_trailing_newline', False)
                     )
+                    if ensure_nl and not content.endswith('\n'):
+                        content += '\n'
                 except Exception:
-                    ensure_nl = False
-                if ensure_nl and (len(content) == 0 or not content.endswith('\n')):
-                    content = content + '\n'
+                    pass
+            written_content = content
 
-        return self.fs.write_file(resolved_path, content, binary=binary,
-                                  encoding=encoding, create_dirs=create_dirs,
-                                  append=append)
+        # Create directory if needed
+        if create_dirs:
+            os.makedirs(os.path.dirname(resolved_path), exist_ok=True)
 
-    @staticmethod
-    def _generate_diff(original_content: str, new_content: str, file_path: str) -> str:
-        """Generate unified diff between original and new content"""
-        import difflib
-
-        diff_lines = list(difflib.unified_diff(
-            original_content.splitlines(keepends=True),
-            new_content.splitlines(keepends=True),
-            fromfile=f'{file_path} (original)',
-            tofile=f'{file_path} (new)'
-        ))
-
-        return ''.join(diff_lines) if diff_lines else None
-
-    def resolve_path(self, path: str, must_exist=True):
-        """Resolve and validate a path"""
-        resolved_path = self.validate_path(path)
-        if resolved_path is None:
-            return None
-
-        if must_exist and not os.path.exists(resolved_path):
+        # Write the file
+        try:
+            with open(resolved_path, mode, **kwargs) as f:
+                f.write(content)
+        except Exception as e:
             self.session.add_context('assistant', {
                 'name': 'fs_error',
-                'content': f'Path does not exist: {path}'
+                'content': f'Failed to write {file_path}: {str(e)}'
             })
-            return None
+            return False
 
-        return resolved_path
+        # Verify write landed on disk (best-effort)
+        try:
+            if binary:
+                with open(resolved_path, 'rb') as rf:
+                    new_data = rf.read()
+                ok = (new_data.endswith(written_content) if append else new_data == written_content)
+            else:
+                with open(resolved_path, 'r', encoding=encoding) as rf:
+                    new_text = rf.read()
+                ok = (new_text.endswith(written_content) if append else new_text == written_content)
+            if not ok:
+                self.session.add_context('assistant', {
+                    'name': 'fs_error',
+                    'content': f'Verification failed after writing {file_path}. Content mismatch.'
+                })
+                return False
+        except Exception as e:
+            self.session.add_context('assistant', {
+                'name': 'fs_error',
+                'content': f'Verification failed for {file_path}: {e}'
+            })
+            return False
+
+        return True
 
     def delete_file(self, file_path: str, force: bool = False) -> bool:
         """Delete a file with path validation and confirmation"""
@@ -235,14 +250,19 @@ class AssistantFsHandlerAction(InteractionAction):
         if resolved_path is None:
             return False
 
-        if not force and self.session.get_tools().get('write_confirm', True):
+        needs_confirm = self.session.get_tools().get('write_confirm', True)
+        if not force and needs_confirm:
             self.session.utils.output.stop_spinner()
-            if not self._confirm(f"Confirm delete file {file_path}? [y/N]: ", default=False):
-                self.session.add_context('assistant', {
-                    'name': 'fs_info',
-                    'content': f'File deletion cancelled by user'
-                })
-                return False
+            try:
+                if not self._confirm(f"Confirm delete file {file_path}? [y/N]: ", default=False):
+                    self.session.add_context('assistant', {
+                        'name': 'fs_info',
+                        'content': f'File deletion cancelled by user'
+                    })
+                    return False
+            except InteractionNeeded:
+                # Re-raise so calling action can handle it
+                raise
 
         return self.fs.delete_file(resolved_path)
 
@@ -252,15 +272,20 @@ class AssistantFsHandlerAction(InteractionAction):
         if resolved_path is None:
             return False
 
-        if not force and self.session.get_tools().get('write_confirm', True):
+        needs_confirm = self.session.get_tools().get('write_confirm', True)
+        if not force and needs_confirm:
             self.session.utils.output.stop_spinner()
             operation = "recursively delete" if recursive else "delete"
-            if not self._confirm(f"Confirm {operation} directory {dir_path}? [y/N]: ", default=False):
-                self.session.add_context('assistant', {
-                    'name': 'fs_info',
-                    'content': f'Directory deletion cancelled by user'
-                })
-                return False
+            try:
+                if not self._confirm(f"Confirm {operation} directory {dir_path}? [y/N]: ", default=False):
+                    self.session.add_context('assistant', {
+                        'name': 'fs_info',
+                        'content': f'Directory deletion cancelled by user'
+                    })
+                    return False
+            except InteractionNeeded:
+                # Re-raise so calling action can handle it
+                raise
 
         return self.fs.delete_directory(resolved_path, recursive)
 
@@ -274,14 +299,19 @@ class AssistantFsHandlerAction(InteractionAction):
         if resolved_new is None:
             return False
 
-        if not force and self.session.get_tools().get('write_confirm', True):
+        needs_confirm = self.session.get_tools().get('write_confirm', True)
+        if not force and needs_confirm:
             self.session.utils.output.stop_spinner()
-            if not self._confirm(f"Confirm rename {old_path} to {new_path}? [y/N]: ", default=False):
-                self.session.add_context('assistant', {
-                    'name': 'fs_info',
-                    'content': f'Rename operation cancelled by user'
-                })
-                return False
+            try:
+                if not self._confirm(f"Confirm rename {old_path} to {new_path}? [y/N]: ", default=False):
+                    self.session.add_context('assistant', {
+                        'name': 'fs_info',
+                        'content': f'Rename operation cancelled by user'
+                    })
+                    return False
+            except InteractionNeeded:
+                # Re-raise so calling action can handle it
+                raise
 
         return self.fs.rename(resolved_old, resolved_new)
 
@@ -295,14 +325,19 @@ class AssistantFsHandlerAction(InteractionAction):
         if resolved_dst is None:
             return False
 
-        if not force and self.session.get_tools().get('write_confirm', True):
+        needs_confirm = self.session.get_tools().get('write_confirm', True)
+        if not force and needs_confirm:
             self.session.utils.output.stop_spinner()
-            if not self._confirm(f"Confirm copy {src_path} to {dst_path}? [y/N]: ", default=False):
-                self.session.add_context('assistant', {
-                    'name': 'fs_info',
-                    'content': f'Copy operation cancelled by user'
-                })
-                return False
+            try:
+                if not self._confirm(f"Confirm copy {src_path} to {dst_path}? [y/N]: ", default=False):
+                    self.session.add_context('assistant', {
+                        'name': 'fs_info',
+                        'content': f'Copy operation cancelled by user'
+                    })
+                    return False
+            except InteractionNeeded:
+                # Re-raise so calling action can handle it
+                raise
 
         return self.fs.copy(resolved_src, resolved_dst)
 
@@ -311,3 +346,18 @@ class AssistantFsHandlerAction(InteractionAction):
         Not used - this action provides methods for other actions to use.
         """
         pass
+
+    def _generate_diff(self, original: str, new: str, filename: str) -> str:
+        """Generate a unified diff between original and new content"""
+        try:
+            import difflib
+            diff = difflib.unified_diff(
+                original.splitlines(keepends=True),
+                new.splitlines(keepends=True),
+                fromfile=f'a/{filename}',
+                tofile=f'b/{filename}',
+                lineterm=''
+            )
+            return ''.join(diff)
+        except Exception:
+            return ""

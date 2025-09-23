@@ -228,6 +228,36 @@ Gating and CLI‑only flows
   - Agent Mode: suppresses interim status/noise and newlines; focuses on completing steps and returning results.
 - Introspection: `show messages` surfaces assistant entries with Tool Calls metadata (name/id) alongside normal message text.
 
+### Mid‑Turn Interactions (Confirmations)
+- Unified behavior (official + pseudo): When a tool/action requires user input mid‑turn, it raises `InteractionNeeded`. The TurnRunner pauses, prompts via a session‑scoped broker, resumes the same action instance (looping if needed), then continues the tool flow.
+- TUI broker: the TUI registers an interaction broker on the session; `prompt(need)` displays a modal and blocks the worker thread safely until the user responds.
+- Pseudo‑tools: assistant commands annotate `InteractionNeeded.spec` with `__action__`, `__args__`, `__content__`. The runner rehydrates `_current_args/_current_content` before calling `resume()` so state is preserved.
+- Output scoping: confirmations and resume output render in a tool bubble. The runner sets `__last_tool_scope__` for consistent grouping of auto‑submit summaries.
+
+### File Tool Confirmations + Diffs
+- Write/Append: the action computes a unified diff and shows it in the confirmation prompt.
+  - TUI/Web (non‑blocking): diff appears inside the modal; on confirm, the write proceeds with `force=True`.
+  - CLI (blocking): prints the diff to the console, then asks inline via `ui.ask_bool`.
+- Edit: generate the candidate text first, then show a diff and confirm before writing.
+- Helpers do not print diffs when the action has already shown them (internal flag `__suppress_fs_diff__`).
+- Post‑write verification: helpers re‑read the file and report a clear error if the final content does not match.
+
+### Auto‑Submit (Follow‑up Assistant Turn)
+- Official tools require a `tool` role message with `tool_call_id` (tool result) before the assistant’s follow‑up. The runner emits this and sets `auto_submit`.
+- TUI fallback: if `allow_auto_submit=true`, a tool ran, and the last assistant text was empty, TUI schedules one follow‑up turn and reuses the prior empty assistant bubble for the reply (avoids extra bubbles).
+
+### Action Authoring (Prompts vs Exceptions)
+- Blocking UIs (CLI): do not raise `InteractionNeeded`; ask inline via `ui.ask_*`, then proceed (use `force=True` on the second pass to avoid re‑prompting).
+- Non‑blocking UIs (TUI/Web): raise `InteractionNeeded(kind, spec, state_token)` and let the runner/broker prompt and resume.
+- Prefer confirms in the action, not the helper. For edits, confirm after generating the candidate so you can show a real diff.
+- Keep prompts concise; trim large diffs (~200 lines/8KB) when embedding in modals.
+
+### Session Keys (internal)
+- `__interaction_broker__`: object with `prompt(need)` for mid‑turn UI prompts.
+- `__reuse_assistant_msg_id__`: TUI hint to reuse an empty assistant bubble for the auto‑submit follow‑up.
+- `__last_tool_scope__`: tool scoping metadata for grouping outputs and summaries.
+- `__suppress_fs_diff__`: suppress helper‑side diff printing when the action already surfaced a diff.
+
 #### Anthropic Messages API (Claude)
 - Tools: Defined via `tools=[{name, description, input_schema}]` with native JSON Schema.
 - Tool calls: Assistant emits `tool_use` content blocks (id, name, input). Client must reply with `user` `tool_result` blocks referencing `tool_use_id` and including result text.

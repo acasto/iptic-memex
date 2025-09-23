@@ -114,6 +114,20 @@ if TEXTUAL_AVAILABLE:
                 stream_enabled=self._stream_enabled,
             )
 
+            # Provide a blocking interaction prompt for tool calls executed inside
+            # TurnRunner so we can pause mid-turn, show a modal, and resume.
+            # Register an interaction broker for mid-turn tool prompts
+            class _TUIBroker:
+                def __init__(self, app_ref: 'MemexTUIApp') -> None:
+                    self._app = app_ref
+                def prompt(self, need: InteractionNeeded) -> Any:
+                    return self._app._prompt_blocking_for_tool(need)
+            try:
+                self.session.set_user_data('__interaction_broker__', _TUIBroker(self))
+                self.session.set_user_data('__interaction_prompt__', self._prompt_blocking_for_tool)
+            except Exception:
+                pass
+
             self._orig_output: Optional[OutputHandler] = self.session.utils.output
             self._tui_output = TuiOutput(self._handle_output_event)
             self.session.utils.replace_output(self._tui_output)
@@ -729,7 +743,31 @@ if TEXTUAL_AVAILABLE:
                     return None
 
         async def _prompt_for_interaction(self, need: InteractionNeeded) -> Any:
-            return await self.push_screen_wait(InteractionModal(need.kind, dict(need.spec)))
+            return await self._wait_for_screen(InteractionModal(need.kind, dict(need.spec)))
+
+        # Blocking prompt used from worker thread (core.turns tool loop)
+        def _prompt_blocking_for_tool(self, need: InteractionNeeded) -> Any:
+            import threading
+            box = {'res': None}
+            done = threading.Event()
+
+            def _on_close(res: Any) -> None:
+                box['res'] = res
+                done.set()
+
+            def _start() -> None:
+                try:
+                    self.push_screen(InteractionModal(need.kind, dict(need.spec)), _on_close)
+                except Exception:
+                    # If push_screen fails, release waiter so caller can cancel gracefully
+                    done.set()
+
+            try:
+                self.call_from_thread(_start)
+            except Exception:
+                return None
+            done.wait()
+            return box.get('res')
 
         def _clear_command_hint(self) -> None:
             self._input_completion.clear_command_hint()

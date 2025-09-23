@@ -75,11 +75,25 @@ class TurnExecutor:
         except Exception:
             pass
         if self._chat_view:
-            self._active_message_id = self._chat_view.add_message(
-                "assistant",
-                "",
-                streaming=self._stream_enabled,
-            )
+            # Reuse prior empty assistant bubble when requested
+            reuse_id = None
+            try:
+                reuse_id = self.session.get_user_data('__reuse_assistant_msg_id__')
+            except Exception:
+                reuse_id = None
+            if reuse_id:
+                # Clear the reuse flag; update will happen in _finish_turn
+                try:
+                    self.session.set_user_data('__reuse_assistant_msg_id__', None)
+                except Exception:
+                    pass
+                self._active_message_id = reuse_id
+            else:
+                self._active_message_id = self._chat_view.add_message(
+                    "assistant",
+                    "",
+                    streaming=self._stream_enabled,
+                )
         else:
             self._active_message_id = None
 
@@ -117,7 +131,7 @@ class TurnExecutor:
         self._active_message_id = None
         self._emit_status("Assistant ready.", "debug", display=False)
         self._refresh_contexts()
-        self._check_auto_submit()
+        self._check_auto_submit(msg_id, result)
 
     def _handle_turn_error(self, error_text: str) -> None:
         if self._chat_view and self._active_message_id:
@@ -129,9 +143,28 @@ class TurnExecutor:
         self._emit_status(f"Error: {error_text}", "error", display=False)
         self._active_message_id = None
 
-    def _check_auto_submit(self) -> None:
+    def _check_auto_submit(self, reuse_msg_id: Optional[str] = None, result: Optional[Any] = None) -> None:
         try:
+            # Primary path: explicit flag from tool execution
             if self.session.get_flag("auto_submit"):
+                # Reuse prior assistant bubble if it was empty
+                try:
+                    lt = (getattr(result, 'last_text', None) or '').strip() if result is not None else ''
+                    if reuse_msg_id and not lt:
+                        self.session.set_user_data('__reuse_assistant_msg_id__', reuse_msg_id)
+                except Exception:
+                    pass
+                self._schedule_task(self.run(""))
+                return
+            # Fallback: if a tool ran but the runner didn't chain the follow-up, schedule one
+            allow = bool(self.session.get_option('TOOLS', 'allow_auto_submit', fallback=False))
+            if not allow:
+                return
+            ran_tools = bool(getattr(result, 'ran_tools', False)) if result is not None else False
+            last_text = (getattr(result, 'last_text', None) or '').strip() if result is not None else ''
+            if ran_tools and not last_text:
+                if reuse_msg_id:
+                    self.session.set_user_data('__reuse_assistant_msg_id__', reuse_msg_id)
                 self._schedule_task(self.run(""))
         except Exception:
             pass

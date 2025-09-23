@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, List, Optional, Tuple, Literal
 import time
+from base_classes import InteractionNeeded
 
 
 @dataclass
@@ -622,6 +623,54 @@ class TurnRunner:
                                             pass
                                         cancelled_during_tools = True
                                         break
+                                    except InteractionNeeded as need:
+                                        # Central mid-turn interaction handling for tools
+                                        broker = None
+                                        try:
+                                            broker = self.session.get_user_data('__interaction_broker__')
+                                        except Exception:
+                                            broker = None
+                                        prompt_fn = getattr(broker, 'prompt', None)
+                                        if not callable(prompt_fn):
+                                            # Fallback for older adapters
+                                            try:
+                                                prompt_fn = self.session.get_user_data('__interaction_prompt__')
+                                            except Exception:
+                                                prompt_fn = None
+                                        if callable(prompt_fn):
+                                            try:
+                                                self.session.ui.emit('status', {'message': f"Tool requires input: {need.kind}", 'scope': 'tool'})
+                                            except Exception:
+                                                pass
+                                            response = prompt_fn(need)
+                                            if response is None:
+                                                cancelled_during_tools = True
+                                                try:
+                                                    self.session.ui.emit('warning', {'message': 'Tool confirmation cancelled.', 'scope': 'tool'})
+                                                except Exception:
+                                                    pass
+                                                break
+                                            # Drive resume loop in case of multi-step confirmations
+                                            token = getattr(need, 'state_token', '__unknown__')
+                                            while True:
+                                                try:
+                                                    action.resume(token, response)
+                                                    break
+                                                except InteractionNeeded as need2:
+                                                    response = prompt_fn(need2)
+                                                    if response is None:
+                                                        cancelled_during_tools = True
+                                                        try:
+                                                            self.session.ui.emit('warning', {'message': 'Tool confirmation cancelled.', 'scope': 'tool'})
+                                                        except Exception:
+                                                            pass
+                                                        break
+                                                    token = getattr(need2, 'state_token', '__unknown__')
+                                            if cancelled_during_tools:
+                                                break
+                                            # Resumed successfully; proceed to emit tool result for this call_id
+                                        # No handler available: re-raise for outer adapters
+                                        raise
                                     except Exception:
                                         # Fallback: try once more without output suppression
                                         try:
@@ -656,6 +705,50 @@ class TurnRunner:
                                                 pass
                                             cancelled_during_tools = True
                                             break
+                                        except InteractionNeeded as need:
+                                            broker = None
+                                            try:
+                                                broker = self.session.get_user_data('__interaction_broker__')
+                                            except Exception:
+                                                broker = None
+                                            prompt_fn = getattr(broker, 'prompt', None)
+                                            if not callable(prompt_fn):
+                                                try:
+                                                    prompt_fn = self.session.get_user_data('__interaction_prompt__')
+                                                except Exception:
+                                                    prompt_fn = None
+                                            if callable(prompt_fn):
+                                                try:
+                                                    self.session.ui.emit('status', {'message': f"Tool requires input: {need.kind}", 'scope': 'tool'})
+                                                except Exception:
+                                                    pass
+                                                response = prompt_fn(need)
+                                                if response is None:
+                                                    cancelled_during_tools = True
+                                                    try:
+                                                        self.session.ui.emit('warning', {'message': 'Tool confirmation cancelled.', 'scope': 'tool'})
+                                                    except Exception:
+                                                        pass
+                                                    break
+                                                token = getattr(need, 'state_token', '__unknown__')
+                                                while True:
+                                                    try:
+                                                        action.resume(token, response)
+                                                        break
+                                                    except InteractionNeeded as need2:
+                                                        response = prompt_fn(need2)
+                                                        if response is None:
+                                                            cancelled_during_tools = True
+                                                            try:
+                                                                self.session.ui.emit('warning', {'message': 'Tool confirmation cancelled.', 'scope': 'tool'})
+                                                            except Exception:
+                                                                pass
+                                                            break
+                                                        token = getattr(need2, 'state_token', '__unknown__')
+                                                if cancelled_during_tools:
+                                                    break
+                                                # Resumed successfully; proceed to emit tool result for this call_id
+                                            raise
                                         except Exception as err:
                                             raise err
                             ran_any = True
@@ -810,16 +903,92 @@ class TurnRunner:
                 except Exception:
                     cmds = []
                 if cmds:
-                    # Allow InteractionNeeded to bubble up for Web/TUI handoff
-                    ac.run(text or '')
-                    ran_any = True
-        except Exception as e:
-            try:
-                from base_classes import InteractionNeeded
-                if isinstance(e, InteractionNeeded):
-                    raise
-            except Exception:
-                pass
+                    # Run pseudo-tools and handle mid-turn InteractionNeeded via the interaction broker
+                    try:
+                        ac.run(text or '')
+                        ran_any = True
+                    except InteractionNeeded as need:
+                        # Expect assistant_commands to annotate need.spec with __action__/__args__/__content__
+                        spec = getattr(need, 'spec', {}) or {}
+                        action_name = spec.get('__action__')
+                        action_args = spec.get('__args__')
+                        action_content = spec.get('__content__')
+                        action = None
+                        try:
+                            action = self.session.get_action(action_name) if action_name else None
+                        except Exception:
+                            action = None
+                        # Find broker
+                        broker = None
+                        try:
+                            broker = self.session.get_user_data('__interaction_broker__')
+                        except Exception:
+                            broker = None
+                        prompt_fn = getattr(broker, 'prompt', None)
+                        if not callable(prompt_fn):
+                            # No TUI/Web prompt available; re-raise to outer handler
+                            raise
+                        # Establish a tool scope so prints (diffs, statuses) render in a tool bubble
+                        try:
+                            scope_callable = getattr(self.session.utils.output, 'tool_scope', None)
+                        except Exception:
+                            scope_callable = None
+                        if callable(scope_callable):
+                            scope_cm = scope_callable((action_name or 'tool'), call_id=None, title=None)
+                        else:
+                            from contextlib import nullcontext
+                            scope_cm = nullcontext()
+                        try:
+                            # Remember scope so auto-submit context grouping uses the tool bubble
+                            self.session.set_user_data('__last_tool_scope__', {
+                                'tool_name': (action_name or 'tool'),
+                                'tool_call_id': None,
+                                'title': None,
+                            })
+                        except Exception:
+                            pass
+                        with scope_cm:
+                            try:
+                                self.session.ui.emit('status', {'message': f"Tool requires input: {need.kind}", 'scope': 'tool'})
+                            except Exception:
+                                pass
+                            response = prompt_fn(need)
+                            if response is None or not action:
+                                try:
+                                    self.session.ui.emit('warning', {'message': 'Tool confirmation cancelled.', 'scope': 'tool'})
+                                except Exception:
+                                    pass
+                                return True
+                            token = getattr(need, 'state_token', '__unknown__')
+                            # Rehydrate action state so resume() has args/content
+                            try:
+                                if isinstance(action_args, dict):
+                                    setattr(action, '_current_args', action_args)
+                                if action_content is not None:
+                                    setattr(action, '_current_content', action_content)
+                            except Exception:
+                                pass
+                            # Drive resume loop for multi-step interactions
+                            while True:
+                                try:
+                                    action.resume(token, {'response': response, 'state': {'args': action_args, 'content': action_content}})
+                                    break
+                                except InteractionNeeded as need2:
+                                    try:
+                                        self.session.ui.emit('status', {'message': f"Tool requires input: {need2.kind}", 'scope': 'tool'})
+                                    except Exception:
+                                        pass
+                                    response = prompt_fn(need2)
+                                    if response is None:
+                                        try:
+                                            self.session.ui.emit('warning', {'message': 'Tool confirmation cancelled.', 'scope': 'tool'})
+                                        except Exception:
+                                            pass
+                                        return True
+                                    token = getattr(need2, 'state_token', '__unknown__')
+                        ran_any = True
+        except Exception:
+            pass
         return ran_any
 
     # ---- Utilities -----------------------------------------------------
