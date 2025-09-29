@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     python3-matplotlib \
     python3-pytest \
     python3-pytest-cov \
+    python3-yaml \
     # Network tools
     dnsutils \
     curl \
@@ -25,7 +26,7 @@ RUN apt-get update && apt-get install -y \
     jq \
     xmlstarlet \
     vim \
-    miller \ 
+    miller \
     nodejs \
     npm \
     build-essential \

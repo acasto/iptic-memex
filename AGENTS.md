@@ -370,8 +370,7 @@ Gating and CLI‑only flows
 
 - Streaming + state:
   - Provider captures `response.id` from streaming events (`response.created`/`response.completed`).
-  - If `[OpenAIResponses].store = true` and `use_previous_response = true`, the next turn includes `previous_response_id` automatically.
-  - To reduce tokens while chaining, enable `chain_minimize_input = true` to send only the latest window (last user message, or `function_call` + `function_call_output`).
+  - If `[OpenAIResponses].store = true` and `use_previous_response = true`, the next turn includes `previous_response_id` automatically and only the new turns after the last assistant reply are sent (tool calls + outputs or fresh user input).
 
 - Tool schema (function tools):
   - Built from the runtime registry assembled from tool actions (see above).
@@ -386,8 +385,7 @@ Gating and CLI‑only flows
 - Config quickstart:
   - models.ini: `provider = OpenAIResponses`; set `stream = true`.
   - config.ini `[OpenAIResponses]`:
-    - `store = true`, `use_previous_response = true` to enable stateful chaining.
-    - `chain_minimize_input = true` to avoid resending history while chaining.
+    - `store = true`, `use_previous_response = true` to enable stateful chaining with automatic minimization of repeated context.
     - MCP pass‑through uses `[MCP].active` as the gate (no provider‑local toggle). When active and the provider supports pass‑through, MCP servers are sent via built‑ins; configure servers with `mcp_servers` and optional per‑server keys (see below).
   - Reasoning: set `reasoning = true` and `reasoning_effort = minimal|low|medium|high` on the model.
 
@@ -400,8 +398,7 @@ Gating and CLI‑only flows
 - Key config (config.ini → `[OpenAIResponses]`):
   - `active = True`
   - `store = False` (default in repo; set to `True` to enable server‑side chaining)
-  - `use_previous_response = False` (set `True` to pass `previous_response_id` when available)
-  - `chain_minimize_input = True` (send only the latest user/tool window when chaining)
+  - `use_previous_response = False` (set `True` to pass `previous_response_id` when available and reuse server-side state)
   - `tool_mode = official` (uses the dynamic canonical tool registry)
   - MCP pass‑through: controlled by `[MCP].active`; configure with `mcp_servers` and per‑server options.
 
@@ -442,7 +439,7 @@ max_completion_tokens = 4096
 
 - Streaming + state:
   - Provider captures streaming `response.id` and applies it as `previous_response_id` on the next request when `store=true` and `use_previous_response=true`.
-  - With `chain_minimize_input=true`, only the latest window is sent during chaining: either the last user message or `function_call` + `function_call_output` for tool loops.
+- When chaining is active, only the latest window is sent: either the last user message(s) or the `function_call` + `function_call_output` pair for tool loops.
 
 - Notes and caveats:
   - `verbosity` is not a Responses request parameter; omit it.

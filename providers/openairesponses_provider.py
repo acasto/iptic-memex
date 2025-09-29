@@ -201,30 +201,28 @@ class OpenAIResponsesProvider(APIProvider):
         import json
 
         # When chaining with previous_response_id and minimization is enabled,
-        # include only the latest interaction window (tool call + output), or
-        # the last user message if no tools are involved.
+        # include only the turns that occurred after the last assistant reply
+        # (tool call + outputs, or any new user/context messages).
         if chain_minimize and turns:
-            idx_tool_assistant = None
-            idx_last_tool = None
+            last_assistant_idx = None
             for i in range(len(turns) - 1, -1, -1):
-                t = turns[i]
-                if idx_last_tool is None and t.get('role') == 'tool':
-                    idx_last_tool = i
-                if idx_tool_assistant is None and t.get('role') == 'assistant' and 'tool_calls' in t:
-                    idx_tool_assistant = i
-                if idx_tool_assistant is not None and idx_last_tool is not None:
+                if turns[i].get('role') == 'assistant':
+                    last_assistant_idx = i
                     break
 
-            if idx_last_tool is not None and idx_tool_assistant is not None and idx_tool_assistant < idx_last_tool:
-                # Include only the assistant function_call(s) and subsequent tool outputs
-                window = turns[idx_tool_assistant:]
+            if last_assistant_idx is not None:
+                start_idx = last_assistant_idx + 1
+                window = turns[start_idx:] if start_idx < len(turns) else []
+                if not window:
+                    # Fallback: include the last assistant when no newer turns exist
+                    window = turns[last_assistant_idx:last_assistant_idx + 1]
+                # If the next interaction is a tool output, include the assistant
+                # turn that initiated the tool call so we send function_call + output.
+                if window and window[0].get('role') == 'tool':
+                    window = [turns[last_assistant_idx]] + window
             else:
-                # Include only the last user message
-                # Find last user turn
-                j = len(turns) - 1
-                while j >= 0 and turns[j].get('role') != 'user':
-                    j -= 1
-                window = [turns[j]] if j >= 0 else [turns[-1]]
+                # No assistant messages yet; include the last turn as a best-effort window
+                window = [turns[-1]]
         else:
             window = turns
 
@@ -252,8 +250,6 @@ class OpenAIResponsesProvider(APIProvider):
                         })
                 except Exception:
                     pass
-                # Do not include assistant text in input; continue to next turn
-                continue
             # Convert tool outputs to function_call_output items
             if role == 'tool':
                 call_id = turn.get('tool_call_id') or turn.get('id')
@@ -274,9 +270,6 @@ class OpenAIResponsesProvider(APIProvider):
                     input_items.append({'type': 'function_call_output', 'call_id': call_id, 'output': output_json})
                 # Skip normal message handling for tool turns
                 continue
-            # Skip any other assistant messages
-            if role == 'assistant':
-                continue
             # Combine primary text + any non-image contexts into a single text block
             text_parts: List[str] = []
             # Primary message text (the canonical field used across the app)
@@ -285,7 +278,7 @@ class OpenAIResponsesProvider(APIProvider):
                 text_parts.append(msg_text)
 
             # Collect non-image contexts into a text summary
-            if 'context' in turn and turn['context']:
+            if role == 'user' and 'context' in turn and turn['context']:
                 other_contexts = []
                 for ctx in turn['context']:
                     if ctx.get('type') == 'image':
@@ -300,8 +293,10 @@ class OpenAIResponsesProvider(APIProvider):
             if role:
                 merged = "\n\n".join([p for p in text_parts if isinstance(p, str)])
                 if merged.strip() == '':
+                    # Avoid sending empty strings which the API rejects; fall back to a single space.
                     merged = ' '
-                input_items.append({'role': role, 'content': merged})
+                if role in ('user', 'assistant'):
+                    input_items.append({'role': role, 'content': merged})
 
         return input_items
 
@@ -317,10 +312,8 @@ class OpenAIResponsesProvider(APIProvider):
             p = self.session.get_params()
             instructions = self._assemble_instructions()
             # Determine if we'll chain with previous_response_id and minimize input
-            chain_minimize = False
             will_chain = bool(p.get('store') and p.get('use_previous_response') and self._last_response_id)
-            if will_chain and bool(p.get('chain_minimize_input', True)):
-                chain_minimize = True
+            chain_minimize = will_chain
             input_items = self._assemble_input(chain_minimize=chain_minimize)
             # Provider-specific start log (additional metadata)
             try:
@@ -331,7 +324,7 @@ class OpenAIResponsesProvider(APIProvider):
                     'stream': bool(p.get('stream', False)),
                     'store': bool(p.get('store', False)),
                     'use_previous_response': bool(p.get('use_previous_response', False)),
-                    'chain_minimize_input': bool(p.get('chain_minimize_input', False)),
+                    'chain_minimize': chain_minimize,
                 }
                 self.session.utils.logger.provider_start(meta, component='providers.openairesponses')
             except Exception:
@@ -379,7 +372,7 @@ class OpenAIResponsesProvider(APIProvider):
             if auto_approve and self._last_response_id:
                 api_params['store'] = True
             # Optional: use previous response id when storing is enabled
-            if (api_params.get('store') and (p.get('use_previous_response') or auto_approve) and self._last_response_id):
+            if will_chain and self._last_response_id:
                 api_params['previous_response_id'] = self._last_response_id
 
             # Token cap: Responses uses 'max_output_tokens'

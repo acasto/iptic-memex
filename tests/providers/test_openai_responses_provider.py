@@ -450,7 +450,7 @@ def test_streaming_usage_and_cost(monkeypatch):
     assert round(cost['output_cost'], 6) == 0.012
     assert round(cost['total_cost'], 6) == 0.016
 
-def test_chain_minimize_input_window(monkeypatch):
+def test_chain_minimize_window_includes_tool_call(monkeypatch):
     mod = load_provider_module()
     class CaptureClient(FakeResponsesClient):
         def create(self, **kwargs):
@@ -472,13 +472,80 @@ def test_chain_minimize_input_window(monkeypatch):
             ]},
             {'role': 'tool', 'message': '4', 'tool_call_id': 'fc_x'},
         ],
-        params={'provider': 'OpenAIResponses', 'api_key': 'x', 'model_name': 'gpt-5', 'store': True, 'use_previous_response': True, 'chain_minimize_input': True},
+        params={'provider': 'OpenAIResponses', 'api_key': 'x', 'model_name': 'gpt-5', 'store': True, 'use_previous_response': True},
     )
     prov = mod.OpenAIResponsesProvider(session)
     prov._last_response_id = 'resp_prev'
     _ = prov.chat()
     items = prov._client.responses.last_params.get('input')
-    # With chain_minimize_input, we should only include function_call + function_call_output, not the earlier user
+    # When chaining, we only include the assistant function_call + tool output, not the earlier user turn
     types = [it.get('type') for it in items if isinstance(it, dict)]
     assert 'function_call' in types and 'function_call_output' in types
     assert all(t != 'message' for t in types)
+
+
+def test_chain_minimize_window_includes_all_new_user_turns(monkeypatch):
+    mod = load_provider_module()
+
+    class CaptureClient(FakeResponsesClient):
+        def create(self, **kwargs):
+            self.last_params = kwargs
+            return FakeResponse(output_text="ok")
+
+    class CaptureOpenAI(FakeOpenAI):
+        def __init__(self, **options):
+            super().__init__(**options)
+            self.responses = CaptureClient()
+
+    monkeypatch.setattr(mod, 'OpenAI', CaptureOpenAI)
+
+    session = FakeSession(
+        prompt_text=None,
+        chat_turns=[
+            {'role': 'user', 'message': 'earlier user'},
+            {'role': 'assistant', 'message': 'prior reply'},
+            {'role': 'user', 'message': 'follow-up question'},
+            {'role': 'user', 'message': 'extra context'},
+        ],
+        params={'provider': 'OpenAIResponses', 'api_key': 'x', 'model_name': 'gpt-5', 'store': True, 'use_previous_response': True},
+    )
+
+    prov = mod.OpenAIResponsesProvider(session)
+    prov._last_response_id = 'resp_prev'
+    _ = prov.chat()
+
+    items = prov._client.responses.last_params.get('input')
+    user_contents = [it.get('content') for it in items if isinstance(it, dict) and it.get('role') == 'user']
+    assert user_contents == ['follow-up question', 'extra context']
+
+
+def test_full_history_includes_assistant_when_not_chaining(monkeypatch):
+    mod = load_provider_module()
+
+    class CaptureClient(FakeResponsesClient):
+        def create(self, **kwargs):
+            self.last_params = kwargs
+            return FakeResponse(output_text="ok")
+
+    class CaptureOpenAI(FakeOpenAI):
+        def __init__(self, **options):
+            super().__init__(**options)
+            self.responses = CaptureClient()
+
+    monkeypatch.setattr(mod, 'OpenAI', CaptureOpenAI)
+
+    session = FakeSession(
+        prompt_text=None,
+        chat_turns=[
+            {'role': 'user', 'message': 'hello'},
+            {'role': 'assistant', 'message': 'hi there'},
+            {'role': 'user', 'message': 'second question'},
+        ],
+        params={'provider': 'OpenAIResponses', 'api_key': 'x', 'model_name': 'gpt-5'},
+    )
+
+    prov = mod.OpenAIResponsesProvider(session)
+    _ = prov.chat()
+    items = prov._client.responses.last_params.get('input')
+    roles = [it.get('role') for it in items if isinstance(it, dict) and it.get('role')]
+    assert roles == ['user', 'assistant', 'user']
