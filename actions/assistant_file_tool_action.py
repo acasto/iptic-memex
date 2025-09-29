@@ -30,6 +30,31 @@ class AssistantFileToolAction(StepwiseAction):
         self.token_counter = session.get_action('count_tokens')
         # Legacy subprocess runner (memex) no longer required; internal runs preferred
 
+    @staticmethod
+    def _display_name(path: str) -> str:
+        """Return a user-friendly display name for a file path."""
+        try:
+            abs_path = os.path.abspath(path)
+        except Exception:
+            return os.path.basename(path)
+        try:
+            cwd = os.path.abspath(os.getcwd())
+        except Exception:
+            return os.path.basename(abs_path)
+        try:
+            common = os.path.commonpath([abs_path, cwd])
+        except Exception:
+            return os.path.basename(abs_path)
+        if common != cwd:
+            return os.path.basename(abs_path)
+        try:
+            rel = os.path.relpath(abs_path, cwd)
+        except Exception:
+            return os.path.basename(abs_path)
+        if rel.startswith('..'):
+            return os.path.basename(abs_path)
+        return rel
+
     # ---- Dynamic tool registry metadata ----
     @classmethod
     def tool_name(cls) -> str:
@@ -205,10 +230,7 @@ class AssistantFileToolAction(StepwiseAction):
                     # MarkItDown added a file context; emit a single tool-scoped context event here
                     try:
                         import os as _os
-                        try:
-                            display_name = _os.path.relpath(_os.path.abspath(resolved_path), _os.getcwd())
-                        except Exception:
-                            display_name = os.path.basename(resolved_path)
+                        display_name = self._display_name(resolved_path)
                         abs_path = _os.path.abspath(resolved_path)
                         # Prefer MarkItDown index
                         md_idx = self.session.get_user_data('__markitdown_index__') or {}
@@ -279,10 +301,7 @@ class AssistantFileToolAction(StepwiseAction):
                 self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Failed to read file: {filename}'})
                 return
             import os as _os
-            try:
-                display_name = _os.path.relpath(_os.path.abspath(resolved_path), _os.getcwd())
-            except Exception:
-                display_name = os.path.basename(resolved_path)
+            display_name = self._display_name(resolved_path)
             self.session.add_context('file', {'name': display_name, 'content': str(content)})
             try:
                 # Emit structured context event with token count
@@ -742,6 +761,12 @@ class AssistantFileToolAction(StepwiseAction):
 
     # ---- Confirmation helpers ---------------------------------------------
     def _needs_confirmation(self, mode: str, filename: str, args: Dict) -> bool:
+        try:
+            policy = self.session.get_agent_write_policy()
+        except Exception:
+            policy = None
+        if policy is not None and mode in {'write', 'append', 'edit'}:
+            return False
         try:
             wc = self.session.get_tools().get('write_confirm', True)
         except Exception:

@@ -55,6 +55,9 @@ class DummySession:
         self.ui = DummyUI()
         self._contexts = []
         self._actions = {}
+        self.session_uid = 'sandbox-session'
+        self.user_data = {'session_uid': self.session_uid}
+        self._cleanup_callbacks = []
 
     # Minimal config accessors used by actions
     def get_option(self, section: str, option: str, fallback=None):
@@ -91,6 +94,9 @@ class DummySession:
 
     def set_flag(self, *a, **k):
         pass
+
+    def register_cleanup_callback(self, callback):
+        self._cleanup_callbacks.append(callback)
 
 
 def test_fs_handler_resolves_relative_paths_inside_base_dir(tmp_path: Path):
@@ -162,4 +168,3 @@ def test_docker_tool_mounts_base_dir_without_running_docker(tmp_path: Path):
     assert any(arg.startswith(f"{base_dir}:/workspace") for arg in cmdline)
     # For ephemeral env, run command is `docker run --rm ... -w /workspace <image> /bin/bash -c ...`
     assert '-w' in cmdline and '/workspace' in cmdline
-

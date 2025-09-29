@@ -41,6 +41,9 @@ class DummySession:
         self._agent_ephemeral = agent_ephemeral
         self.utils = DummyUtils()
         self.ui = DummyUI()
+        self.session_uid = 'dummy-session'
+        self.user_data = {'session_uid': self.session_uid}
+        self._cleanup_callbacks = []
 
     def in_agent_mode(self) -> bool:
         return True
@@ -66,6 +69,9 @@ class DummySession:
         if name == 'assistant_fs_handler':
             return types.SimpleNamespace()
         return types.SimpleNamespace()
+
+    def register_cleanup_callback(self, callback):
+        self._cleanup_callbacks.append(callback)
 
 
 def test_agent_forces_ephemeral_even_when_tools_requests_persistent(tmp_path: Path):

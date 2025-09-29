@@ -14,3 +14,4 @@ CLAUDE.md
 .aiexclude
 PLAN.md
 logs/*
+.assistant-tmp

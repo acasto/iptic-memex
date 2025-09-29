@@ -16,7 +16,6 @@
   6. Last resort → regenerate the file entirely
 
 * CONTAINER CONSTRAINTS & EDITING RULES:
-  - Each call to `cmd` runs in fresh container - use working directory for temp files: `./temp.js` not `/tmp/temp.js`, but be careful about temp file names possibly conflicting with existing files.
   - Always verify changes: `grep -A3 -B3 "pattern"` or `head/tail` after edits
   - Combine multi-step operations in single `cmd` when using temp files
   - For syntax-aware searches, default to ast-grep over grep/rg unless explicitly requested plain text

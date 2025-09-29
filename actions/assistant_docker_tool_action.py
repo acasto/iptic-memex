@@ -2,7 +2,8 @@ from base_classes import InteractionAction
 import subprocess
 import shlex
 import os
-from typing import Tuple, Optional
+import shutil
+from typing import Tuple, Optional, Set
 from utils.tool_args import get_str
 
 
@@ -21,6 +22,8 @@ class AssistantDockerToolAction(InteractionAction):
         self.base_dir = os.getcwd() if base_dir in ('working', '.') else os.path.expanduser(base_dir)
 
         # Initialize environment settings
+        self._tmp_created_dirs: Set[str] = set()
+        self._tmp_cleanup_registered: Set[str] = set()
         self._refresh_environment_config()
 
     # ---- Dynamic tool registry metadata ----
@@ -75,6 +78,103 @@ class AssistantDockerToolAction(InteractionAction):
         self.docker_run_options = self.session.get_option(env_section, 'docker_run_options', '')
         self.container_name = None if not self.is_persistent else \
             self.session.get_option(env_section, 'docker_name', f'assistant-{self.docker_env}')
+
+        # Temp directory handling
+        default_mount = 'bind' if not self.is_persistent else 'none'
+        tmp_mount = self.session.get_option(env_section, 'tmp_mount', default_mount)
+        if isinstance(tmp_mount, str):
+            cleaned = tmp_mount.strip().lower()
+            self.tmp_mount = cleaned or default_mount
+        else:
+            self.tmp_mount = default_mount
+        tmp_value = self.session.get_option(env_section, 'tmp_value', '.assistant-tmp')
+        self.tmp_value = tmp_value if isinstance(tmp_value, str) and tmp_value else '.assistant-tmp'
+        set_tmpdir_env = self.session.get_option(env_section, 'set_tmpdir_env', True)
+        self.set_tmpdir_env = self._coerce_bool(set_tmpdir_env, default=True)
+
+    @staticmethod
+    def _coerce_bool(value, default=False):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in ('1', 'true', 'yes', 'on'):
+                return True
+            if lowered in ('0', 'false', 'no', 'off'):
+                return False
+        return default
+
+    def _tmp_mount_args(self) -> list[str]:
+        mode = (self.tmp_mount or 'none').lower()
+        if mode == 'none':
+            return []
+        if mode == 'bind':
+            host_base = self.tmp_value or '.assistant-tmp'
+            session_id = getattr(self.session, 'session_uid', None) or getattr(self.session, 'user_data', {}).get('session_uid')
+            host_base = os.path.abspath(os.path.join(self.base_dir, os.path.expanduser(host_base)))
+            host_dir = host_base
+            if session_id:
+                host_dir = os.path.join(host_base, f"{session_id}.tmp")
+
+            try:
+                created = not os.path.isdir(host_dir)
+                os.makedirs(host_dir, exist_ok=True)
+                if created:
+                    self._tmp_created_dirs.add(os.path.realpath(host_dir))
+                try:
+                    os.chmod(host_dir, 0o1777)
+                except Exception:
+                    pass
+            except Exception:
+                # If we cannot ensure the directory, skip mounting to avoid Docker failure
+                return []
+
+            if not os.path.isdir(host_dir):
+                return []
+
+            self._register_tmp_cleanup(host_dir, host_base)
+            return ['-v', f'{host_dir}:/tmp']
+
+        if mode == 'named':
+            volume = self.tmp_value or 'assistant-tmp'
+            session_id = getattr(self.session, 'session_uid', None) or getattr(self.session, 'user_data', {}).get('session_uid')
+            if session_id:
+                volume = f"{volume}-{session_id}"
+            return ['-v', f'{volume}:/tmp']
+
+        if mode == 'tmpfs':
+            return ['--tmpfs', '/tmp:rw,mode=1777']
+
+        return []
+
+    def _register_tmp_cleanup(self, host_dir: str, host_base: str) -> None:
+        if not host_dir:
+            return
+        real_dir = os.path.realpath(host_dir)
+        if real_dir in self._tmp_cleanup_registered:
+            return
+        if real_dir not in self._tmp_created_dirs:
+            return
+        real_base = os.path.realpath(host_base)
+        try:
+            common = os.path.commonpath([real_dir, real_base])
+        except Exception:
+            return
+        if common != real_base or real_dir == real_base:
+            return
+
+        def _cleanup():
+            try:
+                if os.path.isdir(real_dir):
+                    shutil.rmtree(real_dir)
+            except FileNotFoundError:
+                pass
+
+        try:
+            self.session.register_cleanup_callback(_cleanup)
+            self._tmp_cleanup_registered.add(real_dir)
+        except Exception:
+            pass
 
     def _check_container_exists(self) -> bool:
         """Check if the named container exists and is running"""
@@ -141,12 +241,17 @@ class AssistantDockerToolAction(InteractionAction):
             mount_ro = self.session.get_option(self.docker_env.upper(), 'mount_readonly', False)
             mount_opts = ':ro' if mount_ro else ''
             docker_cmd.extend(["-v", f"{self.base_dir}:/workspace{mount_opts}"])
+            docker_cmd.extend(self._tmp_mount_args())
+            if self.set_tmpdir_env:
+                docker_cmd.extend(["-e", "TMPDIR=/tmp"])
             docker_cmd.extend(["-w", "/workspace"])
             docker_cmd.append(self.docker_image)
             docker_cmd.extend(["/bin/bash", "-c", command_str])
         else:
             # Build persistent docker exec command
             docker_cmd = ["docker", "exec"]
+            if self.set_tmpdir_env:
+                docker_cmd.extend(["-e", "TMPDIR=/tmp"])
             docker_cmd.extend(["-w", "/workspace"])
             docker_cmd.append(self.container_name)
             docker_cmd.extend(["/bin/bash", "-c", command_str])

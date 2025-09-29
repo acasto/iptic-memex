@@ -18,7 +18,14 @@ class LoadFileAction(StepwiseAction):
         self.tc = session.utils.tab_completion
         self.tc.set_session(session)
         self.utils = session.utils
-        self.token_counter = session.get_action('count_tokens')
+        getter = getattr(session, 'get_action', None)
+        token_counter = None
+        if callable(getter):
+            try:
+                token_counter = getter('count_tokens')
+            except Exception:
+                token_counter = None
+        self.token_counter = token_counter
 
     MARKITDOWN_EXTENSIONS = (
         '.pdf',

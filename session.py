@@ -1,7 +1,10 @@
 from __future__ import annotations
-import os
+
 import importlib.util
-from typing import Dict, List, Any, Optional, Literal, TypedDict, cast, Iterable, Tuple
+import os
+import uuid
+from typing import Dict, List, Any, Optional, Literal, TypedDict, cast, Iterable, Tuple, Callable
+
 from config_manager import SessionConfig
 from component_registry import ComponentRegistry
 
@@ -20,6 +23,14 @@ class Session:
         self.usage_stats = {}
         self.user_data = {}  # For arbitrary session data
         self._registry = registry
+        # Session-scoped identifier and cleanup hooks
+        try:
+            self.session_uid = uuid.uuid4().hex
+        except Exception:
+            self.session_uid = None
+        if self.session_uid:
+            self.user_data['session_uid'] = self.session_uid
+        self._cleanup_callbacks: list[Callable[[], None]] = []
         try:
             # Link back so registry can construct providers with this session
             setattr(self._registry, 'session', self)
@@ -78,6 +89,12 @@ class Session:
         if contexts:
             return contexts[0]  # Return first context for backward compatibility
         return None
+
+    def register_cleanup_callback(self, callback: Callable[[], None]) -> None:
+        """Register a callback to run during session teardown (handle_exit)."""
+        if not callable(callback):
+            return
+        self._cleanup_callbacks.append(callback)
 
     def get_contexts(self, context_type: str = None):
         """Get contexts - backward compatibility for process_contexts action"""
@@ -517,6 +534,17 @@ class Session:
                 self.provider.cleanup()
             except Exception as e:
                 self.utils.output.error(f"Error during provider cleanup: {e}")
+
+        # Invoke registered cleanup callbacks
+        while self._cleanup_callbacks:
+            callback = self._cleanup_callbacks.pop()
+            try:
+                callback()
+            except Exception as e:
+                try:
+                    self.utils.output.warning(f"Cleanup callback failed: {e}")
+                except Exception:
+                    pass
 
         # Persist stats if available
         try:
