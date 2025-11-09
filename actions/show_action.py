@@ -177,6 +177,17 @@ class ShowAction(InteractionAction):
                     else:
                         entry.append("    Message: (empty)")
 
+                    try:
+                        reasoning_text = message.get('reasoning_content') if isinstance(message, dict) else None
+                    except Exception:
+                        reasoning_text = None
+                    if reasoning_text:
+                        preview = reasoning_text[:200]
+                        suffix = '…' if len(reasoning_text) > 200 else ''
+                        entry.append("    Reasoning:")
+                        entry.append(f"      {preview}{suffix}")
+                        entry.append(f"      ({len(reasoning_text)} chars total)")
+
                     # Surface tool-calls metadata for assistant messages (official tools)
                     try:
                         if role == 'assistant' and 'tool_calls' in message and message['tool_calls']:

@@ -383,7 +383,20 @@ class TurnRunner:
             chat = self.session.get_context("chat")
             if chat is None:
                 chat = self.session.add_context("chat")
-            chat.add(raw_text or "", "assistant")
+            extra = None
+            provider = None
+            try:
+                provider = self.session.get_provider()
+            except Exception:
+                provider = None
+            if provider and hasattr(provider, 'get_current_reasoning'):
+                try:
+                    reasoning = provider.get_current_reasoning()
+                    if reasoning:
+                        extra = {'reasoning_content': reasoning}
+                except Exception:
+                    extra = None
+            chat.add(raw_text or "", "assistant", extra=extra)
         except Exception:
             pass
 
@@ -433,11 +446,21 @@ class TurnRunner:
 
                     try:
                         chat_ctx = self.session.get_context('chat') or self.session.add_context('chat')
+                        last_turn = None
+                        try:
+                            history = chat_ctx.get()
+                            if history:
+                                last_turn = history[-1]
+                        except Exception:
+                            last_turn = None
                         try:
                             chat_ctx.remove_last_message()
                         except Exception:
                             pass
-                        chat_ctx.add('', role='assistant', extra={'tool_calls': tool_calls})
+                        extra_fields = {'tool_calls': tool_calls}
+                        if last_turn and 'reasoning_content' in last_turn:
+                            extra_fields['reasoning_content'] = last_turn['reasoning_content']
+                        chat_ctx.add('', role='assistant', extra=extra_fields)
                     except Exception:
                         pass
 
