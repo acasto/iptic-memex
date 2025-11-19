@@ -55,7 +55,7 @@ anthropic
 ```
 ### Google
 ```
-google-generativeai
+google-genai
 ```
 ### Cohere
 ```
@@ -73,7 +73,7 @@ Create a custom `requirements.txt`:
 ```
 openai
 anthropic
-google-generativeai
+google-genai
 click
 Pygments
 requests

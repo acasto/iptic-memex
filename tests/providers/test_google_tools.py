@@ -56,5 +56,32 @@ def test_google_get_tool_calls_parses_candidates_function_call():
     calls = gp.get_tool_calls()
     assert isinstance(calls, list) and len(calls) == 1
     assert calls[0]['name'] == 'cmd'
+    assert calls[0]['id'].startswith('google-func-')
     assert calls[0]['arguments'].get('command') == 'echo'
 
+
+def test_build_contents_maps_function_response():
+    sess = FakeSession('official')
+    gp = GoogleProvider(sess)
+    messages = [
+        {'role': 'user', 'parts': [{'text': 'run cmd'}]},
+        {
+            'role': 'assistant',
+            'parts': [{'text': ''}],
+            'tool_calls': [
+                {'id': 'google-func-1', 'name': 'cmd', 'arguments': {'command': 'ls'}}
+            ]
+        },
+        {
+            'role': 'tool',
+            'parts': [{'text': 'ok'}],
+            'tool_call_id': 'google-func-1',
+            'raw_message': 'ok'
+        }
+    ]
+
+    contents = gp._build_contents(messages)
+    assert len(contents) == 3
+    assert contents[1].parts[0].function_call.name == 'cmd'
+    assert contents[2].parts[0].function_response.name == 'cmd'
+    assert contents[2].parts[0].function_response.response == {'output': 'ok'}
