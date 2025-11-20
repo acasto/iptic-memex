@@ -157,8 +157,15 @@ class ProcessContextsAction(InteractionAction):
                 continue
             elif f['type'] != 'project':
                 file = f['context'].get()
+                name = file.get('name')
+                content = file.get('content', '')
+                # Special-case turn status contexts: inject as plain text without tags
+                if name == 'turn_status':
+                    if content:
+                        turn_context += f"{content}\n"
+                    continue
                 if 'content' in file:
-                    turn_context += f"<|results:{file['name']}|>\n{file['content']}\n<|end_file:{file['name']}|>\n"
+                    turn_context += f"<|results:{name}|>\n{content}\n<|end_file:{name}|>\n"
             else:
                 is_project = True
                 project = f['context'].get()

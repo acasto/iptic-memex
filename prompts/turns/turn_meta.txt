@@ -1,0 +1,1 @@
+<|turn_metadata|>index={{turn:index}}|id={{message_id}}|timestamp={{date}}<|end_turn_metadata|>

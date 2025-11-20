@@ -10,6 +10,14 @@ class PromptTemplateAction(InteractionAction):
         self.session = session
         self.template_pattern = r"\{\{([^}]+)\}\}"
 
+    def _get_turn_meta(self):
+        """Return per-turn metadata injected by callers, if any."""
+        try:
+            meta = self.session.get_user_data("__turn_meta__")  # type: ignore[attr-defined]
+        except Exception:
+            meta = None
+        return meta if isinstance(meta, dict) else {}
+
     def _resolve_variable(self, var):
         """
         Resolve a template variable to its value.
@@ -20,7 +28,12 @@ class PromptTemplateAction(InteractionAction):
         # Handle simple variables first
         if len(parts) == 1:
             if var == "date":
-                return datetime.now().isoformat()
+                return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            if var == "message_id":
+                turn_meta = self._get_turn_meta()
+                value = turn_meta.get("id")
+                return str(value) if value is not None else None
 
             # Check session params
             value = self.session.get_params().get(var)
@@ -56,11 +69,19 @@ class PromptTemplateAction(InteractionAction):
         elif namespace == "date":
             if len(parts) > 1:
                 return datetime.now().strftime(":".join(parts[1:]))
-            return datetime.now().isoformat()
+            # Use a cleaner format (no microseconds, space separator)
+            return datetime.now().isoformat(sep=" ", timespec="seconds")
 
         elif namespace == "session" and len(parts) == 2:
             value = self.session.get_params().get(parts[1])
             return str(value) if value is not None else None
+
+        elif namespace == "turn":
+            turn_meta = self._get_turn_meta()
+            if len(parts) == 2:
+                key = parts[1]
+                value = turn_meta.get(key)
+                return str(value) if value is not None else None
 
         # Return None for unrecognized namespaces
         return None

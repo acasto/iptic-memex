@@ -278,7 +278,21 @@ class ManageChatsAction(StepwiseAction):
                 turn_context = None
                 if include_context and 'context' in turn and turn['context']:
                     try:
-                        turn_context = self.session.get_action('process_contexts').process_contexts_for_assistant(turn['context'])
+                        ctx_items = turn['context'] or []
+                        # Filter out synthetic turn_status contexts so they are
+                        # not persisted in saved chat transcripts.
+                        filtered_ctx = []
+                        for c in ctx_items:
+                            try:
+                                ctx_obj = c.get('context')
+                                meta = ctx_obj.get() if ctx_obj else None
+                                if isinstance(meta, dict) and meta.get('name') == 'turn_status':
+                                    continue
+                            except Exception:
+                                pass
+                            filtered_ctx.append(c)
+                        if filtered_ctx:
+                            turn_context = self.session.get_action('process_contexts').process_contexts_for_assistant(filtered_ctx)
                     except Exception:
                         turn_context = None
                 if chat_format == 'md':

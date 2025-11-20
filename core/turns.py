@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, List, Optional, Tuple, Literal
 import time
+import random
 from base_classes import InteractionNeeded
+from contexts.chat_context import ChatContext as RealChatContext
 
 
 @dataclass
@@ -76,10 +78,11 @@ class TurnRunner:
             token = None
 
         initial_auto = bool(self.session.get_flag("auto_submit"))
+        user_meta = self._begin_turn_meta(role="user", kind="auto_submit" if initial_auto else "user")
         contexts = self._process_contexts(auto_submit=initial_auto, suppress_print=opts.suppress_context_print)
         if initial_auto:
             self.session.set_flag("auto_submit", False)
-        self._add_user_message("" if initial_auto else (input_text or ""), contexts)
+        self._add_user_message("" if initial_auto else (input_text or ""), contexts, user_meta)
         self._clear_temp_contexts()
 
         # Limit assistant follow-ups (auto-submit loops). Configurable via [TOOLS].auto_submit_max_turns.
@@ -112,10 +115,11 @@ class TurnRunner:
             ran = self._execute_tools(sanitized or display or raw or "")
             any_tools = any_tools or ran
             if allow_auto_submit and self.session.get_flag("auto_submit"):
+                meta2 = self._begin_turn_meta(role="user", kind="auto_submit")
                 contexts2 = self._process_contexts(auto_submit=True, suppress_print=opts.suppress_context_print)
                 if self.session.get_flag("auto_submit"):
                     self.session.set_flag("auto_submit", False)
-                    self._add_user_message("", contexts2)
+                    self._add_user_message("", contexts2, meta2)
                     self._clear_temp_contexts()
                     continue
             break
@@ -173,6 +177,7 @@ class TurnRunner:
             except Exception:
                 pass
 
+            user_meta = self._begin_turn_meta(role="user", kind="agent_step")
             contexts = self._process_contexts(auto_submit=True, suppress_print=(output_mode != "full"))
 
             stdin_content: Optional[str] = None
@@ -198,7 +203,7 @@ class TurnRunner:
                 except Exception:
                     pass
 
-            self._add_user_message(stdin_content or "", contexts)
+            self._add_user_message(stdin_content or "", contexts, user_meta)
             self._clear_temp_contexts()
 
             if opts.verbose_dump:
@@ -263,12 +268,149 @@ class TurnRunner:
         except Exception:
             return []
 
-    def _add_user_message(self, text: str, contexts: list) -> None:
+    def _chat_add(self, chat, text: str, role: str, contexts: Optional[list] = None, extra: Optional[dict] = None) -> None:
+        """
+        Helper to add a message to chat while remaining compatible with both the
+        real ChatContext (which supports `extra`) and lightweight test doubles.
+        """
+        try:
+            if isinstance(chat, RealChatContext):
+                if contexts is None:
+                    chat.add(text or "", role, extra=extra)
+                else:
+                    chat.add(text or "", role, contexts or [], extra=extra)
+            else:
+                # Test doubles typically accept (message, role, contexts=None)
+                if contexts is None:
+                    chat.add(text or "", role)
+                else:
+                    chat.add(text or "", role, contexts or [])
+        except TypeError:
+            # Fallback for unexpected signatures: ignore contexts/extra
+            try:
+                chat.add(text or "", role)
+            except Exception:
+                pass
+
+    def _clear_turn_status_contexts(self) -> None:
+        """Remove any pending turn_status contexts to avoid leaking across turns."""
+        try:
+            contexts = self.session.context.get("assistant", [])
+            if not isinstance(contexts, list) or not contexts:
+                return
+            keep = []
+            for ctx in contexts:
+                try:
+                    data = ctx.get() if hasattr(ctx, "get") else None
+                    if isinstance(data, dict) and data.get("name") == "turn_status":
+                        continue
+                except Exception:
+                    pass
+                keep.append(ctx)
+            if len(keep) != len(contexts):
+                self.session.context["assistant"] = keep
+                if not keep:
+                    self.session.context.pop("assistant", None)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _short_id(index_hint: Optional[int] = None, suffix_len: int = 4) -> str:
+        """Generate a compact, anchored-looking id like 't9-3xf7'."""
+        def to_b36(n: int) -> str:
+            if n <= 0:
+                return "0"
+            digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+            out = ""
+            while n:
+                n, r = divmod(n, 36)
+                out = digits[r] + out
+            return out
+
+        idx_part = f"t{to_b36(index_hint)}" if index_hint is not None else "t0"
+        tail = "".join(random.choice("0123456789abcdefghijklmnopqrstuvwxyz") for _ in range(suffix_len))
+        return f"{idx_part}-{tail}"
+
+    def _begin_turn_meta(self, *, role: str, kind: str, add_status_context: bool = True, build_prompt: bool = True) -> Optional[dict]:
+        """Initialize per-turn metadata and optional turn_prompt context."""
+        meta: dict = {"role": role, "kind": kind}
         try:
             chat = self.session.get_context("chat")
             if chat is None:
                 chat = self.session.add_context("chat")
-            chat.add(text or "", "user", contexts or [])
+            try:
+                history = chat.get("all")
+            except Exception:
+                history = []
+            try:
+                next_index = len(history) + 1
+            except Exception:
+                next_index = 1
+            meta["index"] = next_index
+        except Exception:
+            # Best-effort; index is optional
+            pass
+
+        # Assign a stable identifier for this turn
+        try:
+            idx_hint = meta.get("index")
+            meta.setdefault("id", self._short_id(idx_hint if isinstance(idx_hint, int) else None))
+        except Exception:
+            try:
+                if "index" in meta:
+                    meta.setdefault("id", str(meta["index"]))
+            except Exception:
+                meta.setdefault("id", "unknown")
+
+        if kind == "auto_submit":
+            meta["auto_submit"] = True
+        try:
+            meta["agent"] = bool(self.session.in_agent_mode())
+        except Exception:
+            pass
+
+        # Make metadata visible to template handlers
+        try:
+            self.session.set_user_data("__turn_meta__", meta)
+        except Exception:
+            pass
+
+        # Build and attach optional turn prompt text
+        if build_prompt:
+            turn_prompt = ""
+            try:
+                builder = self.session.get_action("build_turn_prompt")
+            except Exception:
+                builder = None
+            if builder:
+                try:
+                    turn_prompt = builder.run(meta) or ""
+                except Exception:
+                    turn_prompt = ""
+            if turn_prompt:
+                meta["turn_prompt_text"] = turn_prompt
+                if add_status_context:
+                    # Ensure prior turn_status contexts are cleared before adding a new one
+                    self._clear_turn_status_contexts()
+                    # Inject as a transient assistant context so it is folded into the
+                    # next turn's context without persisting in chat history.
+                    try:
+                        self.session.add_context(
+                            "assistant",
+                            {"name": "turn_status", "content": turn_prompt, "meta": {"kind": "turn_status"}},
+                        )
+                    except Exception:
+                        pass
+
+        return meta
+
+    def _add_user_message(self, text: str, contexts: list, meta: Optional[dict] = None) -> None:
+        try:
+            chat = self.session.get_context("chat")
+            if chat is None:
+                chat = self.session.add_context("chat")
+            extra = {"meta": meta} if isinstance(meta, dict) else None
+            self._chat_add(chat, text or "", "user", contexts or [], extra=extra)
         except Exception:
             pass
 
@@ -383,7 +525,7 @@ class TurnRunner:
             chat = self.session.get_context("chat")
             if chat is None:
                 chat = self.session.add_context("chat")
-            extra = None
+            extra: Optional[dict] = None
             provider = None
             try:
                 provider = self.session.get_provider()
@@ -396,7 +538,22 @@ class TurnRunner:
                         extra = {'reasoning_content': reasoning}
                 except Exception:
                     extra = None
-            chat.add(raw_text or "", "assistant", extra=extra)
+
+            # Initialize per-turn metadata for this assistant message
+            meta = self._begin_turn_meta(role="assistant", kind="assistant", add_status_context=False, build_prompt=False)
+            if extra is None:
+                extra = {}
+            if isinstance(extra, dict) and isinstance(meta, dict):
+                # Do not clobber existing keys (e.g., reasoning_content)
+                if 'meta' in extra and isinstance(extra['meta'], dict):
+                    merged_meta = dict(extra['meta'])
+                    for k, v in meta.items():
+                        if k not in merged_meta:
+                            merged_meta[k] = v
+                    extra['meta'] = merged_meta
+                else:
+                    extra.setdefault('meta', meta)
+            self._chat_add(chat, raw_text or "", "assistant", None, extra)
         except Exception:
             pass
 
@@ -444,25 +601,36 @@ class TurnRunner:
                         for key, spec in cmd_action.commands.items():
                             commands_map[str(key).lower()] = spec
 
-                    try:
-                        chat_ctx = self.session.get_context('chat') or self.session.add_context('chat')
-                        last_turn = None
                         try:
-                            history = chat_ctx.get()
-                            if history:
-                                last_turn = history[-1]
-                        except Exception:
+                            chat_ctx = self.session.get_context('chat') or self.session.add_context('chat')
                             last_turn = None
-                        try:
-                            chat_ctx.remove_last_message()
+                            try:
+                                history = chat_ctx.get()
+                                if history:
+                                    last_turn = history[-1]
+                            except Exception:
+                                last_turn = None
+                            try:
+                                chat_ctx.remove_last_message()
+                            except Exception:
+                                pass
+                            extra_fields = {'tool_calls': tool_calls}
+                            if last_turn:
+                                try:
+                                    if 'reasoning_content' in last_turn:
+                                        extra_fields['reasoning_content'] = last_turn['reasoning_content']
+                                except Exception:
+                                    pass
+                                # Preserve prior per-turn metadata when present
+                                try:
+                                    last_meta = last_turn.get('meta')
+                                except Exception:
+                                    last_meta = None
+                                if isinstance(last_meta, dict):
+                                    extra_fields['meta'] = dict(last_meta)
+                            self._chat_add(chat_ctx, '', 'assistant', None, extra_fields)
                         except Exception:
                             pass
-                        extra_fields = {'tool_calls': tool_calls}
-                        if last_turn and 'reasoning_content' in last_turn:
-                            extra_fields['reasoning_content'] = last_turn['reasoning_content']
-                        chat_ctx.add('', role='assistant', extra=extra_fields)
-                    except Exception:
-                        pass
 
                     cancelled_during_tools = False
                     for idx, call in enumerate(tool_calls):
@@ -630,7 +798,7 @@ class TurnRunner:
                                         try:
                                             chat_ctx = self.session.get_context('chat') or self.session.add_context('chat')
                                             extra = {'tool_call_id': call_id} if call_id else None
-                                            chat_ctx.add('Cancelled', role='tool', extra=extra)
+                                            self._chat_add(chat_ctx, 'Cancelled', 'tool', None, extra)
                                         except Exception:
                                             pass
                                         try:
@@ -712,7 +880,7 @@ class TurnRunner:
                                             try:
                                                 chat_ctx = self.session.get_context('chat') or self.session.add_context('chat')
                                                 extra = {'tool_call_id': call_id} if call_id else None
-                                                chat_ctx.add('Cancelled', role='tool', extra=extra)
+                                                self._chat_add(chat_ctx, 'Cancelled', 'tool', None, extra)
                                             except Exception:
                                                 pass
                                             try:

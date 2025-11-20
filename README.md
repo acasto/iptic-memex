@@ -205,6 +205,9 @@ See [INSTALL.md](INSTALL.md) for details on how to adjust requirements.txt as ne
   - `~/.config/iptic-memex/models.ini` for user-level configuration.
 - **API Keys**:  
   Set keys in `config.ini` (e.g., `api_key`) or via environment variables like `OPENAI_API_KEY`.
+- **Per-turn prompts**:
+  - Set `turn_prompt` in `config.ini` (DEFAULT/provider/model). It resolves via the same prompt system as `prompt`/`supplemental_prompt` and is templated (e.g., `{{turn:index}}`, `{{message_id}}`).
+  - Example: `turn_prompt = message_id` with `prompts/message_id.txt` containing `{{turn:index}} | id={{message_id}} | role={{turn:role}}`. Injected each user turn as transient context (not saved in transcripts).
 
 #### 4. **Run Memex**
 ```bash

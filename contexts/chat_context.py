@@ -1,5 +1,6 @@
 from base_classes import InteractionContext
 from datetime import datetime
+import random
 
 
 class ChatContext(InteractionContext):
@@ -34,7 +35,52 @@ class ChatContext(InteractionContext):
                         turn[k] = v
             except Exception:
                 pass
+        # Ensure each turn has structured metadata with a stable id and index
+        meta = {}
+        try:
+            existing_meta = turn.get('meta')
+            if isinstance(existing_meta, dict):
+                meta.update(existing_meta)
+        except Exception:
+            pass
+        if isinstance(extra, dict):
+            try:
+                extra_meta = extra.get('meta')
+                if isinstance(extra_meta, dict):
+                    for k, v in extra_meta.items():
+                        if k not in meta:
+                            meta[k] = v
+            except Exception:
+                pass
+        # Assign a stable identifier if not provided (compact base36 id + random tail)
+        if 'id' not in meta:
+            try:
+                idx = len(self.conversation) + 1
+            except Exception:
+                idx = None
+            meta['id'] = self._short_id(idx)
+        # Monotonic index within the conversation (1-based)
+        if 'index' not in meta:
+            meta['index'] = len(self.conversation) + 1
+        turn['meta'] = meta
         self.conversation.append(turn)
+
+    @staticmethod
+    def _short_id(index_hint: int | None, suffix_len: int = 4) -> str:
+        """Generate a compact, anchored-looking id like 't9-3xf7'."""
+        def to_b36(n: int) -> str:
+            if n is None or n <= 0:
+                return "0"
+            digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+            out = ""
+            while n:
+                n, r = divmod(n, 36)
+                out = digits[r] + out
+            return out
+
+        idx_part = f"t{to_b36(index_hint)}"
+        tail = "".join(random.choice("0123456789abcdefghijklmnopqrstuvwxyz") for _ in range(suffix_len))
+        return f"{idx_part}-{tail}"
 
     def get(self, args=None):
         # Return the entire conversation

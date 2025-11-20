@@ -138,6 +138,10 @@ class MyAction(StepwiseAction):
         return Completed({'ok': True, 'resumed': True})
 ```
 
+### Prompt & Turn Prompt Notes
+- System prompts: resolved via `PromptResolver`, templated through `DEFAULT.template_handler`, with supplemental addenda (pseudo-tools + provider/model `supplemental_prompt`).
+- Per-turn prompts: set `turn_prompt` (DEFAULT/provider/model). Resolved like system prompts; templated with `prompt_template` variables including `{{message_id}}` and `{{turn:*}}`. Injected as transient context on user turns (not saved in transcripts); formatted as plain text before other contexts.
+
 ### Argument Normalization Helpers
 - Location: `utils/tool_args.py`
 - Purpose: Safely parse optional tool/action arguments from models or users where values may arrive as empty strings, different scalar types, lists, or comma‑separated strings.
