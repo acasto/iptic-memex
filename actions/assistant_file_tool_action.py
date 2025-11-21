@@ -10,7 +10,7 @@ from core.mode_runner import run_completion
 class AssistantFileToolAction(StepwiseAction):
     """
     File operations with optional confirmations, stepwise-capable for Web/TUI.
-    Modes: read, write, append, edit, summarize, delete, rename, copy
+    Modes: read, write, append, edit, patch, summarize, delete, rename, copy
     """
 
     MARKITDOWN_EXTENSIONS: tuple[str, ...] = (
@@ -69,22 +69,22 @@ class AssistantFileToolAction(StepwiseAction):
         return {
             'args': ['mode', 'file', 'new_name', 'recursive', 'block', 'desc'],
             'description': (
-                "Read or modify files in the workspace. Modes: read, write, append, edit, summarize, delete, "
-                "rename, copy. Use 'content' for write/append/edit. "
-                "Can read any text based file as well as pdf, docx, xlsx, xls, pptx, msg, mp3, wav, jpg, png. "
-                "For editing longer files consider using a programmatic approach. "
+                "Read or modify files in the workspace. Modes: read, write, append, edit, patch, summarize, delete, "
+                "rename, copy. Use 'content' for write/append/edit/patch. "
+                "Patch mode expects content with <<<< search ==== replace >>>> blocks. "
+                "Can read any text based file as well as pdf, docx, xlsx, xls, pptx, msg, mp3, wav, jpg, png."
             ),
             'required': ['mode', 'file'],
             'schema': {
                 'properties': {
                     'mode': {"type": "string", "enum": [
-                        'read', 'write', 'append', 'edit', 'summarize', 'delete', 'rename', 'copy'
+                        'read', 'write', 'append', 'edit', 'patch', 'summarize', 'delete', 'rename', 'copy'
                     ], "description": "Operation to perform."},
                     'file': {"type": "string", "description": "Target file path (relative to workspace)."},
                     'new_name': {"type": "string", "description": "New name/path for rename or copy."},
                     'recursive': {"type": "boolean", "description": "When deleting, remove directories recursively if true."},
                     'block': {"type": "string", "description": "Identifier of a %BLOCK:...% to append to 'content'."},
-                    'content': {"type": "string", "description": "Content to write/append or edit instructions (for edit mode)."},
+                    'content': {"type": "string", "description": "Content to write/append, edit instructions, or patch block (<<<< ... ==== ... >>>>)."},
                     'desc': {"type": "string", "description": "Optional short description for UI/status; ignored by execution.", "default": ""}
                 }
             },
@@ -95,18 +95,26 @@ class AssistantFileToolAction(StepwiseAction):
         return super().run(*args, **kwargs)
 
     # ---- Stepwise protocol -------------------------------------------------
-    def start(self, args: Dict, content: str = "") -> Completed:
+    def start(self, args: Dict[str, Any] | None = None, content: Any | None = None) -> Completed:
         # Store args and content for potential resume
+        args = args or {}
+        if not isinstance(args, dict):
+            args = {}
+        if content is None:
+            content_str = ""
+        else:
+            content_str = str(content)
+
         self._current_args = args
-        self._current_content = content
-        
+        self._current_content = content_str
+
         mode = (get_str(args, 'mode', '') or '').lower()
         filename = get_str(args, 'file', '') or ''
         if not filename:
             self.session.add_context('assistant', {'name': 'file_tool_error', 'content': 'No filename provided'})
             return Completed({'ok': False, 'error': 'No filename provided'})
 
-        return self._execute_operation(mode, filename, args, content)
+        return self._execute_operation(mode, filename, args, content_str)
 
     def resume(self, state_token: str, response: Any) -> Completed:
         # Handle resumed operations after user confirmation
@@ -180,6 +188,7 @@ class AssistantFileToolAction(StepwiseAction):
                 'read': lambda f: self._handle_read(f),
                 'write': lambda f: self._handle_write(f, content, force=force),
                 'edit': lambda f: self._handle_edit(f, content, force=force),
+                'patch': lambda f: self._handle_patch(f, content, force=force),
                 'append': lambda f: self._handle_append(f, content, force=force),
                 'summarize': lambda f: self._handle_summary(f),
                 'delete': lambda f: self._handle_delete(f, bool(get_bool(args, 'recursive', False)), force=force),
@@ -398,7 +407,6 @@ class AssistantFileToolAction(StepwiseAction):
         except Exception:
             return 0
 
-
     def _handle_write(self, filename: str, content: str, force: bool = False) -> None:
         policy = self.session.get_agent_write_policy()
         if policy is None:
@@ -585,6 +593,61 @@ class AssistantFileToolAction(StepwiseAction):
         msg = 'Copy operation successful' if success else f'Failed to copy {filename} to {new_name}'
         self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
 
+    def _handle_patch(self, filename: str, patch_content: str, force: bool = False) -> None:
+        original_content = self.fs_handler.read_file(filename)
+        if original_content is None:
+            self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Failed to read file: {filename}'})
+            return
+
+        start_marker = '<<<<'
+        mid_marker = '===='
+        end_marker = '>>>>'
+
+        def clean(s: str) -> str:
+            if s.startswith('\n'):
+                s = s[1:]
+            if s.endswith('\n'):
+                s = s[:-1]
+            return s
+
+        working_content = original_content
+        parts = str(patch_content or '').split(start_marker)
+        if len(parts) < 2:
+            self.session.add_context('assistant', {'name': 'file_tool_error', 'content': 'No patch blocks found (missing <<<<)'})
+            return
+
+        for i, part in enumerate(parts[1:], 1):
+            if mid_marker not in part or end_marker not in part:
+                self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Block {i} missing ==== or >>>> markers'})
+                return
+
+            try:
+                search_raw, post_mid = part.split(mid_marker, 1)
+                replace_raw, _ = post_mid.split(end_marker, 1)
+                search_block = clean(search_raw)
+                replace_block = clean(replace_raw)
+            except ValueError:
+                self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Block {i} parsing failed'})
+                return
+
+            if not search_block:
+                self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Block {i}: Empty search block'})
+                return
+
+            count = working_content.count(search_block)
+            if count == 0:
+                self.session.add_context('assistant', {'name': 'file_tool_error',
+                                                       'content': f'Block {i} failed: Search block not found exactly. Ensure whitespace matches perfectly.'})
+                return
+            if count > 1:
+                self.session.add_context('assistant', {'name': 'file_tool_error',
+                                                       'content': f'Block {i} failed: Search block found {count} times. Context must be unique.'})
+                return
+
+            working_content = working_content.replace(search_block, replace_block, 1)
+
+        self._process_and_confirm_edit(filename, original_content, working_content, force=force)
+
     def _handle_edit(self, filename: str, edit_request: str, force: bool = False) -> None:
         original_content = self.fs_handler.read_file(filename)
         if original_content is None:
@@ -765,7 +828,7 @@ class AssistantFileToolAction(StepwiseAction):
             policy = self.session.get_agent_write_policy()
         except Exception:
             policy = None
-        if policy is not None and mode in {'write', 'append', 'edit'}:
+        if policy is not None and mode in {'write', 'append', 'edit', 'patch'}:
             return False
         try:
             wc = self.session.get_tools().get('write_confirm', True)
@@ -775,7 +838,7 @@ class AssistantFileToolAction(StepwiseAction):
         needs = bool(get_bool({'v': wc}, 'v', True))
         if not needs:
             return False
-        # Only confirm for mutating ops; for 'edit' we confirm after generating a diff
+        # Only confirm for mutating ops; for 'edit' and 'patch' we confirm after generating a diff
         return mode in {'write', 'append', 'delete', 'rename', 'copy'}
 
     def _build_confirm_prompt(self, mode: str, filename: str, args: Dict) -> str:
@@ -794,6 +857,8 @@ class AssistantFileToolAction(StepwiseAction):
             return f"Confirm append to {filename}?"
         if mode == 'edit':
             return f"Confirm apply edits and overwrite {filename}?"
+        if mode == 'patch':
+            return f"Confirm apply patch and overwrite {filename}?"
         if mode == 'delete':
             recursive = bool(get_bool(args, 'recursive', False))
             return f"Confirm {'recursively delete directory' if recursive else 'delete'} {filename}?"

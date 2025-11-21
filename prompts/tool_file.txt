@@ -1,13 +1,13 @@
 Interact with files                 %%FILE%%
   + Note: %%FILE%% only works within the /workspace directory, outside of that ccnsider other strategies such as shell commands
   + Arguments available are:
-    - mode="<read|write|edit|append|summarize|delete|rename|copy>"
+    - mode="<read|write|edit|patch|append|summarize|delete|rename|copy>"
     - file="<path to file>"
     - block="<block label referencing a block to save>"
     - (only with rename and copy) new_name="<new name>"
     - (only when deleting directories) recursive=true
   + File paths should be relative to the current working directory
-  + To *write*, *edit*, or *append* content, first create a labeled block:
+  + To *write*, *edit*, *patch*, or *append* content, first create a labeled block:
 
     %%BLOCK:my_content%%
     ...content...
@@ -21,7 +21,13 @@ Interact with files                 %%FILE%%
     block="my_content"
     %%END%%
 
-  + The 'edit' mode allows you to make targeted changes to specific parts of a file without rewriting the entire file. Provide the actual code/content you want, with enough surrounding context for the model to locate and apply the changes. Think of it like showing someone exactly what to copy-paste, but with enough context to find the right location.
+  + The 'edit' mode allows you to make targeted changes using natural language instructions or context.
+  + The 'patch' mode performs a precise search-and-replace. Your content block must use this exact format:
+    <<<<
+    exact text to find (must be unique in file)
+    ====
+    replacement text
+    >>>>
   + The `summarize` mode uses a smaller language model to examine the structure and nature of a file.
   + Only use `summarize` when digging through multiple files, for doing work you probably want to `read`.
   + Use `mode="append"` to add content without overwriting the file.
@@ -31,4 +37,3 @@ Interact with files                 %%FILE%%
   + Wait for read results before you start writing. The results of a read operation will come in on the following turn. 
   + Be extra cautious of sequential file operations.
   + Can read any text based file as well as pdf, docx, xlsx, xls, pptx, msg, mp3, wav, jpg, png.
-  + Prefer programmatic edits with the %%CMD%% tool where possible

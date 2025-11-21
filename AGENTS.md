@@ -243,6 +243,7 @@ Gating and CLI‑only flows
   - TUI/Web (non‑blocking): diff appears inside the modal; on confirm, the write proceeds with `force=True`.
   - CLI (blocking): prints the diff to the console, then asks inline via `ui.ask_bool`.
 - Edit: generate the candidate text first, then show a diff and confirm before writing.
+- Patch: find exact match of search block, replace with replacement block, then show diff and confirm.
 - Helpers do not print diffs when the action has already shown them (internal flag `__suppress_fs_diff__`).
 - Post‑write verification: helpers re‑read the file and report a clear error if the final content does not match.
 
