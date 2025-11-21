@@ -47,16 +47,30 @@ class ClearContextAction(StepwiseAction):
                 except Exception:
                     tokens = 0
                 options.append(f"{i}: {name} ({tokens} tokens)")
-            
-            raise InteractionNeeded(
-                kind='choice',
-                spec={
-                    'prompt': 'Select a context to remove:',
-                    'options': options,
-                    'default': options[0] if options else None
-                },
-                state_token='awaiting_selection'
-            )
+            blocking = bool(getattr(self.session.ui, 'capabilities', None) and self.session.ui.capabilities.blocking)
+            if blocking:
+                choice = self.session.ui.ask_choice(
+                    'Select a context to remove:',
+                    options,
+                    default=options[0] if options else None
+                )
+                # ask_choice may return list or string; normalize
+                if isinstance(choice, list):
+                    choice = choice[0] if choice else None
+                try:
+                    index = int(str(choice).split(':', 1)[0]) if choice is not None else None
+                except Exception:
+                    index = None
+            else:
+                raise InteractionNeeded(
+                    kind='choice',
+                    spec={
+                        'prompt': 'Select a context to remove:',
+                        'options': options,
+                        'default': options[0] if options else None
+                    },
+                    state_token='awaiting_selection'
+                )
 
         if index is None or index < 0 or index >= len(contexts):
             try:
