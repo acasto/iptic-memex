@@ -273,22 +273,26 @@ class TurnRunner:
         Helper to add a message to chat while remaining compatible with both the
         real ChatContext (which supports `extra`) and lightweight test doubles.
         """
+        # Prefer a duck-typed call that passes extra when supported. Fall back
+        # to simpler signatures on TypeError so tests and older contexts keep
+        # working without dropping messages.
         try:
-            if isinstance(chat, RealChatContext):
-                if contexts is None:
+            if contexts is None:
+                if extra is not None:
                     chat.add(text or "", role, extra=extra)
                 else:
-                    chat.add(text or "", role, contexts or [], extra=extra)
+                    chat.add(text or "", role)
             else:
-                # Test doubles typically accept (message, role, contexts=None)
+                if extra is not None:
+                    chat.add(text or "", role, contexts or [], extra=extra)
+                else:
+                    chat.add(text or "", role, contexts or [])
+        except TypeError:
+            try:
                 if contexts is None:
                     chat.add(text or "", role)
                 else:
                     chat.add(text or "", role, contexts or [])
-        except TypeError:
-            # Fallback for unexpected signatures: ignore contexts/extra
-            try:
-                chat.add(text or "", role)
             except Exception:
                 pass
 
