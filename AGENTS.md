@@ -142,6 +142,46 @@ class MyAction(StepwiseAction):
 - System prompts: resolved via `PromptResolver`, templated through `DEFAULT.template_handler`, with supplemental addenda (pseudo-tools + provider/model `supplemental_prompt`).
 - Per-turn prompts: set `turn_prompt` (DEFAULT/provider/model). Resolved like system prompts; templated with `prompt_template` variables including `{{message_id}}` and `{{turn:*}}`. Injected as transient context on user turns (not saved in transcripts); formatted as plain text before other contexts.
 
+### Chat-Aware Template Handler
+- Handler: `PromptTemplateChatAction` (`actions/prompt_template_chat_action.py`), wired via `DEFAULT.template_handler = prompt_template, prompt_template_chat, prompt_template_memory`.
+- Purpose: expose recent chat slices inside prompts (system, per-turn, and hooks) without inventing a new template language.
+- Placeholders:
+  - `{{chat:last}}` – last message in the full conversation.
+  - `{{chat:last_3}}` – last 3 messages.
+  - `{{chat:window}}` or `{{chat}}` – provider-visible window (respects `context_sent`), falling back to full history.
+- Rendering: produces a compact plain-text transcript like `User: ...` / `Assistant: ...`, with a conservative truncation limit (`DEFAULT.chat_template_max_chars`, default ~2000 chars) to avoid bloating prompts.
+
+### Metacognitive Hooks (pre_turn/post_turn)
+- Location: `core/hooks.py` and `core/turns.py`.
+- Goal: run lightweight “sidecar” internal agents at well-defined points in the turn lifecycle, reusing the existing context pipeline and tools.
+- Configuration:
+  - `[HOOKS]` section defines pipelines:
+    - `pre_turn = context_scout,memory_gate` (CSV list; order respected)
+    - `post_turn = memory_scribe`
+  - Per-hook sections: `[HOOK.<name>]`:
+    - `model` – optional model override for the sidecar (defaults to `[AGENT].default_model` via internal runs).
+    - `prompt` – prompt source resolved via `PromptResolver` (supports chains/files/literals).
+    - `tools` – CSV list passed to `AGENT.active_tools_agent` for the internal run (e.g., `ragsearch,memory`).
+    - `steps` – max agent steps for this hook (default 1; floor at 1).
+    - `mode` – `inject|silent|rewrite`:
+      - `inject`: run **before** the provider call (`pre_turn`) and/or after (`post_turn`), then inject `last_text` as an assistant context attached to the latest chat turn. This behaves like a RAG summary or internal note loaded into context.
+      - `silent`: run only in `post_turn` (never in `pre_turn`) and ignore `last_text`; rely on tool side-effects (e.g., memory writes). Avoids adding latency before the main response.
+      - `rewrite`: currently behaves like `inject`; reserved for future message-rewrite wiring.
+    - `enable` – `true|false` (optional; default true). When `false`, the hook is ignored even if listed in `[HOOKS]`, so you can toggle behavior without editing the pipeline order.
+- Execution:
+  - TurnRunner (`core/turns.TurnRunner`) calls `run_hooks(session, phase, extras)`:
+    - `phase="pre_turn"`: after the user message is added to chat but before the provider’s first call. Only `mode=inject` hooks run here (silent hooks are auto-skipped).
+    - `phase="post_turn"`: after the assistant reply and any tools. Both `inject` and `silent` hooks run here.
+  - Each hook uses `session.run_internal_agent(...)` with:
+    - `outer_session` pointing at the main session so `core.mode_runner.run_agent` can `copy_contexts` (including chat) into the internal session.
+    - `overrides` carrying `model`, `prompt`, `active_tools_agent`, plus scalar extras (e.g., `hook_name`, `hook_phase`, `hook_input_text`).
+  - For `mode=inject`/`rewrite`, `last_text` from the internal run is:
+    - Added as an `assistant` context (`name = "hook:<hook_name>"`) on the main session.
+    - Attached to the latest chat turn’s `context` list (`{'type': 'assistant', 'context': ctx_obj}`) so providers see it via `ProcessContextsAction.process_contexts_for_assistant(...)` just like any other context (files, RAG summaries, etc.).
+- Prompts:
+  - Hook prompts live under `prompts/hooks/` (e.g., `scout.md`, `scribe.md`) and can use `{{chat:*}}` placeholders plus normal template variables.
+  - They run through the same `DEFAULT.template_handler` chain as other prompts, so add-on handlers (memory, environment) work uniformly.
+
 ### Argument Normalization Helpers
 - Location: `utils/tool_args.py`
 - Purpose: Safely parse optional tool/action arguments from models or users where values may arrive as empty strings, different scalar types, lists, or comma‑separated strings.

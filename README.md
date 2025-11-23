@@ -54,6 +54,7 @@ envisioned a device that would compress and store all of their knowledge. https:
   - **Memory (%%MEMORY%%)**: Store and recall facts or context across sessions in SQLite with support for project-specific memory.
   - **RAG**: Build local indexes with embeddings and query them to load relevant snippets into chat context.
   - **Persona Review (%%PERSONA_REVIEW%%)**: Review content, ideas, or features from one or more persona perspectives and optionally synthesize a panel summary. Personas may be names or loaded from a Markdown file. Accepts `files` (list or CSV) for supplemental guidelines (brand, audience, product, persona notes). Prompts: `personas/review` and `personas/panel`.
+  - **Metacognitive Hooks (Context Scout / Memory Scribe)**: Optional internal “sidecar” agents that run before/after a turn. Pre‑turn hooks can inject extra assistant context (e.g., RAG suggestions) into the current turn; post‑turn hooks can silently write memories based on the latest exchange.
 
 ## MCP Quickstart
 
@@ -152,6 +153,7 @@ Place it under your user actions dir (see `DEFAULT.user_actions` in `config.ini`
   - Intelligent tab completion for file paths, commands, and settings.
   - Chained prompts and flexible templating support for sophisticated query design.
   - Prompt templating support from basic {{date}} to more advanced custom template actions.
+  - Chat-aware templating via `{{chat:last}}`, `{{chat:last_3}}`, `{{chat:window}}` so prompts (including hooks) can see recent history without bespoke code.
   - A modular design that lets you easily extend or customize functionalities.
   - Support for user actions that can override or extend core actions, register user or assistant commands, and more.
   - An extensible SQLite persistence layer (currently used for stats and memories). 
@@ -208,6 +210,37 @@ See [INSTALL.md](INSTALL.md) for details on how to adjust requirements.txt as ne
 - **Per-turn prompts**:
   - Set `turn_prompt` in `config.ini` (DEFAULT/provider/model). It resolves via the same prompt system as `prompt`/`supplemental_prompt` and is templated (e.g., `{{turn:index}}`, `{{message_id}}`).
   - Example: `turn_prompt = message_id` with `prompts/message_id.txt` containing `{{turn:index}} | id={{message_id}} | role={{turn:role}}`. Injected each user turn as transient context (not saved in transcripts).
+
+#### 3.1 Metacognitive Hooks (optional)
+
+Hooks let you run lightweight internal agents around each turn without changing your normal workflow.
+
+- Config sections:
+  - `[HOOKS]`:
+    - `pre_turn = context_scout` – hooks to run before the provider call.
+    - `post_turn = memory_scribe` – hooks to run after the provider response and tools.
+  - `[HOOK.context_scout]`:
+    - `model = gpt-4o-mini`
+    - `prompt = prompts/hooks/scout.md`
+    - `tools = ragsearch,memory`
+    - `steps = 1`
+    - `mode = inject`  (blocks pre-turn and injects a summary as assistant context)
+    - `enable = true`  (set `false` to toggle off without editing `[HOOKS]`)
+  - `[HOOK.memory_scribe]`:
+    - `model = gpt-4o-mini`
+    - `prompt = prompts/hooks/scribe.md`
+    - `tools = memory`
+    - `steps = 1`
+    - `mode = silent`  (runs only post-turn; side-effects only, no injected text)
+    - `enable = true`
+
+Behavior:
+- `mode=inject`:
+  - Runs once per user turn after the user message is recorded in chat but before the provider call.
+  - The hook’s `last_text` is attached as an assistant context on the latest chat turn and included in the provider request via the existing context pipeline.
+- `mode=silent`:
+  - Skipped in `pre_turn` (no added latency before the answer).
+  - Runs in `post_turn` so it can review the latest exchange and call tools (e.g., memory) without affecting the current response.
 
 #### 4. **Run Memex**
 ```bash

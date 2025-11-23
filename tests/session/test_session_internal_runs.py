@@ -71,13 +71,14 @@ def test_run_internal_agent_delegates_and_returns_result(monkeypatch):
     setattr(sess, '_builder', object())
 
     calls = {}
-    def fake_run_agent(builder, steps, overrides=None, contexts=None, output=None, verbose_dump=False):
+    def fake_run_agent(builder, steps, overrides=None, contexts=None, output=None, verbose_dump=False, outer_session=None):
         calls['builder'] = builder
         calls['steps'] = steps
         calls['overrides'] = overrides
         calls['contexts'] = contexts
         calls['output'] = output
         calls['verbose_dump'] = verbose_dump
+        calls['outer_session'] = outer_session
         return {'ok': True, 'steps': steps, 'out': output}
 
     import core.mode_runner as mr
@@ -85,5 +86,7 @@ def test_run_internal_agent_delegates_and_returns_result(monkeypatch):
 
     res = sess.run_internal_agent(steps=2, overrides={'model': 'm2'}, contexts=[('y', 2)], output='final', verbose_dump=True)
     assert isinstance(res, dict) and res.get('ok') is True and res.get('steps') == 2
-    assert calls.get('overrides') == {'model': 'm2'} and calls.get('output') == 'final' and calls.get('verbose_dump') is True
-
+    assert calls.get('overrides') == {'model': 'm2'}
+    assert calls.get('output') == 'final'
+    assert calls.get('verbose_dump') is True
+    assert calls.get('outer_session') is sess

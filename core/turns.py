@@ -6,6 +6,7 @@ import time
 import random
 from base_classes import InteractionNeeded
 from contexts.chat_context import ChatContext as RealChatContext
+from core.hooks import run_hooks
 
 
 @dataclass
@@ -93,6 +94,21 @@ class TurnRunner:
         if safety_cap <= 0:
             safety_cap = 1
         for _ in range(safety_cap):
+            # Run any configured pre-turn hooks once per user-initiated turn,
+            # after the user message has been recorded but before the first
+            # provider call. Hooks execute via internal agent runs and inject
+            # results as assistant contexts so they are processed like any
+            # other loaded context (RAG summaries, etc.).
+            if turns_executed == 0:
+                try:
+                    run_hooks(
+                        self.session,
+                        phase="pre_turn",
+                        extras={"input_text": "" if initial_auto else (input_text or "")},
+                    )
+                except Exception:
+                    pass
+
             raw, display, sanitized = self._assistant_turn(stream=stream, output_mode=None)
             turns_executed += 1
             last_display = display
@@ -123,6 +139,21 @@ class TurnRunner:
                     self._clear_temp_contexts()
                     continue
             break
+
+        # Run any configured post-turn hooks after the assistant reply and any
+        # tools have completed. Typical usage: memory scribes that review the
+        # latest exchange and write durable memories.
+        try:
+            run_hooks(
+                self.session,
+                phase="post_turn",
+                extras={
+                    "last_display": last_display or "",
+                    "last_sanitized": last_sanitized or "",
+                },
+            )
+        except Exception:
+            pass
 
         return TurnResult(
             last_text=self._strip_sentinels(last_display, opts.sentinels) if last_display else last_display,

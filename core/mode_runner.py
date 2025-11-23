@@ -155,6 +155,7 @@ def run_agent(
     contexts: Optional[Iterable[Tuple[str, Any]]] = None,
     output: Optional[str] = None,  # 'final'|'full'|'none'
     verbose_dump: bool = False,
+    outer_session: Any = None,
 ) -> ModeResult:
     """Run an internal Agent loop using TurnRunner.
 
@@ -162,6 +163,16 @@ def run_agent(
     """
     sess = _build_subsession(builder, overrides=overrides)
     _attach_contexts(sess, contexts)
+
+    # When called via Session.run_internal_agent, we may have an outer session.
+    # Copy its contexts (optionally including chat) so internal runs can see the
+    # same working set as the caller (RAG, memories, prior turns, etc.).
+    if outer_session is not None:
+        try:
+            from core.context_transfer import copy_contexts
+            copy_contexts(outer_session, sess, include_chat=True)
+        except Exception:
+            pass
 
     if not sess.get_context('chat'):
         sess.add_context('chat')

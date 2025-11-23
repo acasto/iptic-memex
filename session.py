@@ -625,6 +625,7 @@ class Session:
             contexts=contexts,
             output=output,
             verbose_dump=verbose_dump,
+            outer_session=self,
         )
 
 
