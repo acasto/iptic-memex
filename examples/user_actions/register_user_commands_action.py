@@ -6,24 +6,28 @@ class RegisterUserCommandsAction(InteractionAction):
         self.session = session
 
     def run(self, args=None):
-        # Return a dict of custom commands
+        """
+        Register custom user commands (example/template).
+
+        Shape expected by UserCommandsRegistryAction:
+          "command sub": {"type": "action"|"builtin", "name": "action_name", "args": [...]}
+        """
         return {
+            # /debug storage → examples/user_actions/debug_storage_action.py
             "debug storage": {
-                "description": "Way to test the storage in",
-                "function": {
-                    "type": "action",
-                    "name": "debug_storage"  # Points to my_custom_action.py in user actions dir
-                }
+                "type": "action",
+                "name": "debug_storage",
+                "help": "Inspect and edit persisted storage",
             },
+            # /debug reload → examples/user_actions/debug_reload_action.py
             "debug reload": {
-                "description": "Reload action/context caches without restarting",
-                "function": {
-                    "type": "action",
-                    "name": "debug_reload"
-                }
+                "type": "action",
+                "name": "debug_reload",
+                "help": "Reload action/context caches without restarting",
             },
             # "load summary": {
-            #     "description": "Load a summary from the web",
-            #     "function": {"type": "action", "name": "brave_summary"},
+            #     "type": "action",
+            #     "name": "brave_summary",
+            #     "help": "Load a summary from the web",
             # },
         }
