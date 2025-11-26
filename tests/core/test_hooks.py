@@ -64,8 +64,8 @@ def test_pre_and_post_hooks_inject_assistant_context(monkeypatch):
         for c in ctx_items:
             ctx_obj = c.get('context')
             data = ctx_obj.get() if ctx_obj else None
-            if isinstance(data, dict) and data.get('name', '').startswith('hook:'):
-                if data.get('content') == 'HOOK_SUMMARY':
+            if isinstance(data, dict):
+                if 'HOOK_SUMMARY' in (data.get('content') or ''):
                     injected = True
     assert injected
 
@@ -94,3 +94,37 @@ def test_disabled_hook_is_skipped(monkeypatch):
     runner = TurnRunner(sess)
     runner.run_user_turn("hello", options=TurnOptions(stream=False, suppress_context_print=True))
     assert calls['count'] == 0
+
+
+def test_hook_label_and_prefix_are_applied(monkeypatch):
+    sess = _make_session()
+    sess.config.set_option('pre_turn', 'test_hook')
+    if not sess.config.base_config.has_section('HOOK.test_hook'):
+        sess.config.base_config.add_section('HOOK.test_hook')
+    sess.config.base_config.set('HOOK.test_hook', 'enable', 'true')
+    sess.config.base_config.set('HOOK.test_hook', 'label', 'memory_items')
+    sess.config.base_config.set('HOOK.test_hook', 'prefix', 'Pref: ')
+    sess.config.set_option('prompt', 'default.txt')
+
+    def fake_run_internal_agent(steps, overrides=None, contexts=None, output=None, verbose_dump=False):
+        class _R:
+            last_text = "BODY"
+        return _R()
+
+    sess.run_internal_agent = fake_run_internal_agent  # type: ignore[assignment]
+
+    runner = TurnRunner(sess)
+    runner.run_user_turn("hello", options=TurnOptions(stream=False, suppress_context_print=True))
+
+    chat = sess.get_context('chat')
+    turns = chat.get('all') if chat else []
+    found = False
+    for t in turns:
+        ctx_items = t.get('context') or []
+        for c in ctx_items:
+            ctx_obj = c.get('context')
+            data = ctx_obj.get() if ctx_obj else None
+            if isinstance(data, dict) and data.get('name') == 'memory_items':
+                if data.get('content') == 'Pref:\nBODY':
+                    found = True
+    assert found

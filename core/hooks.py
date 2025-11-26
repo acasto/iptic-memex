@@ -14,6 +14,8 @@ class HookSpec:
     tools: Optional[str]
     steps: int
     mode: str  # 'inject' | 'silent' | 'rewrite' (future)
+    label: Optional[str]
+    prefix: Optional[str]
 
 
 def _parse_hook_names(session, phase: str) -> List[str]:
@@ -56,6 +58,8 @@ def _build_hook_spec(session, name: str) -> Optional[HookSpec]:
     model = _get_opt("model", None)
     prompt = _get_opt("prompt", None)
     tools = _get_opt("tools", None)
+    label = _get_opt("label", None)
+    prefix = _get_opt("prefix", None)
 
     steps_val = _get_opt("steps", 1)
     steps = 1
@@ -84,6 +88,8 @@ def _build_hook_spec(session, name: str) -> Optional[HookSpec]:
         tools=str(tools) if tools is not None else None,
         steps=steps,
         mode=mode,
+        label=str(label).strip() if isinstance(label, str) and label.strip() else None,
+        prefix=str(prefix) if prefix is not None else None,
     )
 
 
@@ -146,11 +152,16 @@ def _run_single_hook(session, spec: HookSpec, phase: str, extras: Optional[Dict[
     try:
         ctx_obj = getattr(session, "create_context", None)
         if callable(ctx_obj):
+            name = spec.label or f"hook:{spec.name}"
+            prefix = spec.prefix or ""
+            if prefix and not prefix.endswith("\n"):
+                prefix = prefix + "\n"
+            content = f"{prefix}{str(last_text)}"
             ctx_obj = session.create_context(
                 "assistant",
                 {
-                    "name": f"hook:{spec.name}",
-                    "content": str(last_text),
+                    "name": name,
+                    "content": content,
                 },
             )
         else:
