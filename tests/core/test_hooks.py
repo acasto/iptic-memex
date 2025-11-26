@@ -128,3 +128,57 @@ def test_hook_label_and_prefix_are_applied(monkeypatch):
                 if data.get('content') == 'Pref:\nBODY':
                     found = True
     assert found
+
+
+def test_hook_runs_every_n_user_turns(monkeypatch):
+    sess = _make_session()
+    sess.config.set_option('pre_turn', 'test_hook')
+    sess.config.set_option('post_turn', '')
+    if not sess.config.base_config.has_section('HOOK.test_hook'):
+        sess.config.base_config.add_section('HOOK.test_hook')
+    sess.config.base_config.set('HOOK.test_hook', 'enable', 'true')
+    sess.config.base_config.set('HOOK.test_hook', 'when_every_n_turns', '2')
+    sess.config.set_option('prompt', 'default.txt')
+
+    calls = {'count': 0}
+
+    def fake_run_internal_agent(steps, overrides=None, contexts=None, output=None, verbose_dump=False):
+        calls['count'] += 1
+        class _R:
+            last_text = "RUN"
+        return _R()
+
+    sess.run_internal_agent = fake_run_internal_agent  # type: ignore[assignment]
+
+    runner = TurnRunner(sess)
+    runner.run_user_turn("first", options=TurnOptions(stream=False, suppress_context_print=True))
+    runner.run_user_turn("second", options=TurnOptions(stream=False, suppress_context_print=True))
+
+    assert calls['count'] == 1  # should only run on every 2nd user turn
+
+
+def test_hook_message_contains_filters(monkeypatch):
+    sess = _make_session()
+    sess.config.set_option('pre_turn', 'test_hook')
+    sess.config.set_option('post_turn', '')
+    if not sess.config.base_config.has_section('HOOK.test_hook'):
+        sess.config.base_config.add_section('HOOK.test_hook')
+    sess.config.base_config.set('HOOK.test_hook', 'enable', 'true')
+    sess.config.base_config.set('HOOK.test_hook', 'when_message_contains', 'magic,xyz')
+    sess.config.set_option('prompt', 'default.txt')
+
+    calls = {'count': 0}
+
+    def fake_run_internal_agent(steps, overrides=None, contexts=None, output=None, verbose_dump=False):
+        calls['count'] += 1
+        class _R:
+            last_text = "RUN"
+        return _R()
+
+    sess.run_internal_agent = fake_run_internal_agent  # type: ignore[assignment]
+
+    runner = TurnRunner(sess)
+    runner.run_user_turn("hello there", options=TurnOptions(stream=False, suppress_context_print=True))
+    runner.run_user_turn("contains magic word", options=TurnOptions(stream=False, suppress_context_print=True))
+
+    assert calls['count'] == 1  # only second message matches

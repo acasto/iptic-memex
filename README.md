@@ -233,6 +233,11 @@ Hooks let you run lightweight internal agents around each turn without changing 
     - `steps = 1`
     - `mode = silent`  (runs only post-turn; side-effects only, no injected text)
     - `enable = true`
+    - Optional gating:
+      - `when_every_n_turns = 3` (run on every 3rd user turn)
+      - `when_min_turn = 2` (skip until at least turn 2)
+      - `when_message_contains = profile,location` (case-insensitive substring match on the current user message)
+      - `when_role = user` (future-proof; current turns are user-initiated)
 
 Behavior:
 - `mode=inject`:

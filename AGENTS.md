@@ -158,16 +158,21 @@ class MyAction(StepwiseAction):
   - `[HOOKS]` section defines pipelines:
     - `pre_turn = context_scout,memory_gate` (CSV list; order respected)
     - `post_turn = memory_scribe`
-  - Per-hook sections: `[HOOK.<name>]`:
-    - `model` – optional model override for the sidecar (defaults to `[AGENT].default_model` via internal runs).
-    - `prompt` – prompt source resolved via `PromptResolver` (supports chains/files/literals).
-    - `tools` – CSV list passed to `AGENT.active_tools_agent` for the internal run (e.g., `ragsearch,memory`).
-    - `steps` – max agent steps for this hook (default 1; floor at 1).
-    - `mode` – `inject|silent|rewrite`:
-      - `inject`: run **before** the provider call (`pre_turn`) and/or after (`post_turn`), then inject `last_text` as an assistant context attached to the latest chat turn. This behaves like a RAG summary or internal note loaded into context.
-      - `silent`: run only in `post_turn` (never in `pre_turn`) and ignore `last_text`; rely on tool side-effects (e.g., memory writes). Avoids adding latency before the main response.
-      - `rewrite`: currently behaves like `inject`; reserved for future message-rewrite wiring.
-    - `enable` – `true|false` (optional; default true). When `false`, the hook is ignored even if listed in `[HOOKS]`, so you can toggle behavior without editing the pipeline order.
+- Per-hook sections: `[HOOK.<name>]`:
+  - `model` – optional model override for the sidecar (defaults to `[AGENT].default_model` via internal runs).
+  - `prompt` – prompt source resolved via `PromptResolver` (supports chains/files/literals).
+  - `tools` – CSV list passed to `AGENT.active_tools_agent` for the internal run (e.g., `ragsearch,memory`).
+  - `steps` – max agent steps for this hook (default 1; floor at 1).
+  - `mode` – `inject|silent|rewrite`:
+    - `inject`: run **before** the provider call (`pre_turn`) and/or after (`post_turn`), then inject `last_text` as an assistant context attached to the latest chat turn. This behaves like a RAG summary or internal note loaded into context.
+    - `silent`: run only in `post_turn` (never in `pre_turn`) and ignore `last_text`; rely on tool side-effects (e.g., memory writes). Avoids adding latency before the main response.
+    - `rewrite`: currently behaves like `inject`; reserved for future message-rewrite wiring.
+  - Optional gating (skip hook when conditions fail; all are case-insensitive where applicable):
+    - `when_every_n_turns = N` → run on user turns where turn_index % N == 0.
+    - `when_min_turn = K` → run only on user turns with index ≥ K.
+    - `when_message_contains = a,b,c` → run only if the current user message contains any substring.
+    - `when_role = user` → future-proof role filter (current turns are user-initiated).
+  - `enable` – `true|false` (optional; default true). When `false`, the hook is ignored even if listed in `[HOOKS]`, so you can toggle behavior without editing the pipeline order.
 - Execution:
   - TurnRunner (`core/turns.TurnRunner`) calls `run_hooks(session, phase, extras)`:
     - `phase="pre_turn"`: after the user message is added to chat but before the provider’s first call. Only `mode=inject` hooks run here (silent hooks are auto-skipped).

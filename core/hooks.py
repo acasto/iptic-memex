@@ -16,6 +16,10 @@ class HookSpec:
     mode: str  # 'inject' | 'silent' | 'rewrite' (future)
     label: Optional[str]
     prefix: Optional[str]
+    when_every_n_turns: Optional[int]
+    when_min_turn: Optional[int]
+    when_message_contains: Optional[List[str]]
+    when_role: Optional[str]
 
 
 def _parse_hook_names(session, phase: str) -> List[str]:
@@ -61,6 +65,57 @@ def _build_hook_spec(session, name: str) -> Optional[HookSpec]:
     label = _get_opt("label", None)
     prefix = _get_opt("prefix", None)
 
+    # Conditional gating options
+    every_val = _get_opt("when_every_n_turns", None)
+    try:
+        if isinstance(every_val, int):
+            when_every_n_turns = every_val if every_val > 0 else None
+        elif isinstance(every_val, str) and every_val.strip().isdigit():
+            val = int(every_val.strip())
+            when_every_n_turns = val if val > 0 else None
+        else:
+            when_every_n_turns = None
+    except Exception:
+        when_every_n_turns = None
+
+    min_val = _get_opt("when_min_turn", None)
+    try:
+        if isinstance(min_val, int):
+            when_min_turn = min_val if min_val > 0 else None
+        elif isinstance(min_val, str) and min_val.strip().isdigit():
+            val = int(min_val.strip())
+            when_min_turn = val if val > 0 else None
+        else:
+            when_min_turn = None
+    except Exception:
+        when_min_turn = None
+
+    msg_contains_raw = _get_opt("when_message_contains", None)
+    when_message_contains: Optional[List[str]] = None
+    try:
+        items: List[str] = []
+        if isinstance(msg_contains_raw, (list, tuple)):
+            for item in msg_contains_raw:
+                if isinstance(item, str):
+                    trimmed = item.strip()
+                    if trimmed:
+                        items.append(trimmed)
+        elif isinstance(msg_contains_raw, str):
+            pieces = [p.strip() for p in msg_contains_raw.split(",")]
+            items = [p for p in pieces if p]
+        if items:
+            when_message_contains = items
+    except Exception:
+        when_message_contains = None
+
+    role_raw = _get_opt("when_role", None)
+    try:
+        when_role = str(role_raw).strip().lower() if role_raw else None
+        if when_role == "":
+            when_role = None
+    except Exception:
+        when_role = None
+
     steps_val = _get_opt("steps", 1)
     steps = 1
     try:
@@ -90,7 +145,91 @@ def _build_hook_spec(session, name: str) -> Optional[HookSpec]:
         mode=mode,
         label=str(label).strip() if isinstance(label, str) and label.strip() else None,
         prefix=str(prefix) if prefix is not None else None,
+        when_every_n_turns=when_every_n_turns,
+        when_min_turn=when_min_turn,
+        when_message_contains=when_message_contains,
+        when_role=when_role,
     )
+
+
+def _should_run_hook(session, spec: HookSpec, extras: Optional[Dict[str, Any]]) -> bool:
+    """Apply simple gating rules to decide if a hook should run this turn."""
+    # Short circuit when no gating is configured
+    if not any(
+        [
+            spec.when_every_n_turns,
+            spec.when_min_turn,
+            spec.when_message_contains,
+            spec.when_role,
+        ]
+    ):
+        return True
+
+    try:
+        chat = session.get_context("chat")
+        history = chat.get("all") if chat else []
+    except Exception:
+        history = []
+    if not history:
+        return False
+
+    # Locate the current user turn (latest user message)
+    user_turn = None
+    try:
+        for turn in reversed(history):
+            if str(turn.get("role", "")).lower() == "user":
+                user_turn = turn
+                break
+    except Exception:
+        user_turn = None
+    if user_turn is None:
+        return False
+
+    # Compute 1-based count of user turns up to and including this one
+    user_index = 0
+    try:
+        for turn in history:
+            if str(turn.get("role", "")).lower() == "user":
+                user_index += 1
+            if turn is user_turn:
+                break
+    except Exception:
+        pass
+
+    # Role gating (future-proof for non-user cases)
+    if spec.when_role:
+        try:
+            if str(user_turn.get("role", "")).lower() != spec.when_role:
+                return False
+        except Exception:
+            return False
+
+    # Minimum turn threshold
+    if spec.when_min_turn and user_index < spec.when_min_turn:
+        return False
+
+    # Every-N rule
+    if spec.when_every_n_turns and user_index % spec.when_every_n_turns != 0:
+        return False
+
+    # Message substring match (case-insensitive)
+    if spec.when_message_contains:
+        text = ""
+        try:
+            if extras and isinstance(extras.get("input_text"), str):
+                text = extras["input_text"]
+        except Exception:
+            text = ""
+        if not text:
+            try:
+                text = user_turn.get("message") or ""
+            except Exception:
+                text = ""
+        text_lower = text.lower()
+        if not any(item.lower() in text_lower for item in spec.when_message_contains):
+            return False
+
+    return True
 
 
 def _run_single_hook(session, spec: HookSpec, phase: str, extras: Optional[Dict[str, Any]]) -> None:
@@ -217,6 +356,8 @@ def run_hooks(session, phase: str, extras: Optional[Dict[str, Any]] = None) -> N
     for name in names:
         spec = _build_hook_spec(session, name)
         if not spec:
+            continue
+        if not _should_run_hook(session, spec, shared_extras):
             continue
         # Silent hooks do not need to block the pre-turn path; they can safely
         # run after the provider call using the post_turn phase instead.
