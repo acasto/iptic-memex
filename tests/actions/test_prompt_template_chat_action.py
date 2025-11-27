@@ -33,6 +33,36 @@ def test_prompt_template_chat_renders_last_and_last_n():
     assert "How are you?" in out_last
     assert "Hi" not in out_last
 
-    out_last2 = handler.run("X {{chat:last_2}} Y")
+    out_last2 = handler.run("X {{chat:last=2}} Y")
     assert "How are you?" in out_last2
     assert "Hello" in out_last2
+
+    # Legacy underscore syntax still works
+    out_legacy = handler.run("X {{chat:last_2}} Y")
+    assert "How are you?" in out_legacy
+    assert "Hello" in out_legacy
+
+
+def test_prompt_template_chat_role_and_limits():
+    sess = _make_session()
+    chat = sess.add_context('chat')
+    chat.add("u1", role="user")
+    chat.add("a1", role="assistant")
+    chat.add("u2", role="user")
+    chat.add("a2", role="assistant")
+
+    handler = PromptTemplateChatAction(sess)
+
+    # only=user should drop assistant turns
+    out_only_user = handler.run("{{chat:last_4;only=user}}")
+    assert "User: u1" in out_only_user
+    assert "User: u2" in out_only_user
+    assert "Assistant" not in out_only_user
+
+    # max_chars should truncate and include ellipsis marker
+    out_trunc = handler.run("{{chat:last_4;max_chars=10}}")
+    assert "… (truncated" in out_trunc
+
+    # max_tokens (very small) should truncate to a short prefix
+    out_tok = handler.run("{{chat:last_4;max_tokens=2}}")
+    assert len(out_tok.split()) <= 2

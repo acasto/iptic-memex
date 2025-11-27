@@ -4,7 +4,7 @@ Review the latest part of the conversation and decide if there are durable
 facts or user preferences that should be saved to long-term memory.
 
 Conversation (recent):
-{{chat:last_3}}
+{{chat:last=3;max_tokens=1000}}
 
 If the user shares stable facts (profile, preferences, long-term goals, project
 state), summarize them in neutral language and call the appropriate memory

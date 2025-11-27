@@ -147,8 +147,12 @@ class MyAction(StepwiseAction):
 - Purpose: expose recent chat slices inside prompts (system, per-turn, and hooks) without inventing a new template language.
 - Placeholders:
   - `{{chat:last}}` – last message in the full conversation.
-  - `{{chat:last_3}}` – last 3 messages.
+  - `{{chat:last=3}}` – last 3 messages (legacy `{{chat:last_3}}` remains supported).
   - `{{chat:window}}` or `{{chat}}` – provider-visible window (respects `context_sent`), falling back to full history.
+  - Modifiers: append `;key=value` pairs for role filtering and limits, e.g., `{{chat:last_5;only=user;max_tokens=256;max_chars=1200}}` or `{{chat:window;exclude=assistant}}`.
+    - `only=<roles>` / `exclude=<roles>`: CSV of roles (case-insensitive).
+    - `max_tokens=<n>`: token-cap (tiktoken when available, word-count fallback).
+    - `max_chars=<n>`: override default `chat_template_max_chars` (~2000 chars).
 - Rendering: produces a compact plain-text transcript like `User: ...` / `Assistant: ...`, with a conservative truncation limit (`DEFAULT.chat_template_max_chars`, default ~2000 chars) to avoid bloating prompts.
 
 ### Metacognitive Hooks (pre_turn/post_turn)

@@ -247,6 +247,14 @@ Behavior:
   - Skipped in `pre_turn` (no added latency before the answer).
   - Runs in `post_turn` so it can review the latest exchange and call tools (e.g., memory) without affecting the current response.
 
+Chat prompt placeholders:
+- `{{chat}}` / `{{chat:window}}`: provider-visible window (respects `context_sent`).
+- `{{chat:last}}`, `{{chat:last=3}}`, `{{chat:last=5}}`, etc. (legacy `last_3` remains supported)
+- Modifiers (semicolon-separated) for finer control, e.g. `{{chat:last_5;only=user;max_tokens=256}}`:
+  - `only=<roles>` / `exclude=<roles>` (CSV, case-insensitive) to filter roles.
+  - `max_tokens=<n>` token-caps the rendered transcript (uses `tiktoken` when available, falls back to words).
+  - `max_chars=<n>` overrides the default `chat_template_max_chars` cap (default ~2000 chars).
+
 #### 4. **Run Memex**
 ```bash
    python main.py chat
