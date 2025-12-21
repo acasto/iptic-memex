@@ -66,3 +66,20 @@ def test_prompt_template_chat_role_and_limits():
     # max_tokens (very small) should truncate to a short prefix
     out_tok = handler.run("{{chat:last_4;max_tokens=2}}")
     assert len(out_tok.split()) <= 2
+
+
+def test_prompt_template_chat_uses_seed_when_flag_set():
+    sess = _make_session()
+    chat = sess.add_context('chat')
+    chat.add("local", role="user")
+
+    sess.set_user_data("__chat_seed__", [
+        {"role": "user", "message": "seed1"},
+        {"role": "assistant", "message": "seed2"},
+    ])
+    sess.set_flag("use_chat_seed_for_templates", True)
+
+    handler = PromptTemplateChatAction(sess)
+    out_last = handler.run("{{chat:last}}")
+    assert "seed2" in out_last
+    assert "local" not in out_last

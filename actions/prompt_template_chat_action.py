@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, List, Tuple
+from typing import Any, List, Optional, Tuple
 
 from base_classes import InteractionAction
 
@@ -18,6 +18,43 @@ class PromptTemplateChatAction(InteractionAction):
     def __init__(self, session):
         self.session = session
         self.chat_pattern = r"\{\{chat(?::([^}]+))?\}\}"
+
+    def _get_chat_seed(self) -> Optional[List[dict]]:
+        try:
+            if not self.session.get_flag("use_chat_seed_for_templates", False):
+                return None
+        except Exception:
+            return None
+        try:
+            seed = self.session.get_user_data("__chat_seed__", None)
+        except Exception:
+            seed = None
+        if isinstance(seed, list):
+            return seed
+        return None
+
+    def _apply_context_window(self, msgs: List[dict]) -> List[dict]:
+        params = {}
+        try:
+            params = self.session.get_params() or {}
+        except Exception:
+            params = {}
+        context_sent = params.get("context_sent", "all")
+        if context_sent in ("none", "last_1"):
+            return msgs[-1:] if msgs else []
+        if context_sent == "all":
+            return msgs
+        try:
+            parts = str(context_sent).split("_")
+            if len(parts) == 2 and parts[1].isdigit():
+                n = int(parts[1])
+                if parts[0] == "first":
+                    return msgs[:n]
+                if parts[0] == "last":
+                    return msgs[-n:]
+        except Exception:
+            pass
+        return msgs
 
     def _parse_spec(self, spec: str) -> Tuple[str, dict]:
         """Split chat spec into base mode and modifiers.
@@ -37,6 +74,25 @@ class PromptTemplateChatAction(InteractionAction):
 
     def _get_chat_messages(self, mode: str) -> List[dict]:
         """Return a slice of chat messages based on the requested mode."""
+        seed = self._get_chat_seed()
+        if seed is not None:
+            all_msgs = seed or []
+            mode = (mode or "").strip().lower()
+            if not mode or mode == "window":
+                return self._apply_context_window(all_msgs)
+            if mode == "last":
+                return all_msgs[-1:] if all_msgs else []
+            if mode.startswith("last_") or mode.startswith("last="):
+                try:
+                    n_part = mode.split("_", 1)[1] if "_" in mode else mode.split("=", 1)[1]
+                    n = int(n_part)
+                except Exception:
+                    n = 1
+                if n <= 0:
+                    n = 1
+                return all_msgs[-n:] if all_msgs else []
+            return self._apply_context_window(all_msgs)
+
         try:
             chat = self.session.get_context("chat")
         except Exception:

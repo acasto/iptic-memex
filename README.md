@@ -265,11 +265,15 @@ Chat prompt placeholders:
    For full usage details, run:
 
 ```bash
-   python main.py --help
+  python main.py --help
   python main.py <subcommand> --help
   <within chat mode> /help
    ```
 ---
+
+Agent mode (non-interactive):
+- `python main.py agent --steps 2 -f ./path/to/file` (single-step if `--steps` omitted)
+- `python main.py agent --from-stdin --json` is reserved for external runner snapshots
 
 ## Key Commands
 

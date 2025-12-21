@@ -33,6 +33,7 @@ def test_pre_and_post_hooks_inject_assistant_context(monkeypatch):
     if not sess.config.base_config.has_section('HOOK.test_hook'):
         sess.config.base_config.add_section('HOOK.test_hook')
     sess.config.base_config.set('HOOK.test_hook', 'enable', 'true')
+    sess.config.base_config.set('HOOK.test_hook', 'when_message_contains', '')
     # For HOOK.test_hook, we only need a prompt; reuse a small literal via PROMPTS
     # Using a literal prompt path ensures PromptResolver can resolve it.
     sess.config.set_option('prompt', 'default.txt')
@@ -104,6 +105,7 @@ def test_hook_label_and_prefix_are_applied(monkeypatch):
     sess.config.base_config.set('HOOK.test_hook', 'enable', 'true')
     sess.config.base_config.set('HOOK.test_hook', 'label', 'memory_items')
     sess.config.base_config.set('HOOK.test_hook', 'prefix', 'Pref: ')
+    sess.config.base_config.set('HOOK.test_hook', 'when_message_contains', '')
     sess.config.set_option('prompt', 'default.txt')
 
     def fake_run_internal_agent(steps, overrides=None, contexts=None, output=None, verbose_dump=False):
@@ -138,6 +140,7 @@ def test_hook_runs_every_n_user_turns(monkeypatch):
         sess.config.base_config.add_section('HOOK.test_hook')
     sess.config.base_config.set('HOOK.test_hook', 'enable', 'true')
     sess.config.base_config.set('HOOK.test_hook', 'when_every_n_turns', '2')
+    sess.config.base_config.set('HOOK.test_hook', 'when_message_contains', '')
     sess.config.set_option('prompt', 'default.txt')
 
     calls = {'count': 0}
@@ -182,3 +185,37 @@ def test_hook_message_contains_filters(monkeypatch):
     runner.run_user_turn("contains magic word", options=TurnOptions(stream=False, suppress_context_print=True))
 
     assert calls['count'] == 1  # only second message matches
+
+
+def test_hook_external_runner_injects(monkeypatch):
+    sess = _make_session()
+    sess.config.set_option('pre_turn', 'test_hook')
+    sess.config.set_option('post_turn', '')
+    if not sess.config.base_config.has_section('HOOK.test_hook'):
+        sess.config.base_config.add_section('HOOK.test_hook')
+    sess.config.base_config.set('HOOK.test_hook', 'enable', 'true')
+    sess.config.base_config.set('HOOK.test_hook', 'runner', 'external')
+    sess.config.base_config.set('HOOK.test_hook', 'when_message_contains', '')
+    sess.config.set_option('prompt', 'default.txt')
+
+    def fake_run_external_agent(steps, overrides=None, contexts=None, cmd=None, timeout=None):
+        class _R:
+            last_text = "EXTERNAL"
+        return _R()
+
+    sess.run_external_agent = fake_run_external_agent  # type: ignore[assignment]
+
+    runner = TurnRunner(sess)
+    runner.run_user_turn("hello", options=TurnOptions(stream=False, suppress_context_print=True))
+
+    chat = sess.get_context('chat')
+    turns = chat.get('all') if chat else []
+    injected = False
+    for t in turns:
+        ctx_items = t.get('context') or []
+        for c in ctx_items:
+            ctx_obj = c.get('context')
+            data = ctx_obj.get() if ctx_obj else None
+            if isinstance(data, dict) and 'EXTERNAL' in (data.get('content') or ''):
+                injected = True
+    assert injected

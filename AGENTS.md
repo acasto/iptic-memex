@@ -153,6 +153,9 @@ class MyAction(StepwiseAction):
     - `only=<roles>` / `exclude=<roles>`: CSV of roles (case-insensitive).
     - `max_tokens=<n>`: token-cap (tiktoken when available, word-count fallback).
     - `max_chars=<n>`: override default `chat_template_max_chars` (~2000 chars).
+- Chat seed support (non-interactive runs):
+  - If `session.get_flag("use_chat_seed_for_templates")` is true and `session.user_data["__chat_seed__"]` is set, `{{chat:*}}` resolves against the seed instead of the live chat.
+  - This keeps internal/external agent runs from duplicating the caller's chat while still letting templates see the imported conversation.
 - Rendering: produces a compact plain-text transcript like `User: ...` / `Assistant: ...`, with a conservative truncation limit (`DEFAULT.chat_template_max_chars`, default ~2000 chars) to avoid bloating prompts.
 
 ### Metacognitive Hooks (pre_turn/post_turn)
@@ -182,7 +185,7 @@ class MyAction(StepwiseAction):
     - `phase="pre_turn"`: after the user message is added to chat but before the provider’s first call. Only `mode=inject` hooks run here (silent hooks are auto-skipped).
     - `phase="post_turn"`: after the assistant reply and any tools. Both `inject` and `silent` hooks run here.
   - Each hook uses `session.run_internal_agent(...)` with:
-    - `outer_session` pointing at the main session so `core.mode_runner.run_agent` can `copy_contexts` (including chat) into the internal session.
+    - `outer_session` pointing at the main session so `core.mode_runner.run_agent` can copy non-chat contexts and provide a `chat_seed` for template access (the subsession keeps its own scratch chat).
     - `overrides` carrying `model`, `prompt`, `active_tools_agent`, plus scalar extras (e.g., `hook_name`, `hook_phase`, `hook_input_text`).
   - For `mode=inject`/`rewrite`, `last_text` from the internal run is:
     - Added as an `assistant` context (`name = "hook:<hook_name>"`) on the main session.

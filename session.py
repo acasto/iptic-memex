@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
+import shlex
+import subprocess
+import sys
 import uuid
 from typing import Dict, List, Any, Optional, Literal, TypedDict, cast, Iterable, Tuple, Callable
 
@@ -627,6 +631,89 @@ class Session:
             verbose_dump=verbose_dump,
             outer_session=self,
         )
+
+    def run_external_agent(
+        self,
+        steps: int,
+        *,
+        overrides: Optional[dict] = None,
+        contexts: Optional[Iterable[Tuple[str, Any]]] = None,
+        cmd: Optional[Iterable[str] | str] = None,
+        timeout: Optional[float] = None,
+    ):
+        """Run an external agent loop using a snapshot passed via stdin.
+
+        Returns a core.runner_seed.ExternalAgentResult.
+        """
+        if not hasattr(self, '_builder') or getattr(self, '_builder', None) is None:
+            raise RuntimeError('Session builder is not available')
+
+        from core.runner_seed import ExternalAgentResult, build_runner_snapshot
+
+        snapshot = build_runner_snapshot(self, overrides=overrides, contexts=contexts)
+
+        if cmd is None:
+            main_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.py")
+            cmd_list = [
+                sys.executable,
+                main_path,
+                "agent",
+                "--steps",
+                str(int(steps or 1)),
+                "--json",
+                "--from-stdin",
+                "--no-hooks",
+            ]
+        elif isinstance(cmd, str):
+            cmd_list = shlex.split(cmd)
+        else:
+            cmd_list = list(cmd)
+
+        try:
+            payload = json.dumps(snapshot).encode("utf-8")
+        except Exception as exc:
+            return ExternalAgentResult(last_text=None, error=f"snapshot_encode_failed: {exc}")
+
+        try:
+            proc = subprocess.run(
+                cmd_list,
+                input=payload,
+                capture_output=True,
+                timeout=timeout,
+                check=False,
+            )
+        except Exception as exc:
+            return ExternalAgentResult(last_text=None, error=f"subprocess_failed: {exc}")
+
+        stdout = ""
+        try:
+            stdout = (proc.stdout or b"").decode("utf-8", errors="replace").strip()
+        except Exception:
+            stdout = ""
+        stderr = ""
+        try:
+            stderr = (proc.stderr or b"").decode("utf-8", errors="replace").strip()
+        except Exception:
+            stderr = ""
+
+        if proc.returncode not in (0, None):
+            err = stderr or f"external_agent_exit_{proc.returncode}"
+            return ExternalAgentResult(last_text=None, error=err)
+
+        if not stdout:
+            return ExternalAgentResult(last_text=None, error="empty_stdout")
+
+        try:
+            data = json.loads(stdout)
+        except Exception as exc:
+            return ExternalAgentResult(last_text=None, error=f"invalid_json: {exc}")
+
+        if isinstance(data, dict):
+            return ExternalAgentResult(
+                last_text=data.get("last_text"),
+                error=data.get("error"),
+            )
+        return ExternalAgentResult(last_text=None, error="unexpected_payload")
 
 
 class SessionBuilder:

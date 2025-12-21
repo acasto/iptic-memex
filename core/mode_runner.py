@@ -156,6 +156,8 @@ def run_agent(
     output: Optional[str] = None,  # 'final'|'full'|'none'
     verbose_dump: bool = False,
     outer_session: Any = None,
+    chat_seed: Optional[List[dict]] = None,
+    disable_hooks: bool = False,
 ) -> ModeResult:
     """Run an internal Agent loop using TurnRunner.
 
@@ -163,6 +165,11 @@ def run_agent(
     """
     sess = _build_subsession(builder, overrides=overrides)
     _attach_contexts(sess, contexts)
+    if disable_hooks:
+        try:
+            sess.set_flag("hooks_disabled", True)
+        except Exception:
+            pass
 
     # When called via Session.run_internal_agent, we may have an outer session.
     # Copy its contexts (optionally including chat) so internal runs can see the
@@ -170,7 +177,19 @@ def run_agent(
     if outer_session is not None:
         try:
             from core.context_transfer import copy_contexts
-            copy_contexts(outer_session, sess, include_chat=True)
+            copy_contexts(outer_session, sess, include_chat=False)
+        except Exception:
+            pass
+        if chat_seed is None:
+            try:
+                from core.runner_seed import build_chat_seed
+                chat_seed = build_chat_seed(outer_session)
+            except Exception:
+                chat_seed = None
+    if chat_seed:
+        try:
+            from core.runner_seed import apply_chat_seed
+            apply_chat_seed(sess, chat_seed)
         except Exception:
             pass
 

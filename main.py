@@ -1,4 +1,6 @@
 import click
+import json
+import sys
 from config_manager import ConfigManager
 from session import SessionBuilder
 
@@ -101,6 +103,10 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw,
     
     # Handle file mode (completion/agent based on steps)
     if len(file) > 0:
+        try:
+            click.echo("Note: '-f/--file' at the top level is legacy. Prefer 'python main.py agent -f ...'.", err=True)
+        except Exception:
+            pass
         # Build session for completion mode first; we may switch to Agent below
         session = builder.build(mode='completion', **options)
         ctx.obj['SESSION'] = session
@@ -247,6 +253,125 @@ def web(ctx, file, host, port):
         print(f"Error starting Web mode: {e}")
         import traceback
         traceback.print_exc()
+
+
+@cli.command()
+@click.pass_context
+@click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
+@click.option('--from-stdin', 'from_stdin', is_flag=True, default=False, help='Read runner snapshot JSON from stdin')
+@click.option('--no-hooks', 'no_hooks', is_flag=True, default=False, help='Disable hooks for this run')
+@click.option('--json', 'json_output', is_flag=True, default=False, help='Return JSON result (for external runner)')
+def agent(ctx, file, from_stdin, no_hooks, json_output):
+    """Run non-interactive agent mode (supports external runner snapshots)."""
+    builder = ctx.obj['BUILDER']
+    options = dict(ctx.obj.get('OPTIONS', {}))
+
+    cfg = ctx.obj.get('CONFIG_MANAGER').base_config if ctx.obj.get('CONFIG_MANAGER') else None
+    cfg_steps = 1
+    if cfg and cfg.has_section('AGENT'):
+        try:
+            cfg_steps = int(cfg.get('AGENT', 'default_steps', fallback='1'))
+        except Exception:
+            cfg_steps = 1
+
+    requested_steps = options.get('steps')
+    effective_steps = int(requested_steps) if requested_steps is not None else cfg_steps
+    if effective_steps <= 0:
+        effective_steps = 1
+
+    if from_stdin and file:
+        raise click.ClickException("Cannot combine --from-stdin with -f/--file.")
+
+    snapshot = None
+    chat_seed = None
+    contexts = None
+    if from_stdin:
+        raw = sys.stdin.read()
+        if not raw.strip():
+            raise click.ClickException("No snapshot provided on stdin.")
+        try:
+            snapshot = json.loads(raw)
+        except Exception as exc:
+            raise click.ClickException(f"Failed to parse snapshot JSON: {exc}") from exc
+
+    if snapshot:
+        try:
+            params = snapshot.get('params') if isinstance(snapshot, dict) else None
+            if isinstance(params, dict):
+                merged = dict(params)
+                merged.update(options)  # CLI overrides win
+                options = merged
+        except Exception:
+            pass
+        try:
+            chat_seed = snapshot.get('chat_seed') if isinstance(snapshot, dict) else None
+        except Exception:
+            chat_seed = None
+        try:
+            from core.runner_seed import snapshot_to_contexts
+            contexts = snapshot_to_contexts(snapshot)
+        except Exception:
+            contexts = None
+
+    if from_stdin or json_output:
+        try:
+            from core.mode_runner import run_agent
+            res = run_agent(
+                builder=builder,
+                steps=effective_steps,
+                overrides=options,
+                contexts=contexts,
+                output=options.get('agent_output'),
+                verbose_dump=bool(options.get('agent_debug', False)),
+                chat_seed=chat_seed,
+                disable_hooks=bool(no_hooks),
+            )
+        except Exception as exc:
+            if json_output:
+                print(json.dumps({"last_text": None, "error": str(exc)}))
+                return
+            raise
+
+        if json_output:
+            print(json.dumps({"last_text": res.last_text, "error": None}))
+        else:
+            if res.last_text:
+                print(res.last_text)
+        return
+
+    # Standard CLI agent mode (single-step agents are allowed)
+    session = builder.build(mode='completion', **options)
+    if no_hooks:
+        try:
+            session.set_flag("hooks_disabled", True)
+        except Exception:
+            pass
+
+    if len(file) > 0:
+        for f in file:
+            if is_image_file(f):
+                session.add_context('image', f)
+            else:
+                session.add_context('file', f)
+
+    from modes.agent_mode import AgentMode
+    mode = AgentMode(
+        session,
+        steps=int(effective_steps),
+        writes_policy=(options.get('agent_writes') if 'agent_writes' in options else 'deny'),
+        use_status_tags=not options.get('no_agent_status_tags', False),
+        output_mode=options.get('agent_output'),
+    )
+    if options.get('agent_debug', False):
+        try:
+            act = session.get_action('assistant_commands')
+            names = sorted(list((act.commands or {}).keys())) if act and hasattr(act, 'commands') else []
+            header = 'Agent tools:'
+            line = f"{header} " + (", ".join(names) if names else "(none)")
+            session.utils.output.write(line)
+        except Exception:
+            pass
+    mode.start()
 
 
 @cli.command()

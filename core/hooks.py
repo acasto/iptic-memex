@@ -20,6 +20,8 @@ class HookSpec:
     when_min_turn: Optional[int]
     when_message_contains: Optional[List[str]]
     when_role: Optional[str]
+    runner: str  # 'internal' | 'external'
+    external_cmd: Optional[str]
 
 
 def _parse_hook_names(session, phase: str) -> List[str]:
@@ -64,6 +66,14 @@ def _build_hook_spec(session, name: str) -> Optional[HookSpec]:
     tools = _get_opt("tools", None)
     label = _get_opt("label", None)
     prefix = _get_opt("prefix", None)
+    runner_val = _get_opt("runner", "internal")
+    try:
+        runner = str(runner_val).strip().lower() if runner_val is not None else "internal"
+    except Exception:
+        runner = "internal"
+    if runner not in ("internal", "external"):
+        runner = "internal"
+    external_cmd = _get_opt("external_cmd", None)
 
     # Conditional gating options
     every_val = _get_opt("when_every_n_turns", None)
@@ -149,6 +159,8 @@ def _build_hook_spec(session, name: str) -> Optional[HookSpec]:
         when_min_turn=when_min_turn,
         when_message_contains=when_message_contains,
         when_role=when_role,
+        runner=runner,
+        external_cmd=str(external_cmd) if external_cmd is not None else None,
     )
 
 
@@ -258,13 +270,21 @@ def _run_single_hook(session, spec: HookSpec, phase: str, extras: Optional[Dict[
         pass
 
     try:
-        result = session.run_internal_agent(
-            steps=spec.steps,
-            overrides=overrides or None,
-            contexts=None,
-            output="final",
-            verbose_dump=False,
-        )
+        if spec.runner == "external":
+            result = session.run_external_agent(
+                steps=spec.steps,
+                overrides=overrides or None,
+                contexts=None,
+                cmd=spec.external_cmd,
+            )
+        else:
+            result = session.run_internal_agent(
+                steps=spec.steps,
+                overrides=overrides or None,
+                contexts=None,
+                output="final",
+                verbose_dump=False,
+            )
     except Exception:
         # Hooks must never break the main turn; log best-effort and continue.
         try:
@@ -343,6 +363,11 @@ def run_hooks(session, phase: str, extras: Optional[Dict[str, Any]] = None) -> N
     - phase: 'pre_turn' or 'post_turn' (other values are ignored for now)
     - extras: optional dict of additional context (e.g., input_text, last_user)
     """
+    try:
+        if session.get_flag("hooks_disabled", False):
+            return
+    except Exception:
+        pass
     try:
         names = _parse_hook_names(session, phase)
     except Exception:
