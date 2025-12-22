@@ -160,6 +160,26 @@ class SessionBuilder:
         except Exception:
             pass
 
+        # Optional session autosave for interactive modes
+        try:
+            if ui_mode in ('chat', 'web', 'tui'):
+                autosave = session.get_option('SESSIONS', 'session_autosave', fallback=False)
+                if isinstance(autosave, str):
+                    autosave = autosave.strip().lower() in ('true', '1', 'yes', 'on')
+                if autosave:
+                    from core.session_persistence import save_session, prune_sessions
+
+                    def _autosave():
+                        try:
+                            save_session(session, kind='session')
+                            prune_sessions(session, kind='session')
+                        except Exception:
+                            pass
+
+                    session.register_cleanup_callback(_autosave)
+        except Exception:
+            pass
+
         return session
 
     def rebuild_provider(self, session) -> None:

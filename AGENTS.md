@@ -249,6 +249,7 @@ Gating and CLI‑only flows
   - Registry-driven parsing/dispatch; subcommand-level gating honors `Action.can_run(session)` and supports fine-grained gates via `gate: {type: 'action_can_run', name: '<action>', args: [...]}`.
   - Completions are hierarchical: `/` → commands, `/load ` → subs, `/load file ` → file paths, `/set model ` → model names.
   - Provide concise descriptions and keep names short (e.g., `/load file`, `/save chat`).
+  - Session helpers: `/sessions` (list saved sessions), `/resume <id>`, `/save checkpoint [title]`.
 - Gating: expose `@classmethod can_run(cls, session)` on an action to hide commands when prerequisites (APIs, tools) are missing.
 - Auto-submit: if a command sets `auto_submit: true` and `TOOLS.allow_auto_submit` is enabled, the next prompt is skipped after execution.
 

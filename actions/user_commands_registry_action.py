@@ -99,6 +99,7 @@ class UserCommandsRegistryAction(InteractionAction):
                     'contexts':       {'type': 'action', 'name': 'show', 'args': ['contexts']},
                     'tools':          {'type': 'action', 'name': 'show', 'args': ['tools']},
                     'chats':          {'type': 'action', 'name': 'manage_chats', 'args': ['list']},
+                    'sessions':       {'type': 'action', 'name': 'manage_sessions', 'args': ['list']},
                 },
             },
             'set': {
@@ -149,6 +150,7 @@ class UserCommandsRegistryAction(InteractionAction):
                         'args': ['save', 'full'],
                         'complete': {'type': 'builtin', 'name': 'chat_paths'},
                     },
+                    'checkpoint': {'type': 'action', 'name': 'manage_sessions', 'args': ['checkpoint']},
                     'code': {'type': 'action', 'name': 'save_code'},
                 },
             },
@@ -193,6 +195,18 @@ class UserCommandsRegistryAction(InteractionAction):
                 'sub': {
                     'update': {'type': 'action', 'name': 'rag_update'},
                     'status': {'type': 'action', 'name': 'rag_status'},
+                },
+            },
+            'sessions': {
+                'help': 'List saved sessions',
+                'sub': {
+                    '': {'type': 'action', 'name': 'manage_sessions', 'args': ['list']},
+                },
+            },
+            'resume': {
+                'help': 'Resume a saved session or checkpoint',
+                'sub': {
+                    '': {'type': 'action', 'name': 'manage_sessions', 'args': ['resume']},
                 },
             },
         }

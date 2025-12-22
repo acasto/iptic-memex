@@ -255,6 +255,23 @@ Chat prompt placeholders:
   - `max_tokens=<n>` token-caps the rendered transcript (uses `tiktoken` when available, falls back to words).
   - `max_chars=<n>` overrides the default `chat_template_max_chars` cap (default ~2000 chars).
 
+#### 3.2 Sessions (optional)
+
+Interactive session persistence (autosave/resume/checkpoints) can be enabled via:
+
+```ini
+[SESSIONS]
+session_directory = ~/.config/iptic-memex/sessions
+session_autosave = false
+session_autosave_limit = 20
+session_checkpoint_limit = 50
+```
+
+Commands:
+- `/sessions` or `/show sessions` – list saved sessions
+- `/resume <id>` – resume a saved session (checkpoints fork by default)
+- `/save checkpoint [title]` – save a checkpoint template
+
 #### 4. **Run Memex**
 ```bash
    python main.py chat
