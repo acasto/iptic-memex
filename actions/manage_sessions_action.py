@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import os
+import time
 from typing import Any, Dict, List
 
 from base_classes import InteractionAction
-from core.session_persistence import apply_session_data, list_sessions, load_session_data, save_session
+from core.session_persistence import (
+    apply_session_data,
+    list_sessions,
+    load_session_data,
+    resolve_session_path,
+    save_session,
+)
 
 
 class ManageSessionsAction(InteractionAction):
@@ -40,8 +47,25 @@ class ManageSessionsAction(InteractionAction):
                 name = it.get('id') or it.get('path') or ''
                 kind = it.get('kind') or 'session'
                 title = it.get('title') or ''
-                suffix = f" — {title}" if title else ""
-                self.session.ui.emit('status', {'message': f"- {name} [{kind}]{suffix}"})
+                model = it.get('model') or ''
+                snippet = it.get('first_user') or ''
+                ts = it.get('updated') or it.get('created') or it.get('mtime') or 0.0
+                when = ''
+                if ts:
+                    try:
+                        when = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(float(ts)))
+                    except Exception:
+                        when = ''
+                msg = f"- {name} [{kind}]"
+                if when:
+                    msg += f" {when}"
+                if model:
+                    msg += f" model={model}"
+                if title:
+                    msg += f" — {title}"
+                if snippet:
+                    msg += f" — \"{snippet}\""
+                self.session.ui.emit('status', {'message': msg})
         except Exception:
             pass
         return {'ok': True, 'sessions': items}
@@ -49,7 +73,7 @@ class ManageSessionsAction(InteractionAction):
     def _resume_session(self, target: str) -> Dict[str, Any]:
         if not target:
             return {'ok': False, 'error': 'missing_target'}
-        path = self._resolve_session_path(target)
+        path = resolve_session_path(self.session, target)
         if not path or not os.path.isfile(path):
             return {'ok': False, 'error': 'not_found'}
         data = load_session_data(path)
@@ -77,19 +101,3 @@ class ManageSessionsAction(InteractionAction):
         except Exception:
             pass
         return {'ok': True, 'path': path}
-
-    def _resolve_session_path(self, target: str) -> str:
-        # Direct path
-        if os.path.isfile(target):
-            return target
-        # Try id-based lookup in session directory
-        items = list_sessions(self.session)
-        for it in items:
-            if it.get('id') == target:
-                return it.get('path') or ''
-        # Fallback: match filename prefix
-        for it in items:
-            path = it.get('path') or ''
-            if os.path.basename(path).startswith(target):
-                return path
-        return ''

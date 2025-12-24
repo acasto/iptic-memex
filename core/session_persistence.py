@@ -225,6 +225,46 @@ def load_session_data(path: str) -> Dict[str, Any]:
 
 
 def list_sessions(session, directory: Optional[str] = None) -> List[Dict[str, Any]]:
+    def _safe_ts(value: Any) -> float:
+        try:
+            return float(value)
+        except Exception:
+            return 0.0
+
+    def _safe_str(value: Any) -> str:
+        if isinstance(value, str):
+            return value
+        if value is None:
+            return ""
+        try:
+            return str(value)
+        except Exception:
+            return ""
+
+    def _first_user_message(chat: Any) -> str:
+        if not isinstance(chat, list):
+            return ""
+        for turn in chat:
+            if not isinstance(turn, dict):
+                continue
+            role = _safe_str(turn.get("role")).lower()
+            if role != "user":
+                continue
+            msg = turn.get("message")
+            if msg is None:
+                msg = turn.get("content")
+            return _safe_str(msg)
+        return ""
+
+    def _clean_snippet(text: str, limit: int = 80) -> str:
+        if not text:
+            return ""
+        cleaned = " ".join(text.split())
+        if len(cleaned) > limit:
+            trimmed = cleaned[: max(0, limit - 3)].rstrip()
+            return f"{trimmed}..."
+        return cleaned
+
     out_dir = _resolve_sessions_dir(session, directory)
     if not os.path.isdir(out_dir):
         return []
@@ -242,6 +282,11 @@ def list_sessions(session, directory: Optional[str] = None) -> List[Dict[str, An
             mtime = os.path.getmtime(path)
         except Exception:
             mtime = 0.0
+        params = data.get("params") if isinstance(data.get("params"), dict) else {}
+        model = _safe_str(params.get("model"))
+        created = _safe_ts(data.get("created"))
+        updated = _safe_ts(data.get("updated"))
+        first_user = _clean_snippet(_first_user_message(data.get("chat")))
         items.append(
             {
                 "id": data.get("id") or fname,
@@ -249,10 +294,37 @@ def list_sessions(session, directory: Optional[str] = None) -> List[Dict[str, An
                 "title": data.get("title") or "",
                 "path": path,
                 "mtime": mtime,
+                "created": created,
+                "updated": updated,
+                "model": model,
+                "first_user": first_user,
             }
         )
     items.sort(key=lambda x: (x.get("mtime") or 0.0, x.get("id") or ""), reverse=True)
     return items
+
+
+def resolve_session_path(session, target: str, directory: Optional[str] = None) -> str:
+    if not target:
+        return ""
+    if os.path.isfile(target):
+        return target
+    items = list_sessions(session, directory=directory)
+    for it in items:
+        if it.get("id") == target:
+            return it.get("path") or ""
+    for it in items:
+        path = it.get("path") or ""
+        if os.path.basename(path).startswith(target):
+            return path
+    return ""
+
+
+def latest_session_path(session, directory: Optional[str] = None) -> str:
+    items = list_sessions(session, directory=directory)
+    if not items:
+        return ""
+    return items[0].get("path") or ""
 
 
 def _build_turn_context(session, ctx_items: Iterable[dict]) -> List[dict]:

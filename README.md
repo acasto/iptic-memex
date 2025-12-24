@@ -268,9 +268,13 @@ session_checkpoint_limit = 50
 ```
 
 Commands:
-- `/sessions` or `/show sessions` – list saved sessions
-- `/resume <id>` – resume a saved session (checkpoints fork by default)
+- `/show sessions` – list saved sessions
+- `/load session <id>` – resume a saved session (checkpoints fork by default)
 - `/save checkpoint [title]` – save a checkpoint template
+
+CLI:
+- `python main.py chat --resume` (most recent)
+- `python main.py chat --resume <id-or-path>` (explicit session)
 
 #### 4. **Run Memex**
 ```bash

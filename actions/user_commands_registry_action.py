@@ -54,6 +54,7 @@ class UserCommandsRegistryAction(InteractionAction):
                     'multiline': {'type': 'action', 'name': 'load_multiline'},
                     'web':       {'type': 'action', 'name': 'fetch_from_web'} ,
                     'chat':      {'type': 'action', 'name': 'manage_chats', 'args': ['load'], 'complete': {'type': 'builtin', 'name': 'chat_paths'}},
+                    'session':   {'type': 'action', 'name': 'manage_sessions', 'args': ['resume'], 'complete': {'type': 'builtin', 'name': 'session_ids'}},
                     # MCP helpers via load group for convenience
                     'mcp':          {'type': 'action', 'name': 'mcp_connect'},
                     'mcp-demo':     {'type': 'action', 'name': 'mcp_demo'},
@@ -195,18 +196,6 @@ class UserCommandsRegistryAction(InteractionAction):
                 'sub': {
                     'update': {'type': 'action', 'name': 'rag_update'},
                     'status': {'type': 'action', 'name': 'rag_status'},
-                },
-            },
-            'sessions': {
-                'help': 'List saved sessions',
-                'sub': {
-                    '': {'type': 'action', 'name': 'manage_sessions', 'args': ['list']},
-                },
-            },
-            'resume': {
-                'help': 'Resume a saved session or checkpoint',
-                'sub': {
-                    '': {'type': 'action', 'name': 'manage_sessions', 'args': ['resume']},
                 },
             },
         }

@@ -166,7 +166,8 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw,
 @cli.command()
 @click.pass_context
 @click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
-def chat(ctx, file):
+@click.option('--resume', default=None, help='Resume session (most recent if no value)')
+def chat(ctx, file, resume):
     # Get builder and options from context
     builder = ctx.obj['BUILDER']
     options = ctx.obj.get('OPTIONS', {})
@@ -175,6 +176,8 @@ def chat(ctx, file):
     session = builder.build(mode='chat', **options)
     ctx.obj['SESSION'] = session
     
+    _maybe_resume_session(session, resume=resume)
+
     # Add file contexts if provided
     if len(file) > 0:
         for f in file:
@@ -190,7 +193,8 @@ def chat(ctx, file):
 @cli.command()
 @click.pass_context
 @click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
-def tui(ctx, file):
+@click.option('--resume', default=None, help='Resume session (most recent if no value)')
+def tui(ctx, file, resume):
     """Start TUI (Terminal User Interface) mode"""
     # Get builder and options from context
     builder = ctx.obj['BUILDER']
@@ -200,6 +204,8 @@ def tui(ctx, file):
     session = builder.build(mode='tui', **options)
     ctx.obj['SESSION'] = session
     
+    _maybe_resume_session(session, resume=resume)
+
     # Add file contexts if provided
     if len(file) > 0:
         for f in file:
@@ -225,9 +231,10 @@ def tui(ctx, file):
 @cli.command()
 @click.pass_context
 @click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
+@click.option('--resume', default=None, help='Resume session (most recent if no value)')
 @click.option('--host', default=None, help='Host interface to bind (overrides config)')
 @click.option('--port', type=int, default=None, help='Port to bind (overrides config)')
-def web(ctx, file, host, port):
+def web(ctx, file, resume, host, port):
     """Start Web mode (local browser UI)"""
     # Get builder and options from context
     builder = ctx.obj['BUILDER']
@@ -236,6 +243,8 @@ def web(ctx, file, host, port):
     # Build session for Web mode
     session = builder.build(mode='web', **options)
     ctx.obj['SESSION'] = session
+
+    _maybe_resume_session(session, resume=resume)
 
     # Add file contexts if provided
     if len(file) > 0:
@@ -471,6 +480,61 @@ def is_image_file(filename: str) -> bool:
     return filename.lower().endswith(image_extensions)
 
 
+def _maybe_resume_session(session, *, resume: str | None) -> None:
+    if resume is None:
+        return
+    try:
+        from core.session_persistence import apply_session_data, latest_session_path, load_session_data, resolve_session_path
+    except Exception:
+        return
+
+    target = ""
+    if isinstance(resume, str) and resume and resume != "__last__":
+        target = resume
+    if not target:
+        target = latest_session_path(session)
+    path = resolve_session_path(session, target) if target else ""
+    if not path:
+        try:
+            session.utils.output.warning("No saved session found to resume.")
+        except Exception:
+            pass
+        return
+    try:
+        data = load_session_data(path)
+    except Exception:
+        try:
+            session.utils.output.warning("Failed to load session data.")
+        except Exception:
+            pass
+        return
+    kind = (data.get("kind") or "session").lower()
+    fork = (kind == "checkpoint")
+    apply_session_data(session, data, fork=fork)
+    try:
+        msg = f"Resumed session from {path}"
+        if fork:
+            msg += " (forked from checkpoint)"
+        session.ui.emit('status', {'message': msg})
+    except Exception:
+        pass
+
+
 # take care of business
 if __name__ == "__main__":
-    cli(obj={})
+    def _normalize_resume_argv(argv: list[str]) -> list[str]:
+        out: list[str] = []
+        i = 0
+        while i < len(argv):
+            arg = argv[i]
+            if arg == "--resume":
+                next_arg = argv[i + 1] if i + 1 < len(argv) else None
+                if next_arg is None or (isinstance(next_arg, str) and next_arg.startswith("-")):
+                    out.extend(["--resume", "__last__"])
+                    i += 1
+                    continue
+            out.append(arg)
+            i += 1
+        return out
+
+    cli(obj={}, args=_normalize_resume_argv(sys.argv[1:]))

@@ -70,6 +70,12 @@ class TabCompletionHandler:
                 options = uca.complete(line, cursor, text) or []
             except Exception:
                 options = []
+            # Fallback for '/load session' when registry completion is unavailable
+            if not options and line.lstrip().startswith('/load session'):
+                try:
+                    options = self._complete_session_ids(text or '')
+                except Exception:
+                    options = []
             # Heuristic: when completing the top-level '/command', append a trailing
             # space so users can immediately see subcommand/arg candidates with Tab.
             try:
@@ -106,6 +112,16 @@ class TabCompletionHandler:
             return matches[state]
         except IndexError:
             return None
+
+    def _complete_session_ids(self, prefix: str) -> list[str]:
+        if not self._session:
+            return []
+        try:
+            from core.session_persistence import list_sessions
+            items = list_sessions(self._session)
+        except Exception:
+            items = []
+        return sorted([str(it.get('id')) for it in items if isinstance(it, dict) and it.get('id') and str(it.get('id')).startswith(prefix or '')])
 
     def chat_path_completer(self, text: str, state: int) -> Optional[str]:
         """Tab completion for chat session file paths"""

@@ -80,6 +80,8 @@ class ChatCommandsAction(InteractionAction):
                             return [c for c in self._complete_file_paths(fragment or '') if c.startswith(fragment or '')]
                         if name == 'chat_paths':
                             return [c for c in self._complete_chat_paths(fragment or '') if c.startswith(fragment or '')]
+                        if name == 'session_ids':
+                            return [c for c in self._complete_session_ids(fragment or '') if c.startswith(fragment or '')]
                         if name == 'models':
                             return [c for c in self._complete_models(fragment or '') if c.startswith(fragment or '')]
                         if name == 'options':
@@ -128,6 +130,8 @@ class ChatCommandsAction(InteractionAction):
                             return [c for c in self._complete_file_paths(fragment or '') if c.startswith(fragment or '')]
                         if name == 'chat_paths':
                             return [c for c in self._complete_chat_paths(fragment or '') if c.startswith(fragment or '')]
+                        if name == 'session_ids':
+                            return [c for c in self._complete_session_ids(fragment or '') if c.startswith(fragment or '')]
                         if name == 'models':
                             return [c for c in self._complete_models(fragment or '') if c.startswith(fragment or '')]
                         if name == 'options':
@@ -289,6 +293,17 @@ class ChatCommandsAction(InteractionAction):
         exts = ('.md', '.txt', '.pdf')
         opts = [e for e in entries if e.startswith(text) and (os.path.isdir(e) or any(e.endswith(ext) for ext in exts))]
         return sorted(opts)
+
+    def _complete_session_ids(self, prefix: str) -> List[str]:
+        try:
+            from core.session_persistence import list_sessions
+        except Exception:
+            return []
+        try:
+            items = list_sessions(self.session)
+        except Exception:
+            items = []
+        return sorted([str(it.get('id')) for it in items if isinstance(it, dict) and it.get('id') and str(it.get('id')).startswith(prefix or '')])
 
     def _complete_models(self, prefix: str) -> List[str]:
         try:
