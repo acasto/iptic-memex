@@ -7,18 +7,8 @@ _SIMPLE_TYPES = (str, int, float, bool)
 
 # Runner snapshots are ephemeral inputs. Keep params conservative.
 _PARAM_ALLOWLIST = {
-    "context_sent",
-    "model",
-    "prompt",
-    "tool_mode",
+    # Keep runner snapshots minimal; override explicitly when needed.
     "base_directory",
-    "active_tools_agent",
-    "use_mcp",
-    "available_mcp",
-    "agent_output_mode",
-    "agent_debug",
-    "temperature",
-    "max_tokens",
 }
 
 
@@ -154,4 +144,3 @@ def snapshot_to_contexts(snapshot: Dict[str, Any]) -> List[Tuple[str, Any]]:
             else:
                 out.append((kind, entry))
     return out
-
