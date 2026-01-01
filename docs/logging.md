@@ -15,3 +15,15 @@ Useful keys:
   `log_messages`, `log_mcp`, `log_rag`, `log_web`
 
 Adjust verbosity by aspect (e.g., `log_cmd = detail`) for deeper auditing.
+
+## Log viewer (CLI)
+
+Inspect logs (base file + rotated history):
+- `python main.py logs files`
+
+Tail or show filtered events:
+- `python main.py logs tail -n 50 --trace <trace_id>`
+- `python main.py logs show --hook <hook_name> --event hook_failed --json`
+
+Common filters:
+- `--trace`, `--session`, `--outer-session`, `--hook`, `--tool-call-id`, `--event`, `--aspect`

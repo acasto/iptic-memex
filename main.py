@@ -1,5 +1,6 @@
 import click
 import json
+import os
 import sys
 from config_manager import ConfigManager
 from session import SessionBuilder
@@ -478,6 +479,92 @@ def list_prompts(ctx):
             print(prompt)
     else:
         print("No prompts available")
+
+
+@cli.group()
+@click.pass_context
+def logs(ctx):
+    """Inspect JSONL logs (supports rotation)."""
+    # Keep group for subcommands
+    return
+
+
+def _logs_where(trace, session_uid, outer_session_uid, hook, tool_call_id, event, aspect):
+    where = {}
+    if trace:
+        where["trace_id"] = str(trace).strip()
+    if session_uid:
+        where["session_uid"] = str(session_uid).strip()
+    if outer_session_uid:
+        where["outer_session_uid"] = str(outer_session_uid).strip()
+    if hook:
+        where["hook_name"] = str(hook).strip()
+    if tool_call_id:
+        where["tool_call_id"] = str(tool_call_id).strip()
+    if event:
+        where["event"] = str(event).strip()
+    if aspect:
+        where["aspect"] = str(aspect).strip()
+    return where
+
+
+@logs.command("files")
+@click.pass_context
+@click.option("--path", "path_override", default=None, help="Override log file path (base).")
+def logs_files(ctx, path_override):
+    """List log files (base + rotated)."""
+    cfg = (ctx.obj.get("CONFIG_MANAGER").base_config if ctx.obj.get("CONFIG_MANAGER") else ConfigManager().base_config)
+    from utils.log_viewer import list_log_files, resolve_log_path
+
+    base_path = os.path.expanduser(path_override) if path_override else resolve_log_path(cfg)
+    for p in list_log_files(base_path):
+        click.echo(p)
+
+
+@logs.command("tail")
+@click.pass_context
+@click.option("-n", "--lines", default=50, show_default=True, help="Number of matching events to show.")
+@click.option("--path", "path_override", default=None, help="Override log file path (base).")
+@click.option("--trace", "trace", default=None, help="Filter by ctx.trace_id.")
+@click.option("--session", "session_uid", default=None, help="Filter by ctx.session_uid.")
+@click.option("--outer-session", "outer_session_uid", default=None, help="Filter by ctx.outer_session_uid.")
+@click.option("--hook", "hook", default=None, help="Filter by ctx.hook_name.")
+@click.option("--tool-call-id", "tool_call_id", default=None, help="Filter by ctx.tool_call_id.")
+@click.option("--event", "event", default=None, help="Filter by event name.")
+@click.option("--aspect", "aspect", default=None, help="Filter by aspect.")
+@click.option("--json", "json_output", is_flag=True, default=False, help="Print raw JSONL lines.")
+def logs_tail(ctx, lines, path_override, trace, session_uid, outer_session_uid, hook, tool_call_id, event, aspect, json_output):
+    """Show the last N matching events across rotated files."""
+    cfg = (ctx.obj.get("CONFIG_MANAGER").base_config if ctx.obj.get("CONFIG_MANAGER") else ConfigManager().base_config)
+    from utils.log_viewer import resolve_log_path, tail_events
+
+    base_path = os.path.expanduser(path_override) if path_override else resolve_log_path(cfg)
+    where = _logs_where(trace, session_uid, outer_session_uid, hook, tool_call_id, event, aspect)
+    for line in tail_events(base_path=base_path, lines=lines, where=where, json_output=json_output):
+        click.echo(line)
+
+
+@logs.command("show")
+@click.pass_context
+@click.option("--limit", default=200, show_default=True, help="Maximum number of matching events to show.")
+@click.option("--path", "path_override", default=None, help="Override log file path (base).")
+@click.option("--trace", "trace", default=None, help="Filter by ctx.trace_id.")
+@click.option("--session", "session_uid", default=None, help="Filter by ctx.session_uid.")
+@click.option("--outer-session", "outer_session_uid", default=None, help="Filter by ctx.outer_session_uid.")
+@click.option("--hook", "hook", default=None, help="Filter by ctx.hook_name.")
+@click.option("--tool-call-id", "tool_call_id", default=None, help="Filter by ctx.tool_call_id.")
+@click.option("--event", "event", default=None, help="Filter by event name.")
+@click.option("--aspect", "aspect", default=None, help="Filter by aspect.")
+@click.option("--json", "json_output", is_flag=True, default=False, help="Print raw JSONL lines.")
+def logs_show(ctx, limit, path_override, trace, session_uid, outer_session_uid, hook, tool_call_id, event, aspect, json_output):
+    """Show matching events in chronological order across rotated files."""
+    cfg = (ctx.obj.get("CONFIG_MANAGER").base_config if ctx.obj.get("CONFIG_MANAGER") else ConfigManager().base_config)
+    from utils.log_viewer import resolve_log_path, show_events
+
+    base_path = os.path.expanduser(path_override) if path_override else resolve_log_path(cfg)
+    where = _logs_where(trace, session_uid, outer_session_uid, hook, tool_call_id, event, aspect)
+    for line in show_events(base_path=base_path, limit=limit, where=where, json_output=json_output):
+        click.echo(line)
 
 
 def is_image_file(filename: str) -> bool:
