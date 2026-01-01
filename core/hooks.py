@@ -43,10 +43,23 @@ def _build_hook_spec(session, name: str) -> Optional[HookSpec]:
     section = f"HOOK.{name}"
 
     def _get_opt(opt: str, fallback: Any = None) -> Any:
+        # IMPORTANT: hook specs are configuration, not runtime parameters.
+        # SessionConfig.get_option() checks session overrides *by option name*
+        # regardless of section, so reading opt="model" would incorrectly return
+        # the session's current model override instead of HOOK.<name>.model.
         try:
-            return session.get_option(section, opt, fallback=fallback)
+            cfg = getattr(session, "config", None)
+            base = getattr(cfg, "base_config", None)
+            if base is not None and getattr(base, "has_option", None) and base.has_option(section, opt):
+                try:
+                    from config_manager import ConfigManager
+
+                    return ConfigManager.fix_values(base.get(section, opt))
+                except Exception:
+                    return base.get(section, opt)
         except Exception:
-            return fallback
+            pass
+        return fallback
 
     # Enable flag: allow toggling hooks without editing [HOOKS] lists
     enabled_val = _get_opt("enable", True)
@@ -270,25 +283,44 @@ def _run_single_hook(session, spec: HookSpec, phase: str, extras: Optional[Dict[
         pass
 
     try:
-        if spec.runner == "external":
-            result = session.run_external_agent(
-                steps=spec.steps,
-                overrides=overrides or None,
-                contexts=None,
-                cmd=spec.external_cmd,
+        try:
+            hook_span = session.utils.logger.span(
+                "hook",
+                hook_name=spec.name,
+                hook_phase=phase,
+                hook_mode=spec.mode,
+                hook_runner=spec.runner,
             )
-        else:
-            result = session.run_internal_agent(
-                steps=spec.steps,
-                overrides=overrides or None,
-                contexts=None,
-                output="final",
-                verbose_dump=False,
-            )
-    except Exception:
+        except Exception:
+            from contextlib import nullcontext
+            hook_span = nullcontext()
+
+        with hook_span:
+            if spec.runner == "external":
+                result = session.run_external_agent(
+                    steps=spec.steps,
+                    overrides=overrides or None,
+                    contexts=None,
+                    cmd=spec.external_cmd,
+                )
+            else:
+                result = session.run_internal_agent(
+                    steps=spec.steps,
+                    overrides=overrides or None,
+                    contexts=None,
+                    output="final",
+                    verbose_dump=False,
+                )
+    except Exception as exc:
         # Hooks must never break the main turn; log best-effort and continue.
         try:
-            session.utils.logger.log("WARNING", f"Hook '{spec.name}' failed", component="core.hooks")
+            session.utils.logger.log(
+                "hook_failed",
+                component="core.hooks",
+                aspect="errors",
+                severity="warning",
+                data={"hook": spec.name, "phase": phase, "runner": spec.runner, "error": str(exc)},
+            )
         except Exception:
             pass
         return

@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, List, Optional, Tuple, Literal
 import time
 import random
+import uuid
 from base_classes import InteractionNeeded
 from contexts.chat_context import ChatContext as RealChatContext
 from core.hooks import run_hooks
@@ -35,6 +36,13 @@ class TurnResult:
     turns_executed: int
     stopped_on_sentinel: bool
     ran_tools: bool
+
+
+def _new_trace_id() -> str:
+    try:
+        return uuid.uuid4().hex
+    except Exception:
+        return str(int(time.time() * 1000))
 
 
 class TurnRunner:
@@ -77,6 +85,29 @@ class TurnRunner:
             self.session.set_user_data('__turn_cancel__', token)
         except Exception:
             token = None
+
+        # Correlation: bind a request-lifecycle trace/span for this user turn so
+        # provider/tool/hook logs can be grouped even when multiple sessions or
+        # background subsessions are involved.
+        stack = None
+        trace_id = None
+        try:
+            from contextlib import ExitStack
+
+            stack = ExitStack()
+            lg = self.session.utils.logger
+            ctx = lg.get_context() if hasattr(lg, "get_context") else {}
+            if isinstance(ctx, dict):
+                trace_id = ctx.get("trace_id")
+            if not trace_id:
+                trace_id = _new_trace_id()
+            stack.enter_context(lg.span("lifecycle", trace_id=trace_id, lifecycle="user_turn"))
+            try:
+                self.session.set_user_data("__trace_id__", trace_id)
+            except Exception:
+                pass
+        except Exception:
+            stack = None
 
         initial_auto = bool(self.session.get_flag("auto_submit"))
         user_meta = self._begin_turn_meta(role="user", kind="auto_submit" if initial_auto else "user")
@@ -155,6 +186,12 @@ class TurnRunner:
         except Exception:
             pass
 
+        try:
+            if stack is not None:
+                stack.close()
+        except Exception:
+            pass
+
         return TurnResult(
             last_text=self._strip_sentinels(last_display, opts.sentinels) if last_display else last_display,
             sanitized=last_sanitized,
@@ -195,6 +232,26 @@ class TurnRunner:
             self.session.set_user_data('__turn_cancel__', token)
         except Exception:
             token = None
+
+        stack = None
+        trace_id = None
+        try:
+            from contextlib import ExitStack
+
+            stack = ExitStack()
+            lg = self.session.utils.logger
+            ctx = lg.get_context() if hasattr(lg, "get_context") else {}
+            if isinstance(ctx, dict):
+                trace_id = ctx.get("trace_id")
+            if not trace_id:
+                trace_id = _new_trace_id()
+            stack.enter_context(lg.span("lifecycle", trace_id=trace_id, lifecycle="agent_run"))
+            try:
+                self.session.set_user_data("__trace_id__", trace_id)
+            except Exception:
+                pass
+        except Exception:
+            stack = None
 
         if not self.session.get_context("chat"):
             self.session.add_context("chat")
@@ -277,6 +334,12 @@ class TurnRunner:
 
         if last_display and output_mode == "final":
             last_display = self._strip_sentinels(last_display, opts.sentinels)
+
+        try:
+            if stack is not None:
+                stack.close()
+        except Exception:
+            pass
 
         return TurnResult(
             last_text=last_display,
@@ -462,6 +525,7 @@ class TurnRunner:
         if not provider:
             return "", "", ""
         # Log provider start
+        meta = None
         try:
             meta = {
                 'model': (self.session.get_params() or {}).get('model'),
@@ -495,7 +559,9 @@ class TurnRunner:
                 except Exception:
                     sanitized = raw
                 try:
-                    self.session.utils.logger.provider_done({'result': 'ok', 'bytes': len(raw or '')}, component='core.turns')
+                    payload = dict(meta or {})
+                    payload.update({'result': 'ok', 'bytes': len(raw or '')})
+                    self.session.utils.logger.provider_done(payload, component='core.turns')
                 except Exception:
                     pass
                 return raw, str(display), str(sanitized)
@@ -507,7 +573,9 @@ class TurnRunner:
             except Exception:
                 pass
             try:
-                self.session.utils.logger.provider_done({'result': 'ok', 'bytes': len(raw or '')}, component='core.turns')
+                payload = dict(meta or {})
+                payload.update({'result': 'ok', 'bytes': len(raw or '')})
+                self.session.utils.logger.provider_done(payload, component='core.turns')
             except Exception:
                 pass
             return raw, raw, raw
@@ -539,7 +607,8 @@ class TurnRunner:
         except Exception:
             duration_ms = None
         try:
-            payload = {'result': 'ok', 'bytes': len(raw_text or '')}
+            payload = dict(meta or {})
+            payload.update({'result': 'ok', 'bytes': len(raw_text or '')})
             if duration_ms is not None:
                 payload['duration_ms'] = duration_ms
             self.session.utils.logger.provider_done(payload, component='core.turns')
@@ -815,9 +884,33 @@ class TurnRunner:
                                         out_mode = (self.session.get_params().get('agent_output_mode') or '').lower()
                                         if self.session.in_agent_mode() and out_mode in ('final', 'none'):
                                             with self.session.utils.output.suppress_below(OutputLevel.WARNING):
-                                                action.run(args, content)
+                                                try:
+                                                    from contextlib import nullcontext
+                                                    lg = getattr(self.session.utils, "logger", None)
+                                                    span_cm = lg.span(
+                                                        "tool",
+                                                        tool_name=name,
+                                                        tool_call_id=call_id,
+                                                    ) if (lg and hasattr(lg, "span")) else nullcontext()
+                                                except Exception:
+                                                    from contextlib import nullcontext
+                                                    span_cm = nullcontext()
+                                                with span_cm:
+                                                    action.run(args, content)
                                         else:
-                                            action.run(args, content)
+                                            try:
+                                                from contextlib import nullcontext
+                                                lg = getattr(self.session.utils, "logger", None)
+                                                span_cm = lg.span(
+                                                    "tool",
+                                                    tool_name=name,
+                                                    tool_call_id=call_id,
+                                                ) if (lg and hasattr(lg, "span")) else nullcontext()
+                                            except Exception:
+                                                from contextlib import nullcontext
+                                                span_cm = nullcontext()
+                                            with span_cm:
+                                                action.run(args, content)
                                     except KeyboardInterrupt:
                                         # Cooperative cancellation: mark token and stop executing queued calls
                                         try:
@@ -900,7 +993,19 @@ class TurnRunner:
                                     except Exception:
                                         # Fallback: try once more without output suppression
                                         try:
-                                            action.run(args, content)
+                                            try:
+                                                from contextlib import nullcontext
+                                                lg = getattr(self.session.utils, "logger", None)
+                                                span_cm = lg.span(
+                                                    "tool",
+                                                    tool_name=name,
+                                                    tool_call_id=call_id,
+                                                ) if (lg and hasattr(lg, "span")) else nullcontext()
+                                            except Exception:
+                                                from contextlib import nullcontext
+                                                span_cm = nullcontext()
+                                            with span_cm:
+                                                action.run(args, content)
                                         except KeyboardInterrupt:
                                             try:
                                                 self.session.set_flag('turn_cancelled', True)
@@ -975,8 +1080,8 @@ class TurnRunner:
                                                     break
                                                 # Resumed successfully; proceed to emit tool result for this call_id
                                             raise
-                                        except Exception as err:
-                                            raise err
+                                    except Exception as err:
+                                        raise err
                             ran_any = True
                             try:
                                 after_ctx = list(self.session.get_contexts('assistant') or [])

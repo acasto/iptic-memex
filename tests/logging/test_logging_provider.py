@@ -123,4 +123,12 @@ def test_turnrunner_logs_provider_begin_and_done(tmp_path: Path):
     names = [e.get('event') for e in evts]
     assert 'provider_start' in names
     assert 'provider_done' in names
-
+    # Correlation context is always present and should include a per-turn trace id.
+    start_evt = [e for e in evts if e.get('event') == 'provider_start'][-1]
+    ctx = start_evt.get('ctx') or {}
+    assert isinstance(ctx.get('trace_id'), str) and len(ctx.get('trace_id')) > 0
+    # provider_done should retain basic identifying fields for correlation.
+    done_evt = [e for e in evts if e.get('event') == 'provider_done'][-1]
+    data = done_evt.get('data') or {}
+    assert data.get('model') == 'fake-model'
+    assert data.get('provider') == 'FakeProvider'

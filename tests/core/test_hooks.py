@@ -219,3 +219,33 @@ def test_hook_external_runner_injects(monkeypatch):
             if isinstance(data, dict) and 'EXTERNAL' in (data.get('content') or ''):
                 injected = True
     assert injected
+
+
+def test_hook_model_is_not_shadowed_by_session_model_override(monkeypatch):
+    sess = _make_session()
+    # Outer session is "currently" on kimi (or any other), but hook explicitly sets a model.
+    sess.config.set_option("model", "kimi")
+    sess.config.set_option("pre_turn", "test_hook")
+    sess.config.set_option("post_turn", "")
+    if not sess.config.base_config.has_section("HOOK.test_hook"):
+        sess.config.base_config.add_section("HOOK.test_hook")
+    sess.config.base_config.set("HOOK.test_hook", "enable", "true")
+    sess.config.base_config.set("HOOK.test_hook", "model", "gpt-5-mini")
+    sess.config.base_config.set("HOOK.test_hook", "when_message_contains", "")
+
+    calls = {}
+
+    def fake_run_internal_agent(steps, overrides=None, contexts=None, output=None, verbose_dump=False):
+        calls["overrides"] = overrides or {}
+
+        class _R:
+            last_text = "OK"
+
+        return _R()
+
+    sess.run_internal_agent = fake_run_internal_agent  # type: ignore[assignment]
+
+    runner = TurnRunner(sess)
+    runner.run_user_turn("hello", options=TurnOptions(stream=False, suppress_context_print=True))
+
+    assert calls.get("overrides", {}).get("model") == "gpt-5-mini"

@@ -82,3 +82,29 @@ def test_text_logging_and_console_mirror(tmp_path):
     # One text line mirrored to console
     assert any('settings' in line and 'model=m1' in line for line in cap.lines)
 
+
+def test_span_allows_explicit_parent_span_id(tmp_path):
+    log_dir = str(tmp_path)
+    cfg = FakeConfig(
+        {
+            "active": True,
+            "dir": log_dir,
+            "per_run": True,
+            "format": "json",
+            "log_settings": "basic",
+        }
+    )
+    logger = LoggingHandler(cfg, output_handler=None)
+    # Explicit parent_span_id should not cause duplicate kwarg errors.
+    with logger.span("child", trace_id="t1", parent_span_id="p1"):
+        logger.settings({"k": "v"})
+
+    files = list(tmp_path.glob("*.log"))
+    assert files
+    with files[0].open("r", encoding="utf-8") as f:
+        lines = [l.strip() for l in f if l.strip()]
+    assert lines
+    payload = json.loads(lines[-1])
+    ctx = payload.get("ctx") or {}
+    assert ctx.get("trace_id") == "t1"
+    assert ctx.get("parent_span_id") == "p1"

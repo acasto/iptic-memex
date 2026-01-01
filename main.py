@@ -294,6 +294,7 @@ def agent(ctx, file, from_stdin, no_hooks, json_output):
     snapshot = None
     chat_seed = None
     contexts = None
+    trace = None
     if from_stdin:
         raw = sys.stdin.read()
         if not raw.strip():
@@ -321,6 +322,10 @@ def agent(ctx, file, from_stdin, no_hooks, json_output):
             contexts = snapshot_to_contexts(snapshot)
         except Exception:
             contexts = None
+        try:
+            trace = snapshot.get('trace') if isinstance(snapshot, dict) else None
+        except Exception:
+            trace = None
 
     if from_stdin or json_output:
         try:
@@ -334,6 +339,7 @@ def agent(ctx, file, from_stdin, no_hooks, json_output):
                 verbose_dump=bool(options.get('agent_debug', False)),
                 chat_seed=chat_seed,
                 disable_hooks=bool(no_hooks),
+                trace=trace,
             )
         except Exception as exc:
             if json_output:

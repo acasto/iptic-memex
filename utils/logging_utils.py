@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import json
 import os
 import sys
 import time
 import traceback
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -12,6 +15,13 @@ from typing import Any, Dict, Optional
 
 def _now_iso() -> str:
     return datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+
+
+def _new_id(n: int = 16) -> str:
+    try:
+        return uuid.uuid4().hex[:n]
+    except Exception:
+        return "0" * n
 
 
 def _safe_str(x: Any) -> str:
@@ -55,7 +65,7 @@ class LoggingHandler:
         'usage': 'basic',
     }
 
-    def __init__(self, config, output_handler=None) -> None:
+    def __init__(self, config, output_handler=None, *, base_context: Optional[dict] = None) -> None:
         self._config = config
         self._output = output_handler
         self._active: bool = bool(self._get('active', False))
@@ -87,10 +97,83 @@ class LoggingHandler:
         if self._active:
             self._log_path = self._open_logfile()
         self._write = self._writer_json if self._format == 'json' else self._writer_text
+        # Correlation context (per logger instance; safe for async via ContextVar)
+        self._base_context: Dict[str, Any] = dict(base_context or {})
+        self._ctx_var: contextvars.ContextVar[Dict[str, Any]] = contextvars.ContextVar(
+            f"memex_log_ctx_{id(self)}",
+            default={},
+        )
 
     # --- Public helpers -------------------------------------------------
     def active(self) -> bool:
         return bool(self._active and self._log_path)
+
+    def set_base_context(self, ctx: Optional[dict]) -> None:
+        self._base_context = dict(ctx or {})
+
+    def update_base_context(self, ctx: Optional[dict]) -> None:
+        if not ctx:
+            return
+        try:
+            self._base_context.update({k: v for k, v in (ctx or {}).items() if v is not None})
+        except Exception:
+            return
+
+    def get_context(self) -> Dict[str, Any]:
+        try:
+            current = self._ctx_var.get()
+        except Exception:
+            current = {}
+        out: Dict[str, Any] = {}
+        try:
+            out.update(self._base_context or {})
+        except Exception:
+            pass
+        try:
+            out.update(current or {})
+        except Exception:
+            pass
+        return out
+
+    @contextlib.contextmanager
+    def context(self, **ctx):
+        """Temporarily add/override correlation fields for all emitted events."""
+        try:
+            cur = dict(self._ctx_var.get() or {})
+        except Exception:
+            cur = {}
+        nxt = dict(cur)
+        for k, v in (ctx or {}).items():
+            if v is None:
+                nxt.pop(k, None)
+            else:
+                nxt[k] = v
+        token = None
+        try:
+            token = self._ctx_var.set(nxt)
+            yield nxt
+        finally:
+            if token is not None:
+                try:
+                    self._ctx_var.reset(token)
+                except Exception:
+                    pass
+
+    @contextlib.contextmanager
+    def span(self, kind: str, **ctx):
+        """Create a new span nested under the current span, if any."""
+        parent = None
+        if "parent_span_id" in ctx:
+            # Pop to avoid passing parent_span_id twice to context().
+            parent = ctx.pop("parent_span_id", None)
+        else:
+            try:
+                parent = self.get_context().get('span_id')
+            except Exception:
+                parent = None
+        span_id = ctx.pop("span_id", None) or _new_id(16)
+        with self.context(span_id=span_id, parent_span_id=parent, span_kind=kind, **ctx) as merged:
+            yield merged
 
     # Generic entry point
     def log(self, event: str, *, component: str, aspect: str, severity: str = 'info', data: Optional[dict] = None) -> None:
@@ -305,6 +388,10 @@ class LoggingHandler:
             return data
 
     def _prepare_payload(self, event: str, component: str, aspect: str, severity: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            ctx = self.get_context()
+        except Exception:
+            ctx = {}
         payload = {
             'ts': _now_iso(),
             'run_id': self._run_id,
@@ -312,6 +399,7 @@ class LoggingHandler:
             'component': component,
             'aspect': aspect,
             'severity': severity,
+            'ctx': self._redact_and_truncate(ctx or {}),
             'data': self._redact_and_truncate(data or {}),
         }
         return payload

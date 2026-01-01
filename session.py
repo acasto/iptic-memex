@@ -597,12 +597,18 @@ class Session:
             raise RuntimeError('Session builder is not available')
         # Local import to avoid import-time cycles
         from core.mode_runner import run_completion as _run_completion  # type: ignore
+        trace = None
+        try:
+            trace = getattr(self.utils.logger, "get_context", lambda: None)()
+        except Exception:
+            trace = None
         return _run_completion(
             builder=self._builder,
             overrides=overrides,
             contexts=contexts,
             message=message,
             capture=capture,
+            trace=trace if isinstance(trace, dict) else None,
         )
 
         

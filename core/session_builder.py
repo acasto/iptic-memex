@@ -72,6 +72,17 @@ class SessionBuilder:
             except Exception:
                 session.ui = None
 
+        # Bind session-level logging context early (even when LOG.active is false).
+        try:
+            session.utils.logger.update_base_context(
+                {
+                    "session_uid": getattr(session, "session_uid", None),
+                    "ui_mode": ui_mode,
+                }
+            )
+        except Exception:
+            pass
+
         # Default visibility policy: in non-blocking UIs (Web/TUI) hide pre-prompt
         # context summaries; actions will emit per-item status/context updates.
         try:

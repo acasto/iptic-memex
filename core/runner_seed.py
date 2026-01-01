@@ -127,6 +127,19 @@ def build_runner_snapshot(
         "chat_seed": build_chat_seed(session),
         "contexts": ctx_out,
     }
+    # Optional correlation context for external runners. Best-effort only.
+    try:
+        lg = getattr(getattr(session, "utils", None), "logger", None)
+        get_ctx = getattr(lg, "get_context", None)
+        ctx = get_ctx() if callable(get_ctx) else {}
+        if isinstance(ctx, dict) and ctx.get("trace_id"):
+            snapshot["trace"] = {
+                "trace_id": ctx.get("trace_id"),
+                "parent_span_id": ctx.get("span_id"),
+                "outer_session_uid": getattr(session, "session_uid", None),
+            }
+    except Exception:
+        pass
     return snapshot
 
 

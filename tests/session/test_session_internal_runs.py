@@ -50,12 +50,13 @@ def test_run_internal_completion_delegates_and_returns_result(monkeypatch):
     setattr(sess, '_builder', object())
 
     calls = {}
-    def fake_run_completion(builder, overrides=None, contexts=None, message='', capture='text'):
+    def fake_run_completion(builder, overrides=None, contexts=None, message='', capture='text', trace=None):
         calls['builder'] = builder
         calls['overrides'] = overrides
         calls['contexts'] = contexts
         calls['message'] = message
         calls['capture'] = capture
+        calls['trace'] = trace
         return {'ok': True, 'msg': message, 'ovr': overrides}
 
     import core.mode_runner as mr
@@ -71,7 +72,7 @@ def test_run_internal_agent_delegates_and_returns_result(monkeypatch):
     setattr(sess, '_builder', object())
 
     calls = {}
-    def fake_run_agent(builder, steps, overrides=None, contexts=None, output=None, verbose_dump=False, outer_session=None):
+    def fake_run_agent(builder, steps, overrides=None, contexts=None, output=None, verbose_dump=False, outer_session=None, trace=None):
         calls['builder'] = builder
         calls['steps'] = steps
         calls['overrides'] = overrides
@@ -79,6 +80,7 @@ def test_run_internal_agent_delegates_and_returns_result(monkeypatch):
         calls['output'] = output
         calls['verbose_dump'] = verbose_dump
         calls['outer_session'] = outer_session
+        calls['trace'] = trace
         return {'ok': True, 'steps': steps, 'out': output}
 
     import core.mode_runner as mr
