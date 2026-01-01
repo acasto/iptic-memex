@@ -35,7 +35,10 @@ def test_warn_when_logging_enabled_but_inactive(tmp_path, capsys, monkeypatch):
         active = true
         dir = {tmp_path}
         format = json
-        per_run = true
+        file = memex.log
+        rotation = size
+        max_bytes = 1000000
+        backup_count = 5
         """
     ).strip()
     cfg_path = tmp_path / 'cfg.ini'
@@ -53,4 +56,3 @@ def test_warn_when_logging_enabled_but_inactive(tmp_path, capsys, monkeypatch):
 
     out = capsys.readouterr().out
     assert 'Logging is enabled but the log file could not be opened' in out or 'failed to initialize' in out
-

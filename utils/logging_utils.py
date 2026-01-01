@@ -94,6 +94,12 @@ class LoggingHandler:
         # File handling
         self._run_id = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
         self._log_path = None
+        self._log_dir = None
+        self._rotate: str = (self._get('rotation', 'size') or 'size').strip().lower()
+        self._max_bytes: int = int(self._get('max_bytes', 5_000_000) or 5_000_000)
+        self._backup_count: int = int(self._get('backup_count', 10) or 10)
+        self._max_age_days: int = int(self._get('max_age_days', 0) or 0)
+        self._current_day = datetime.utcnow().strftime('%Y%m%d')
         if self._active:
             self._log_path = self._open_logfile()
         self._write = self._writer_json if self._format == 'json' else self._writer_text
@@ -303,7 +309,6 @@ class LoggingHandler:
             app_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
             explicit = (self._get('file', '') or '').strip()
-            per_run = bool(self._get('per_run', True))
             raw_dir = self._get('dir', 'logs') or 'logs'
 
             # Resolve directory: absolute stays; relative -> app_root/<dir>
@@ -316,8 +321,12 @@ class LoggingHandler:
                 explicit = os.path.expanduser(explicit)
                 path = explicit if os.path.isabs(explicit) else os.path.join(log_dir, explicit)
             else:
-                filename = f'memex-{self._run_id}.log' if per_run else 'memex.log'
-                path = os.path.join(log_dir, filename)
+                path = os.path.join(log_dir, 'memex.log')
+
+            try:
+                self._log_dir = os.path.dirname(path) or log_dir
+            except Exception:
+                self._log_dir = log_dir
 
             # Ensure parent dir exists for the file (in case explicit includes subfolders)
             os.makedirs(os.path.dirname(path) or log_dir, exist_ok=True)
@@ -325,22 +334,154 @@ class LoggingHandler:
             # Touch file
             with open(path, 'a', encoding='utf-8'):
                 pass
-
-            # Manage latest symlink optionally (keep inside resolved log_dir)
-            if bool(self._get('symlink_latest', True)):
-                try:
-                    latest = os.path.join(log_dir, 'latest.log')
-                    if os.path.islink(latest) or os.path.exists(latest):
-                        try:
-                            os.remove(latest)
-                        except Exception:
-                            pass
-                    os.symlink(os.path.abspath(path), latest)
-                except Exception:
-                    pass
             return path
         except Exception:
             return None
+
+    def _split_ext(self, path: str) -> tuple[str, str]:
+        try:
+            root, ext = os.path.splitext(path)
+            return root, ext
+        except Exception:
+            return path, ''
+
+    def _list_rotated_files(self) -> list[str]:
+        """Return log files in log_dir that share the base name (excluding the current file)."""
+        if not self._log_path:
+            return []
+        try:
+            log_dir = self._log_dir or os.path.dirname(self._log_path)
+            root, ext = self._split_ext(self._log_path)
+            base_root = os.path.basename(root)
+            base = os.path.basename(self._log_path)
+            items = []
+            for name in os.listdir(log_dir):
+                if name == base:
+                    continue
+                if ext and not name.endswith(ext):
+                    continue
+                if name.startswith(base_root + ".") or name.startswith(base_root + "-"):
+                    items.append(os.path.join(log_dir, name))
+            return items
+        except Exception:
+            return []
+
+    def _prune_by_age(self) -> None:
+        """Remove rotated files older than max_age_days (best-effort)."""
+        if not self._max_age_days or self._max_age_days <= 0:
+            return
+        try:
+            cutoff = time.time() - (float(self._max_age_days) * 86400.0)
+        except Exception:
+            return
+        for path in self._list_rotated_files():
+            try:
+                if os.path.getmtime(path) < cutoff:
+                    os.remove(path)
+            except Exception:
+                continue
+
+    def _rotate_size(self) -> None:
+        if not self._log_path or not self._backup_count or self._backup_count <= 0:
+            return
+        base = self._log_path
+        root, ext = self._split_ext(base)
+        # Remove oldest
+        try:
+            oldest = f"{root}.{self._backup_count}{ext}"
+            if os.path.exists(oldest):
+                os.remove(oldest)
+        except Exception:
+            pass
+        # Shift down
+        for i in range(self._backup_count - 1, 0, -1):
+            try:
+                src = f"{root}.{i}{ext}"
+                dst = f"{root}.{i + 1}{ext}"
+                if os.path.exists(src):
+                    os.replace(src, dst)
+            except Exception:
+                continue
+        # Rotate current to .1
+        try:
+            if os.path.exists(base):
+                os.replace(base, f"{root}.1{ext}")
+        except Exception:
+            pass
+        try:
+            with open(base, 'a', encoding='utf-8'):
+                pass
+        except Exception:
+            pass
+        self._prune_by_age()
+
+    def _rotate_daily(self, today: str) -> None:
+        if not self._log_path:
+            return
+        base = self._log_path
+        root, ext = self._split_ext(base)
+        # Rotate current file into a dated name for the previous day.
+        dated = f"{root}-{self._current_day}{ext}"
+        # Avoid collisions by appending .N
+        try:
+            if os.path.exists(dated):
+                n = 1
+                while True:
+                    cand = f"{root}-{self._current_day}.{n}{ext}"
+                    if not os.path.exists(cand):
+                        dated = cand
+                        break
+                    n += 1
+        except Exception:
+            pass
+        try:
+            if os.path.exists(base) and os.path.getsize(base) > 0:
+                os.replace(base, dated)
+        except Exception:
+            pass
+        try:
+            with open(base, 'a', encoding='utf-8'):
+                pass
+        except Exception:
+            pass
+        self._current_day = today
+        self._prune_by_age()
+
+    def _maybe_rotate(self, append_bytes: int = 0) -> None:
+        if not self._active or not self._log_path:
+            return
+        rotate = (self._rotate or 'off').strip().lower()
+        if rotate in ('off', 'none', 'false', '0'):
+            return
+        today = datetime.utcnow().strftime('%Y%m%d')
+        try:
+            if 'daily' in rotate and today != self._current_day:
+                self._rotate_daily(today)
+        except Exception:
+            pass
+        try:
+            if 'size' in rotate and self._max_bytes and self._max_bytes > 0:
+                try:
+                    current = os.path.getsize(self._log_path)
+                except Exception:
+                    current = 0
+                if (current + int(append_bytes or 0)) >= int(self._max_bytes):
+                    self._rotate_size()
+        except Exception:
+            pass
+
+    def _append_line(self, line: str) -> None:
+        if not self._log_path:
+            return
+        try:
+            self._maybe_rotate(len(line.encode('utf-8', errors='ignore')) + 1)
+        except Exception:
+            pass
+        try:
+            with open(self._log_path, 'a', encoding='utf-8') as f:
+                f.write(line + '\n')
+        except Exception:
+            pass
 
     def _level_for(self, aspect: str) -> int:
         return self._aspects.get(aspect, 0)
@@ -415,11 +556,7 @@ class LoggingHandler:
             except Exception:
                 pass
             line = json.dumps(safe, ensure_ascii=False)
-        try:
-            with open(self._log_path, 'a', encoding='utf-8') as f:
-                f.write(line + '\n')
-        except Exception:
-            pass
+        self._append_line(line)
         if self._mirror and self._output:
             try:
                 self._output.debug(line)
@@ -447,11 +584,7 @@ class LoggingHandler:
         except Exception:
             pass
         line = f"[{ts}] {comp} {asp}:{ev} " + (' '.join(pairs))
-        try:
-            with open(self._log_path, 'a', encoding='utf-8') as f:
-                f.write(line + '\n')
-        except Exception:
-            pass
+        self._append_line(line)
         if self._mirror and self._output:
             try:
                 # Map severity to console level (best-effort)

@@ -97,7 +97,7 @@ def test_cmd_tool_emits_exec_and_result_logs(tmp_path: Path):
     cfg = FakeConfig({
         'active': True,
         'dir': str(tmp_path),
-        'per_run': True,
+        'file': 'memex.log',
         'format': 'json',
         'log_cmd': 'detail',
     })
@@ -121,4 +121,3 @@ def test_cmd_tool_emits_exec_and_result_logs(tmp_path: Path):
     last = [p for p in payloads if p.get('event') == 'cmd_result'][-1]
     data = last.get('data') or {}
     assert data.get('stdout_len', 0) >= 5
-

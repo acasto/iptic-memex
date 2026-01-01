@@ -110,7 +110,7 @@ def _read_jsonl(path: Path):
 
 
 def test_turnrunner_logs_provider_begin_and_done(tmp_path: Path):
-    cfg = FakeConfig({'active': True, 'dir': str(tmp_path), 'per_run': True, 'format': 'json', 'log_provider': 'basic'})
+    cfg = FakeConfig({'active': True, 'dir': str(tmp_path), 'file': 'memex.log', 'format': 'json', 'log_provider': 'basic'})
     logger = LoggingHandler(cfg)
     sess = FakeSession(FakeProvider(), logger)
     runner = TurnRunner(sess)

@@ -38,7 +38,7 @@ def test_json_logging_redaction_and_truncation(tmp_path):
     cfg = FakeConfig({
         'active': True,
         'dir': log_dir,
-        'per_run': True,
+        'file': 'memex.log',
         'format': 'json',
         'mirror_to_console': False,
         'redact': True,
@@ -71,7 +71,7 @@ def test_text_logging_and_console_mirror(tmp_path):
     cfg = FakeConfig({
         'active': True,
         'dir': str(tmp_path),
-        'per_run': True,
+        'file': 'memex.log',
         'format': 'text',
         'mirror_to_console': True,
         'log_settings': 'basic',
@@ -89,7 +89,7 @@ def test_span_allows_explicit_parent_span_id(tmp_path):
         {
             "active": True,
             "dir": log_dir,
-            "per_run": True,
+            "file": "memex.log",
             "format": "json",
             "log_settings": "basic",
         }
@@ -108,3 +108,26 @@ def test_span_allows_explicit_parent_span_id(tmp_path):
     ctx = payload.get("ctx") or {}
     assert ctx.get("trace_id") == "t1"
     assert ctx.get("parent_span_id") == "p1"
+
+
+def test_rotation_size_creates_backups(tmp_path):
+    cfg = FakeConfig(
+        {
+            "active": True,
+            "dir": str(tmp_path),
+            "file": "memex.log",
+            "format": "json",
+            "log_settings": "basic",
+            "rotation": "size",
+            "max_bytes": 250,
+            "backup_count": 2,
+        }
+    )
+    logger = LoggingHandler(cfg, output_handler=None)
+    for i in range(50):
+        logger.settings({"i": i, "note": "x" * 20})
+
+    files = sorted([p.name for p in tmp_path.glob("*.log")])
+    # Expect at least the base file and one rotated backup.
+    assert "memex.log" in files
+    assert any(name.startswith("memex.") and name.endswith(".log") for name in files)
