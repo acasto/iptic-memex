@@ -8,7 +8,7 @@ of template handlers. The handlers are configured via `DEFAULT.template_handler`
 Default config:
 
 ```ini
-template_handler = prompt_template, prompt_template_chat, prompt_template_memory
+template_handler = prompt_template, prompt_template_chat, prompt_template_memory, prompt_template_file
 ```
 
 Order matters. Each handler receives the output of the previous handler.
@@ -24,6 +24,12 @@ Order matters. Each handler receives the output of the previous handler.
   - `{{turn:<key>}}` (per-turn metadata)
 - `prompt_template_chat` (chat transcript placeholders) - see below
 - `prompt_template_memory` (memory recall via `{{memory}}` / `{{memory:project}}`)
+- `prompt_template_file` (inline file includes):
+  - `{{file:PATH}}` inserts the file contents (missing/unreadable files become empty string)
+  - Modifiers: `optional=<bool>` (default true), `encoding=<str>` (default utf-8), `max_chars=<n>`, `max_bytes=<n>`
+  - Examples:
+    - `{{file:AGENTS.md}}`
+    - `{{file:skills/my-skill/SKILL.md;optional=true;max_chars=4000}}`
 
 ## Chat prompt placeholders
 
