@@ -66,6 +66,7 @@ Start here for the rest of the platform details:
 - [Sessions](docs/sessions.md)
 - [RAG](docs/rag.md)
 - [MCP](docs/mcp.md)
+- [Skills](docs/skills.md)
 - [Sandbox and base-dir](docs/sandbox.md)
 - [Agents](docs/agents.md)
 - [Providers](docs/providers.md)
