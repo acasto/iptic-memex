@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-from typing import Optional
+from typing import Optional, Dict, List, Tuple
 
 from base_classes import InteractionAction, InteractionNeeded
 
@@ -20,11 +20,181 @@ class AssistantFsHandlerAction(InteractionAction):
         # Get base directory configuration (allow CLI override via session.get_option)
         base_dir = session.get_option('TOOLS', 'base_directory', fallback='working')
         if base_dir == 'working' or base_dir == '.':
-            self._base_dir = os.path.abspath(os.getcwd())
+            self._base_dir = os.path.realpath(os.path.abspath(os.getcwd()))
         else:
-            self._base_dir = os.path.abspath(os.path.expanduser(base_dir))
+            self._base_dir = os.path.realpath(os.path.abspath(os.path.expanduser(base_dir)))
 
-    def validate_path(self, file_path: str, must_exist: Optional[bool] = None) -> Optional[str]:
+        # Precompute allowlisted roots (base_dir RW + optional extra RO/RW roots).
+        self._root_policies: Dict[str, str] = self._build_root_policies()
+
+    @staticmethod
+    def _split_csv(value: object) -> List[str]:
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple)):
+            out: List[str] = []
+            for v in value:
+                if v is None:
+                    continue
+                s = str(v).strip()
+                if s:
+                    out.append(s)
+            return out
+        s = str(value).strip()
+        if not s:
+            return []
+        return [p.strip() for p in s.split(",") if p.strip()]
+
+    @staticmethod
+    def _coerce_bool(value: object, default: bool = False) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        s = str(value).strip().lower()
+        if not s:
+            return default
+        if s in ("1", "true", "yes", "y", "on"):
+            return True
+        if s in ("0", "false", "no", "n", "off"):
+            return False
+        return default
+
+    @staticmethod
+    def _app_root() -> str:
+        # Repo/package root (same reference point as ConfigManager.resolve_directory_path).
+        try:
+            return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        except Exception:
+            return os.path.abspath(os.getcwd())
+
+    def _resolve_root(self, root: str) -> Optional[str]:
+        """Resolve a configured root to an absolute realpath.
+
+        - Absolute paths are used as-is (after expanduser).
+        - Relative paths are interpreted relative to base_directory.
+        """
+        if not root:
+            return None
+        try:
+            expanded = os.path.expanduser(str(root).strip())
+        except Exception:
+            expanded = str(root).strip()
+        if not expanded:
+            return None
+        if os.path.isabs(expanded):
+            return os.path.realpath(os.path.abspath(expanded))
+        try:
+            return os.path.realpath(os.path.abspath(os.path.join(self._base_dir, expanded)))
+        except Exception:
+            return None
+
+    def _resolve_skill_root(self, root: str) -> Optional[str]:
+        """Resolve a skills directory token to a concrete host path."""
+        token = (root or "").strip()
+        if not token:
+            return None
+
+        # Convention: shipped skills live alongside main.py (app root).
+        if token in ("skills", "./skills"):
+            return os.path.realpath(os.path.abspath(os.path.join(self._app_root(), "skills")))
+
+        # Convention: project skills live in the sandbox base dir.
+        if token in (".skills", "./.skills"):
+            return os.path.realpath(os.path.abspath(os.path.join(self._base_dir, ".skills")))
+
+        # Otherwise treat like a normal root (abs or base_dir-relative).
+        return self._resolve_root(token)
+
+    def _build_root_policies(self) -> Dict[str, str]:
+        """Return mapping of root_realpath -> mode ('rw'|'ro')."""
+        policies: Dict[str, str] = {}
+
+        # Base directory is always RW.
+        policies[self._base_dir] = "rw"
+
+        # User-configurable extra roots (advanced).
+        try:
+            ro_raw = self.session.get_option("TOOLS", "extra_ro_roots", fallback=None)
+        except Exception:
+            ro_raw = None
+        try:
+            rw_raw = self.session.get_option("TOOLS", "extra_rw_roots", fallback=None)
+        except Exception:
+            rw_raw = None
+        ro_roots = [self._resolve_root(r) for r in self._split_csv(ro_raw)]
+        rw_roots = [self._resolve_root(r) for r in self._split_csv(rw_raw)]
+
+        # Implicit allowlist: skills directories are treated as RO by default so
+        # the model can read SKILL.md / references. Users can override by adding
+        # the same path to extra_rw_roots.
+        try:
+            skills_dirs_raw = self.session.get_option("SKILLS", "directories", fallback=None)
+        except Exception:
+            skills_dirs_raw = None
+        implicit_skill_roots = [self._resolve_skill_root(r) for r in self._split_csv(skills_dirs_raw)]
+
+        for r in implicit_skill_roots:
+            if not r:
+                continue
+            # Do not downgrade an existing RW policy.
+            if policies.get(r) == "rw":
+                continue
+            policies.setdefault(r, "ro")
+
+        for r in ro_roots:
+            if not r:
+                continue
+            if policies.get(r) == "rw":
+                continue
+            policies.setdefault(r, "ro")
+
+        for r in rw_roots:
+            if not r:
+                continue
+            policies[r] = "rw"
+
+        # Drop empty roots defensively
+        return {k: v for (k, v) in policies.items() if k}
+
+    def get_allowed_roots(self) -> List[Dict[str, str]]:
+        """Return effective allowlisted roots (for tooling like Docker)."""
+        items: List[Tuple[str, str]] = []
+        for root, mode in (self._root_policies or {}).items():
+            if mode not in ("ro", "rw"):
+                continue
+            items.append((root, mode))
+        # Sort shortest->longest so more specific roots come last (useful for mounts).
+        items.sort(key=lambda it: len(it[0]))
+        return [{"path": r, "mode": m} for (r, m) in items]
+
+    def _mode_for_path(self, resolved_path: str) -> Optional[str]:
+        """Return effective mode ('ro'|'rw') for a resolved absolute path."""
+        best_root = None
+        best_len = -1
+        best_mode = None
+        for root, mode in (self._root_policies or {}).items():
+            if not root:
+                continue
+            try:
+                common = os.path.commonpath([resolved_path, root])
+            except Exception:
+                continue
+            if common != root:
+                continue
+            if len(root) > best_len:
+                best_root = root
+                best_len = len(root)
+                best_mode = mode
+        return best_mode
+
+    def validate_path(
+        self,
+        file_path: str,
+        must_exist: Optional[bool] = None,
+        *,
+        operation: str = "read",
+    ) -> Optional[str]:
         """Validate and resolve path with safety checks."""
         if not file_path:
             return None
@@ -38,15 +208,19 @@ class AssistantFsHandlerAction(InteractionAction):
 
             resolved_path = os.path.realpath(os.path.abspath(candidate))
 
-            try:
-                common_path = os.path.commonpath([resolved_path, self._base_dir])
-            except ValueError:
-                common_path = None
-
-            if not common_path or common_path != self._base_dir:
+            mode = self._mode_for_path(resolved_path)
+            if mode is None:
                 self.session.add_context('assistant', {
                     'name': 'fs_error',
-                    'content': f'Path {file_path} is outside allowed directory'
+                    'content': f'Path {file_path} is outside allowed roots'
+                })
+                return None
+
+            op = (operation or "read").strip().lower()
+            if op in ("write", "rw") and mode != "rw":
+                self.session.add_context('assistant', {
+                    'name': 'fs_error',
+                    'content': f'Path {file_path} is read-only'
                 })
                 return None
 
@@ -78,7 +252,7 @@ class AssistantFsHandlerAction(InteractionAction):
 
     def read_file(self, file_path: str, binary: bool = False, encoding: str = 'utf-8'):
         """Read a file with path validation"""
-        resolved_path = self.validate_path(file_path)
+        resolved_path = self.validate_path(file_path, operation="read")
         if resolved_path is None:
             return None
         return self.fs.read_file(resolved_path, binary=binary, encoding=encoding)
@@ -102,13 +276,13 @@ class AssistantFsHandlerAction(InteractionAction):
     def write_file(self, file_path: str, content, binary=False, encoding='utf-8',
                    create_dirs=False, append=False, force=False):
         """Write to a file with path validation and optional confirmation"""
-        resolved_path = self.validate_path(file_path)
+        resolved_path = self.validate_path(file_path, operation="write")
         if resolved_path is None:
             return False
 
         # If creating dirs, validate the parent directory
         if create_dirs:
-            parent_dir = self.validate_path(os.path.dirname(resolved_path))
+            parent_dir = self.validate_path(os.path.dirname(resolved_path), operation="write")
             if parent_dir is None:
                 return False
 
@@ -246,7 +420,7 @@ class AssistantFsHandlerAction(InteractionAction):
 
     def delete_file(self, file_path: str, force: bool = False) -> bool:
         """Delete a file with path validation and confirmation"""
-        resolved_path = self.validate_path(file_path)
+        resolved_path = self.validate_path(file_path, operation="write")
         if resolved_path is None:
             return False
 
@@ -268,7 +442,7 @@ class AssistantFsHandlerAction(InteractionAction):
 
     def delete_directory(self, dir_path: str, recursive: bool = False, force: bool = False) -> bool:
         """Delete a directory with path validation and confirmation"""
-        resolved_path = self.validate_path(dir_path)
+        resolved_path = self.validate_path(dir_path, operation="write")
         if resolved_path is None:
             return False
 
@@ -291,11 +465,11 @@ class AssistantFsHandlerAction(InteractionAction):
 
     def rename(self, old_path: str, new_path: str, force: bool = False) -> bool:
         """Rename/move a file or directory with path validation and confirmation"""
-        resolved_old = self.validate_path(old_path)
+        resolved_old = self.validate_path(old_path, operation="write")
         if resolved_old is None:
             return False
 
-        resolved_new = self.validate_path(new_path)
+        resolved_new = self.validate_path(new_path, operation="write")
         if resolved_new is None:
             return False
 
@@ -317,11 +491,11 @@ class AssistantFsHandlerAction(InteractionAction):
 
     def copy(self, src_path: str, dst_path: str, force: bool = False) -> bool:
         """Copy a file or directory with path validation and confirmation"""
-        resolved_src = self.validate_path(src_path)
+        resolved_src = self.validate_path(src_path, operation="read")
         if resolved_src is None:
             return False
 
-        resolved_dst = self.validate_path(dst_path)
+        resolved_dst = self.validate_path(dst_path, operation="write")
         if resolved_dst is None:
             return False
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -49,8 +50,10 @@ class DummyUI:
 
 
 class DummySession:
-    def __init__(self, base_dir: str):
+    def __init__(self, base_dir: str, *, extra_ro: str = "", extra_rw: str = ""):
         self._base_dir = base_dir
+        self._extra_ro = extra_ro
+        self._extra_rw = extra_rw
         self.utils = DummyUtils()
         self.ui = DummyUI()
         self._contexts = []
@@ -63,6 +66,10 @@ class DummySession:
     def get_option(self, section: str, option: str, fallback=None):
         if section == 'TOOLS' and option == 'base_directory':
             return self._base_dir
+        if section == 'TOOLS' and option == 'extra_ro_roots':
+            return self._extra_ro or fallback
+        if section == 'TOOLS' and option == 'extra_rw_roots':
+            return self._extra_rw or fallback
         if section == 'TOOLS' and option == 'timeout':
             return 15
         if section == 'EPHEMERAL' and option == 'mount_readonly':
@@ -163,8 +170,38 @@ def test_docker_tool_mounts_base_dir_without_running_docker(tmp_path: Path):
     docker = AssistantDockerToolAction(sess)
 
     cmdline = docker.create_docker_command('echo hello')
-    # Should include the -v <base_dir>:/workspace mount and working directory
+    # Should include mounts for the base dir (absolute path + /workspace alias) and set working directory.
     assert '-v' in cmdline
+    assert any(arg.startswith(f"{base_dir}:{base_dir}") for arg in cmdline)
     assert any(arg.startswith(f"{base_dir}:/workspace") for arg in cmdline)
-    # For ephemeral env, run command is `docker run --rm ... -w /workspace <image> /bin/bash -c ...`
-    assert '-w' in cmdline and '/workspace' in cmdline
+    assert '-w' in cmdline and base_dir in cmdline
+
+
+def test_fs_handler_extra_ro_root_allows_read_but_blocks_write(tmp_path: Path):
+    base_dir = str(tmp_path)
+    outside_dir = Path(tempfile.mkdtemp())
+    try:
+        (outside_dir / 'ro.txt').write_text('ro', encoding='utf-8')
+        sess = DummySession(base_dir, extra_ro=str(outside_dir))
+        fs = AssistantFsHandlerAction(sess)
+
+        assert fs.read_file(str(outside_dir / 'ro.txt')) == 'ro'
+        # Writes into RO roots should be blocked
+        ok = fs.write_file(str(outside_dir / 'new.txt'), 'x', force=True)
+        assert ok is False
+    finally:
+        shutil.rmtree(outside_dir, ignore_errors=True)
+
+
+def test_fs_handler_extra_rw_root_allows_write(tmp_path: Path):
+    base_dir = str(tmp_path)
+    outside_dir = Path(tempfile.mkdtemp())
+    try:
+        sess = DummySession(base_dir, extra_rw=str(outside_dir))
+        fs = AssistantFsHandlerAction(sess)
+
+        ok = fs.write_file(str(outside_dir / 'new.txt'), 'x', force=True)
+        assert ok is True
+        assert (outside_dir / 'new.txt').read_text(encoding='utf-8') == 'x'
+    finally:
+        shutil.rmtree(outside_dir, ignore_errors=True)

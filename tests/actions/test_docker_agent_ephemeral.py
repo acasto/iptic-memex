@@ -81,7 +81,7 @@ def test_agent_forces_ephemeral_even_when_tools_requests_persistent(tmp_path: Pa
     # Expect docker run --rm (ephemeral) not exec
     assert cmdline[0:3] == ['docker', 'run', '--rm']
     # Base dir mounted and working directory set
-    assert '-v' in cmdline and '-w' in cmdline and '/workspace' in ' '.join(cmdline)
+    assert '-v' in cmdline and '-w' in cmdline and str(tmp_path) in ' '.join(cmdline)
 
 
 def test_agent_can_opt_out_and_use_persistent(tmp_path: Path):

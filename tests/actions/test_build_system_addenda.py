@@ -74,3 +74,28 @@ def test_addenda_deduplicates_same_text():
     out = act.run()
     # Duplicates should be removed while preserving order
     assert out == "PSEUDO\n\nDEF"
+
+
+def test_addenda_includes_skills_when_enabled(tmp_path):
+    skill_root = tmp_path / "skills"
+    (skill_root / "pdf-processing").mkdir(parents=True)
+    skill_md = skill_root / "pdf-processing" / "SKILL.md"
+    skill_md.write_text(
+        "---\n"
+        "name: pdf-processing\n"
+        "description: Extracts text from PDFs. Use when working with PDF files.\n"
+        "---\n"
+        "\n"
+        "# PDF Processing\n",
+        encoding="utf-8",
+    )
+
+    sess = FakeSession()
+    sess._opts[("SKILLS", "active")] = True
+    sess._opts[("SKILLS", "directories")] = str(skill_root)
+
+    act = BuildSystemAddendaAction(sess)
+    out = act.run()
+    assert "<available_skills>" in out
+    assert "pdf-processing" in out
+    assert str(skill_md) in out

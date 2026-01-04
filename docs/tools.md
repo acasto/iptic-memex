@@ -15,7 +15,8 @@
 Memex has two implementations of the `cmd` tool:
 
 - **Local CMD** (`assistant_cmd_tool`): runs on the host. The working directory is `[TOOLS].base_directory`.
-- **Docker CMD** (`assistant_docker_tool`): runs inside a container with the base directory mounted at `/workspace`.
+- **Docker CMD** (`assistant_docker_tool`): runs inside a container with the base directory mounted at its absolute path.
+  For compatibility, the base directory is also mounted at `/workspace` as an alias.
 
 Select the implementation in `config.ini`:
 
@@ -30,8 +31,13 @@ If you need a true sandbox, use the Docker CMD tool. The local CMD tool is not s
 
 ## File tool base_directory guard
 
-The file tool is restricted to `[TOOLS].base_directory`. Relative paths resolve against the base directory; absolute
-paths must live inside it. This is a path guard, not a container sandbox.
+The file tool is restricted to `[TOOLS].base_directory` plus optional allowlisted extra roots:
+
+- `[TOOLS].extra_ro_roots` (read-only)
+- `[TOOLS].extra_rw_roots` (read-write; supersedes read-only for exact matches)
+
+Relative paths resolve against the base directory; absolute paths must live inside an allowed root. This is a path
+guard, not a container sandbox.
 
 ## Dynamic registry
 

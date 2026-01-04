@@ -129,7 +129,9 @@ class AssistantCmdToolAction(InteractionAction):
         # Check if any arguments look like paths and validate them
         for arg in non_options:
             if os.path.sep in arg or arg.startswith('~'):
-                resolved_path = self.fs_handler.resolve_path(arg, must_exist=False)
+                # Path args may refer to existing inputs or new outputs; only validate
+                # that the path is within allowed roots.
+                resolved_path = self.fs_handler.resolve_path(arg, must_exist=None)
                 if resolved_path is None:
                     return False, f"Path '{arg}' is not allowed"
 

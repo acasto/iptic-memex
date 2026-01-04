@@ -3,7 +3,7 @@ import subprocess
 import shlex
 import os
 import shutil
-from typing import Tuple, Optional, Set
+from typing import Tuple, Optional, Set, List, Dict
 from utils.tool_args import get_str
 
 
@@ -19,12 +19,65 @@ class AssistantDockerToolAction(InteractionAction):
 
         # Get base directory configuration (honor CLI override)
         base_dir = session.get_option('TOOLS', 'base_directory', fallback='working')
-        self.base_dir = os.getcwd() if base_dir in ('working', '.') else os.path.expanduser(base_dir)
+        if base_dir in ('working', '.'):
+            self.base_dir = os.path.realpath(os.path.abspath(os.getcwd()))
+        else:
+            self.base_dir = os.path.realpath(os.path.abspath(os.path.expanduser(base_dir)))
 
         # Initialize environment settings
         self._tmp_created_dirs: Set[str] = set()
         self._tmp_cleanup_registered: Set[str] = set()
         self._refresh_environment_config()
+
+    def _mount_args(self) -> List[str]:
+        """Build docker -v mounts for base dir and extra roots.
+
+        We mount allowed roots at their absolute host paths so the same paths
+        work across local tools and Docker. We also mount base_dir at /workspace
+        as a compatibility alias for existing prompts/assumptions.
+        """
+        mount_ro = self.session.get_option(self.docker_env.upper(), 'mount_readonly', False)
+        force_ro = self._coerce_bool(mount_ro, default=False)
+
+        mounts: List[Dict[str, str]] = []
+        try:
+            roots = []
+            if self.fs_handler and hasattr(self.fs_handler, 'get_allowed_roots'):
+                roots = list(self.fs_handler.get_allowed_roots() or [])
+        except Exception:
+            roots = []
+
+        # Ensure base_dir is always present (rw by default), even if fs handler isn't.
+        if not any((r.get('path') == self.base_dir) for r in roots if isinstance(r, dict)):
+            roots.append({'path': self.base_dir, 'mode': 'rw'})
+
+        # Sort roots by path length so more specific mounts come later.
+        def _key(item: Dict[str, str]) -> int:
+            try:
+                return len(str(item.get('path') or ''))
+            except Exception:
+                return 0
+
+        roots = [r for r in roots if isinstance(r, dict) and r.get('path')]
+        roots.sort(key=_key)
+
+        args: List[str] = []
+        for item in roots:
+            host_path = str(item.get('path') or '')
+            if not host_path:
+                continue
+            # Docker bind mounts require the host path to exist.
+            if not os.path.isdir(host_path):
+                continue
+            mode = str(item.get('mode') or 'ro').lower()
+            ro = force_ro or (mode != 'rw')
+            suffix = ':ro' if ro else ''
+            args.extend(['-v', f'{host_path}:{host_path}{suffix}'])
+
+        # Compatibility alias: base_dir also available at /workspace.
+        suffix = ':ro' if force_ro else ''
+        args.extend(['-v', f'{self.base_dir}:/workspace{suffix}'])
+        return args
 
     # ---- Dynamic tool registry metadata ----
     @classmethod
@@ -198,13 +251,9 @@ class AssistantDockerToolAction(InteractionAction):
                 if self.docker_run_options:
                     docker_cmd.extend(shlex.split(self.docker_run_options))
 
-                # Check if read-only mount is specified in config
-                mount_ro = self.session.get_option(self.docker_env.upper(), 'mount_readonly', 'false').lower() == 'true'
-                mount_opts = ':ro' if mount_ro else ''
-
-                # Add volume mount and working directory
-                docker_cmd.extend(["-v", f"{self.base_dir}:/workspace{mount_opts}"])
-                docker_cmd.extend(["-w", "/workspace"])
+                # Add volume mounts and working directory
+                docker_cmd.extend(self._mount_args())
+                docker_cmd.extend(["-w", self.base_dir])
                 docker_cmd.append(self.docker_image)
                 docker_cmd.extend(["/bin/bash", "-c", "tail -f /dev/null"])  # Keep container running
 
@@ -238,13 +287,11 @@ class AssistantDockerToolAction(InteractionAction):
                 docker_cmd.extend(shlex.split(self.docker_run_options))
 
             # Check if read-only mount is specified in config
-            mount_ro = self.session.get_option(self.docker_env.upper(), 'mount_readonly', False)
-            mount_opts = ':ro' if mount_ro else ''
-            docker_cmd.extend(["-v", f"{self.base_dir}:/workspace{mount_opts}"])
+            docker_cmd.extend(self._mount_args())
             docker_cmd.extend(self._tmp_mount_args())
             if self.set_tmpdir_env:
                 docker_cmd.extend(["-e", "TMPDIR=/tmp"])
-            docker_cmd.extend(["-w", "/workspace"])
+            docker_cmd.extend(["-w", self.base_dir])
             docker_cmd.append(self.docker_image)
             docker_cmd.extend(["/bin/bash", "-c", command_str])
         else:
@@ -252,7 +299,7 @@ class AssistantDockerToolAction(InteractionAction):
             docker_cmd = ["docker", "exec"]
             if self.set_tmpdir_env:
                 docker_cmd.extend(["-e", "TMPDIR=/tmp"])
-            docker_cmd.extend(["-w", "/workspace"])
+            docker_cmd.extend(["-w", self.base_dir])
             docker_cmd.append(self.container_name)
             docker_cmd.extend(["/bin/bash", "-c", command_str])
 

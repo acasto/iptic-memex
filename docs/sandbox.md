@@ -1,6 +1,8 @@
 # Sandbox
 
-The concept of a sandbox in Memex is primarily the Docker-backed CMD tool. When you select the Docker CMD tool, commands run inside a container with the workspace mounted at `/workspace`. Other tools such as the `file` tool are effectively sandboxed through filesystem access restrictions to the `base_directory`. We differentiate between them here becuase in most cases where a user will want to modify their sandbox they will be referring to the container used for hte `cmd` tool runs. 
+The concept of a sandbox in Memex is primarily the Docker-backed CMD tool. When you select the Docker CMD tool, commands
+run inside a container with the base directory mounted. Other tools such as the `file` tool are sandboxed through
+filesystem access restrictions to the base directory and any allowlisted extra roots.
 
 ## Selecting the Docker CMD tool
 
@@ -31,7 +33,9 @@ set_tmpdir_env = true
 Notes:
 - `persistent = false` runs `docker run --rm` per command.
 - `persistent = true` keeps a container running and uses `docker exec`.
-- The base directory is mounted at `/workspace` and used as the working directory.
+- The base directory is mounted at its absolute path and used as the working directory.
+- `/workspace` is a compatibility alias mount of the base directory.
+- Any extra allowlisted roots are mounted at their absolute paths (read-only or read-write as configured).
 
 ## Customizing the sandbox image
 
@@ -68,5 +72,10 @@ docker_always_ephemeral = True
 
 ## File tool base_directory guard
 
-The file tool is restricted to `[TOOLS].base_directory` (a path guard), but it does not run inside a container.
-See `docs/tools.md` for details on local vs Docker CMD and how the file tool is constrained.
+The file tool is restricted to `[TOOLS].base_directory` plus optional allowlisted roots:
+
+- `[TOOLS].extra_ro_roots` (read-only)
+- `[TOOLS].extra_rw_roots` (read-write; supersedes read-only for exact matches)
+
+Memex may also implicitly allowlist read-only roots (for example, configured skills directories) so the model can read
+their files without the user needing to adjust tool settings.
