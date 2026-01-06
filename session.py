@@ -27,6 +27,7 @@ class Session:
         self.usage_stats = {}
         self.user_data = {}  # For arbitrary session data
         self._registry = registry
+        self._exit_handled = False
         # Session-scoped identifier and cleanup hooks
         try:
             self.session_uid = uuid.uuid4().hex
@@ -520,6 +521,11 @@ class Session:
         Args:
             confirm: When True, prompt the user before exiting.
         """
+        # Idempotence: callers from multiple modes (or /quit + outer finally blocks)
+        # may invoke this more than once.
+        if getattr(self, "_exit_handled", False):
+            return True
+
         # Optionally prompt the user before exiting
         if confirm:
             try:
@@ -530,7 +536,10 @@ class Session:
                     return False
             except (KeyboardInterrupt, EOFError):
                 self.utils.output.write()
-                return True
+                # Treat Ctrl-C / EOF as confirmed exit and proceed with cleanup.
+                pass
+
+        self._exit_handled = True
 
         # Run cleanup tasks
         if self.provider and hasattr(self.provider, 'cleanup'):

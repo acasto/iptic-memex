@@ -29,3 +29,8 @@ class TUIMode(InteractionMode):
         except Exception as exc:
             print(f"Error starting TUI mode: {exc}")
             raise
+        finally:
+            try:
+                self.session.handle_exit(confirm=False)
+            except Exception:
+                pass

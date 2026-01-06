@@ -56,7 +56,13 @@ class WebApp:
                     self._open_browser(browser_host, bind_port)
                 except Exception:
                     pass
-        uvicorn.run(self._app, host=str(bind_host), port=int(bind_port), log_level='info')
+        try:
+            uvicorn.run(self._app, host=str(bind_host), port=int(bind_port), log_level='info')
+        finally:
+            try:
+                self.session.handle_exit(confirm=False)
+            except Exception:
+                pass
 
     @staticmethod
     def _open_browser(host: str, port: int) -> None:

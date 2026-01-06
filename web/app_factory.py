@@ -251,7 +251,11 @@ def create_app(session, webstate: WebState | None = None) -> Starlette:
         except Exception:
             pass
         yield
-        # Shutdown: nothing special
+        # Shutdown: run session teardown (autosave, provider cleanup, etc.)
+        try:
+            session.handle_exit(confirm=False)
+        except Exception:
+            pass
 
     app = Starlette(routes=routes, lifespan=lifespan)
     # Mount static dir

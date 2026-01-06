@@ -88,7 +88,7 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw,
         options['base_directory'] = base_dir
     
     # Validate model early if provided (fail fast on invalid model)
-    if 'model' in options and options['model']:
+    if options.get('model'):
         # Create a temporary session config to validate/normalize
         session_config = config_manager.create_session_config()
         normalized = session_config.normalize_model_name(options['model'])
@@ -103,11 +103,7 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw,
     ctx.obj['OPTIONS'] = options
     
     # Handle file mode (completion/agent based on steps)
-    if len(file) > 0:
-        try:
-            click.echo("Note: '-f/--file' at the top level is legacy. Prefer 'python main.py agent -f ...'.", err=True)
-        except Exception:
-            pass
+    if file:
         # Build session for completion mode first; we may switch to Agent below
         session = builder.build(mode='completion', **options)
         ctx.obj['SESSION'] = session
@@ -127,7 +123,7 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw,
         if cfg and cfg.has_section('AGENT'):
             try:
                 cfg_steps = int(cfg.get('AGENT', 'default_steps', fallback='1'))
-            except Exception:
+            except (TypeError, ValueError):
                 cfg_steps = 1
             cfg_writes = cfg.get('AGENT', 'writes_policy', fallback='deny')
 
@@ -147,7 +143,7 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw,
             if options.get('agent_debug', False):
                 try:
                     act = session.get_action('assistant_commands')
-                    names = sorted(list((act.commands or {}).keys())) if act and hasattr(act, 'commands') else []
+                    names = sorted(act.commands or {}) if act and hasattr(act, 'commands') else []
                     header = 'Agent tools:'
                     line = f"{header} " + (", ".join(names) if names else "(none)")
                     session.utils.output.write(line)
@@ -180,7 +176,7 @@ def chat(ctx, file, resume):
     _maybe_resume_session(session, resume=resume)
 
     # Add file contexts if provided
-    if len(file) > 0:
+    if file:
         for f in file:
             session.add_context('file', f)
     
@@ -208,7 +204,7 @@ def tui(ctx, file, resume):
     _maybe_resume_session(session, resume=resume)
 
     # Add file contexts if provided
-    if len(file) > 0:
+    if file:
         for f in file:
             session.add_context('file', f)
     
@@ -219,12 +215,12 @@ def tui(ctx, file, resume):
         mode.start()
     except ImportError as e:
         if 'textual' in str(e).lower():
-            print("Error: TUI mode requires the 'textual' library.")
-            print("Install with: pip install textual")
+            click.echo("Error: TUI mode requires the 'textual' library.")
+            click.echo("Install with: pip install textual")
         else:
-            print(f"Error importing TUI components: {e}")
+            click.echo(f"Error importing TUI components: {e}")
     except Exception as e:
-        print(f"Error starting TUI mode: {e}")
+        click.echo(f"Error starting TUI mode: {e}")
         import traceback
         traceback.print_exc()
 
@@ -248,7 +244,7 @@ def web(ctx, file, resume, host, port):
     _maybe_resume_session(session, resume=resume)
 
     # Add file contexts if provided
-    if len(file) > 0:
+    if file:
         for f in file:
             session.add_context('file', f)
 
@@ -258,9 +254,9 @@ def web(ctx, file, resume, host, port):
         mode = WebMode(session, builder, host=host, port=port)
         mode.start()
     except ImportError as e:
-        print("Error importing Web components:", e)
+        click.echo(f"Error importing Web components: {e}")
     except Exception as e:
-        print(f"Error starting Web mode: {e}")
+        click.echo(f"Error starting Web mode: {e}")
         import traceback
         traceback.print_exc()
 
@@ -281,7 +277,7 @@ def agent(ctx, file, from_stdin, no_hooks, json_output):
     if cfg and cfg.has_section('AGENT'):
         try:
             cfg_steps = int(cfg.get('AGENT', 'default_steps', fallback='1'))
-        except Exception:
+        except (TypeError, ValueError):
             cfg_steps = 1
 
     requested_steps = options.get('steps')
@@ -363,7 +359,7 @@ def agent(ctx, file, from_stdin, no_hooks, json_output):
         except Exception:
             pass
 
-    if len(file) > 0:
+    if file:
         for f in file:
             if is_image_file(f):
                 session.add_context('image', f)
@@ -381,7 +377,7 @@ def agent(ctx, file, from_stdin, no_hooks, json_output):
     if options.get('agent_debug', False):
         try:
             act = session.get_action('assistant_commands')
-            names = sorted(list((act.commands or {}).keys())) if act and hasattr(act, 'commands') else []
+            names = sorted(act.commands or {}) if act and hasattr(act, 'commands') else []
             header = 'Agent tools:'
             line = f"{header} " + (", ".join(names) if names else "(none)")
             session.utils.output.write(line)
@@ -453,7 +449,7 @@ def list_providers(ctx, showall):
         providers = config_manager.list_providers(active_only=True)
     
     # list_providers returns a dict, but we just want the keys (provider names)
-    for provider in providers.keys():
+    for provider in providers:
         if provider == default_provider:
             print(f'{provider} (default w/ {default_model})')
         else:
