@@ -541,6 +541,13 @@ class Session:
 
         self._exit_handled = True
 
+        # Session lifecycle: allow user-configured teardown hooks to run once.
+        try:
+            from core.hooks import run_hooks
+            run_hooks(self, phase="session_end", extras={"reason": "exit"})
+        except Exception:
+            pass
+
         # Run cleanup tasks
         if self.provider and hasattr(self.provider, 'cleanup'):
             try:

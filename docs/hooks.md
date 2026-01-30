@@ -9,8 +9,18 @@ Example config:
 
 ```ini
 [HOOKS]
+session_start = daily_tasks
 pre_turn = context_scout
 post_turn = memory_scribe
+session_end = session_debrief
+
+[HOOK.daily_tasks]
+model = gpt-4o-mini
+prompt = prompts/hooks/daily_tasks.md
+tools = youtrack,memory
+steps = 1
+mode = inject
+enable = true
 
 [HOOK.context_scout]
 model = gpt-4o-mini
@@ -26,6 +36,14 @@ prompt = prompts/hooks/scribe.md
 tools = memory
 steps = 1
 mode = silent
+enable = true
+
+[HOOK.session_debrief]
+model = gpt-4o-mini
+prompt = prompts/hooks/debrief.md
+tools = memory
+steps = 1
+mode = inject
 enable = true
 ```
 
@@ -64,6 +82,16 @@ Optional output labeling:
 `mode=silent`:
 - Skipped in `pre_turn` (no added latency before the answer).
 - Runs in `post_turn` so it can review the latest exchange and call tools without affecting the current response.
+
+### Lifecycle phases
+
+`session_start`:
+- Runs once per process/session run on the first real user-initiated turn (auto-submit turns are skipped).
+- Runs after the first user message is recorded but before the provider call, so injected output affects the first response.
+
+`session_end`:
+- Runs during `Session.handle_exit()` (Chat `/quit`, Ctrl-C/EOF confirm, TUI/Web shutdown).
+- For `mode=inject`, the hook output is persisted as a normal `assistant` context so it is captured by autosave/checkpoints.
 
 ## Runner selection
 

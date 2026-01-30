@@ -249,3 +249,80 @@ def test_hook_model_is_not_shadowed_by_session_model_override(monkeypatch):
     runner.run_user_turn("hello", options=TurnOptions(stream=False, suppress_context_print=True))
 
     assert calls.get("overrides", {}).get("model") == "gpt-5-mini"
+
+
+def test_session_start_hook_runs_once(monkeypatch):
+    sess = _make_session()
+    sess.config.set_option("session_start", "test_hook")
+    sess.config.set_option("pre_turn", "")
+    sess.config.set_option("post_turn", "")
+    if not sess.config.base_config.has_section("HOOK.test_hook"):
+        sess.config.base_config.add_section("HOOK.test_hook")
+    sess.config.base_config.set("HOOK.test_hook", "enable", "true")
+    sess.config.base_config.set("HOOK.test_hook", "when_message_contains", "")
+
+    calls = {"count": 0}
+
+    def fake_run_internal_agent(steps, overrides=None, contexts=None, output=None, verbose_dump=False):
+        calls["count"] += 1
+
+        class _R:
+            last_text = "SESSION_START"
+
+        return _R()
+
+    sess.run_internal_agent = fake_run_internal_agent  # type: ignore[assignment]
+
+    runner = TurnRunner(sess)
+    runner.run_user_turn("first", options=TurnOptions(stream=False, suppress_context_print=True))
+    runner.run_user_turn("second", options=TurnOptions(stream=False, suppress_context_print=True))
+
+    assert calls["count"] == 1
+
+    chat = sess.get_context("chat")
+    turns = chat.get("all") if chat else []
+    found = False
+    for t in turns:
+        if str(t.get("role", "")).lower() != "user":
+            continue
+        if (t.get("message") or "") != "first":
+            continue
+        ctx_items = t.get("context") or []
+        for c in ctx_items:
+            ctx_obj = c.get("context")
+            data = ctx_obj.get() if ctx_obj else None
+            if isinstance(data, dict) and "SESSION_START" in (data.get("content") or ""):
+                found = True
+    assert found
+
+
+def test_session_end_hook_persists_assistant_context(monkeypatch):
+    sess = _make_session()
+    sess.config.set_option("session_start", "")
+    sess.config.set_option("pre_turn", "")
+    sess.config.set_option("post_turn", "")
+    sess.config.set_option("session_end", "end_hook")
+    if not sess.config.base_config.has_section("HOOK.end_hook"):
+        sess.config.base_config.add_section("HOOK.end_hook")
+    sess.config.base_config.set("HOOK.end_hook", "enable", "true")
+    sess.config.base_config.set("HOOK.end_hook", "when_message_contains", "")
+
+    def fake_run_internal_agent(steps, overrides=None, contexts=None, output=None, verbose_dump=False):
+        class _R:
+            last_text = "SESSION_END"
+
+        return _R()
+
+    sess.run_internal_agent = fake_run_internal_agent  # type: ignore[assignment]
+
+    runner = TurnRunner(sess)
+    runner.run_user_turn("hello", options=TurnOptions(stream=False, suppress_context_print=True))
+
+    sess.handle_exit(confirm=False)
+
+    items = (sess.context or {}).get("assistant") or []
+    assert any(
+        isinstance(ctx.get(), dict)
+        and "SESSION_END" in (ctx.get().get("content") or "")
+        for ctx in items
+    )

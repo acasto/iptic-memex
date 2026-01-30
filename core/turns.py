@@ -131,6 +131,26 @@ class TurnRunner:
             # results as assistant contexts so they are processed like any
             # other loaded context (RAG summaries, etc.).
             if turns_executed == 0:
+                # Session lifecycle: run session_start hooks exactly once per
+                # process/session run, on the first *real* user-initiated turn.
+                # Do not run on auto-submit turns (tool follow-ups).
+                try:
+                    started = bool(self.session.get_user_data("__hooks_session_started__", False))
+                except Exception:
+                    started = False
+                if (not started) and (not initial_auto):
+                    try:
+                        self.session.set_user_data("__hooks_session_started__", True)
+                    except Exception:
+                        pass
+                    try:
+                        run_hooks(
+                            self.session,
+                            phase="session_start",
+                            extras={"input_text": "" if initial_auto else (input_text or "")},
+                        )
+                    except Exception:
+                        pass
                 try:
                     run_hooks(
                         self.session,

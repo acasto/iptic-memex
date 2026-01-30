@@ -338,6 +338,26 @@ def _run_single_hook(session, spec: HookSpec, phase: str, extras: Optional[Dict[
     if not last_text:
         return
 
+    # Session end: persist hook output as a normal assistant context so it is
+    # captured by autosave/checkpointing and visible in subsequent runs.
+    if phase == "session_end":
+        try:
+            name = spec.label or f"hook:{spec.name}"
+            prefix = spec.prefix or ""
+            if prefix and not prefix.endswith("\n"):
+                prefix = prefix + "\n"
+            content = f"{prefix}{str(last_text)}"
+            session.add_context(
+                "assistant",
+                {
+                    "name": name,
+                    "content": content,
+                },
+            )
+        except Exception:
+            pass
+        return
+
     # Build a transient assistant context object (not stored in session.context)
     ctx_obj = None
     try:
@@ -392,7 +412,7 @@ def _run_single_hook(session, spec: HookSpec, phase: str, extras: Optional[Dict[
 def run_hooks(session, phase: str, extras: Optional[Dict[str, Any]] = None) -> None:
     """Run all configured hooks for the given phase.
 
-    - phase: 'pre_turn' or 'post_turn' (other values are ignored for now)
+    - phase: one of 'session_start', 'pre_turn', 'post_turn', 'session_end'
     - extras: optional dict of additional context (e.g., input_text, last_user)
     """
     try:
@@ -418,6 +438,6 @@ def run_hooks(session, phase: str, extras: Optional[Dict[str, Any]] = None) -> N
             continue
         # Silent hooks do not need to block the pre-turn path; they can safely
         # run after the provider call using the post_turn phase instead.
-        if phase == "pre_turn" and spec.mode == "silent":
+        if phase in ("pre_turn", "session_start") and spec.mode == "silent":
             continue
         _run_single_hook(session, spec, phase, shared_extras)

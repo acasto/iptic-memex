@@ -1,5 +1,5 @@
 import os
-from typing import Optional
+from typing import Optional, List
 
 from config_manager import SessionConfig, ConfigManager
 
@@ -23,8 +23,12 @@ class PromptResolver:
         - Chain name from config
         - Default prompt if none specified
         """
+        return self._resolve_source(prompt_source, stack=[])
+
+    def _resolve_source(self, prompt_source: Optional[str], *, stack: List[str]) -> Optional[str]:
         if prompt_source is None:
             prompt_source = self.config.get_default_prompt_source()
+
         # Handle booleans explicitly: False disables prompt; True uses default
         if isinstance(prompt_source, bool):
             if not prompt_source:
@@ -38,26 +42,27 @@ class PromptResolver:
             except Exception:
                 prompt_source = ''
 
-        # Check cache first
         if prompt_source in self._cache:
             return self._cache[prompt_source]
 
-        content = None
+        if prompt_source in stack:
+            path = " -> ".join(stack + [prompt_source])
+            raise ValueError(f"Circular prompt reference detected: {path}")
+
+        next_stack = stack + [prompt_source]
 
         # Try to resolve as a chain first (comma-separated list)
-        if isinstance(prompt_source, str) and ',' in prompt_source:
-            content = self._resolve_chain(prompt_source)
+        if ',' in prompt_source:
+            content = self._resolve_chain(prompt_source, stack=next_stack)
         else:
-            # Try to resolve as a single prompt file
-            content = self._resolve_single_prompt(prompt_source)
+            content = self._resolve_single_prompt(prompt_source, stack=next_stack)
 
-        # Cache the result
         if content:
             self._cache[prompt_source] = content
 
         return content
 
-    def _resolve_chain(self, chain: str) -> Optional[str]:
+    def _resolve_chain(self, chain: str, *, stack: List[str]) -> Optional[str]:
         """Resolve a comma-separated chain of prompts"""
         if not isinstance(chain, str):
             return None
@@ -65,37 +70,45 @@ class PromptResolver:
         for prompt_name in chain.split(','):
             prompt_name = prompt_name.strip()
             if prompt_name:
-                content = self._resolve_single_prompt(prompt_name)
+                content = self._resolve_single_prompt(prompt_name, stack=stack)
                 if content:
                     prompts.append(content)
 
         return '\n\n'.join(prompts) if prompts else None
 
-    def _resolve_single_prompt(self, prompt_name: str) -> Optional[str]:
+    def _resolve_single_prompt(self, prompt_name: str, *, stack: List[str]) -> Optional[str]:
         """Resolve a single prompt file or mapping from [PROMPTS]."""
         if not isinstance(prompt_name, str):
             return None
-        # First check if it's defined in [PROMPTS] section (user config first, then core)
+
+        # First check if it's defined in [PROMPTS] section (user config first, then core).
+        # The key "default" is reserved for selecting the default prompt source; treat
+        # "default" as a filename in prompt chains (e.g. "default, tools").
         prompts_value = None
-        try:
-            bc = self.config.base_config  # raw base ConfigParser (merged with user)
-            if bc.has_option('PROMPTS', prompt_name):
-                prompts_value = bc.get('PROMPTS', prompt_name)
-        except Exception:
-            prompts_value = None
+        if prompt_name.strip().lower() != 'default':
+            try:
+                bc = self.config.base_config  # raw base ConfigParser (merged with user)
+                if bc.has_option('PROMPTS', prompt_name):
+                    prompts_value = bc.get('PROMPTS', prompt_name)
+            except Exception:
+                prompts_value = None
+        if prompts_value is not None:
+            if isinstance(prompts_value, str) and prompts_value.strip() == prompt_name.strip():
+                # Treat self-references as "no mapping" so values like
+                #   [PROMPTS]\n default = default
+                # allow a prompt file named "default.*" without recursion.
+                prompts_value = None
+
         if prompts_value is not None:
             # If it's a string, it could be a chain or a single prompt mapping
             if isinstance(prompts_value, str):
-                if ',' in prompts_value:
-                    return self._resolve_chain(prompts_value)
-                else:
-                    return self._resolve_single_prompt(prompts_value)
+                return self._resolve_source(prompts_value, stack=stack)
             # Handle booleans explicitly: False disables; True -> resolve default
             if isinstance(prompts_value, bool):
                 if not prompts_value:
                     return None
                 default_src = self.config.get_default_prompt_source()
-                return self._resolve_single_prompt(default_src) if isinstance(default_src, str) else None
+                return self._resolve_single_prompt(default_src, stack=stack) if isinstance(default_src, str) else None
             # Fallback: treat as literal content
             try:
                 return str(prompts_value)
