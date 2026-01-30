@@ -16,5 +16,6 @@ Commands:
 - `/save checkpoint [title]` - save a checkpoint template
 
 CLI:
+- `python main.py list-sessions` (list saved sessions)
 - `python main.py chat --resume` (most recent)
 - `python main.py chat --resume <id-or-path>` (explicit session)

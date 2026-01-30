@@ -477,6 +477,36 @@ def list_prompts(ctx):
         print("No prompts available")
 
 
+@cli.command()
+@click.pass_context
+def list_sessions(ctx):
+    """List saved sessions."""
+    config_manager = ctx.obj.get('CONFIG_MANAGER')
+    if not config_manager:
+        config_manager = ConfigManager()
+    options = dict(ctx.obj.get('OPTIONS', {}))
+
+    try:
+        from component_registry import ComponentRegistry
+        from session import Session
+        from ui.cli import CLIUI
+    except Exception as exc:
+        raise click.ClickException(f"Failed to initialize session: {exc}") from exc
+
+    session_config = config_manager.create_session_config(options)
+    registry = ComponentRegistry(session_config)
+    session = Session(session_config, registry)
+    session.ui = CLIUI(session)
+
+    action = session.get_action('manage_sessions')
+    if not action:
+        raise click.ClickException("manage_sessions action not available.")
+    result = action.run(['list'])
+    if isinstance(result, dict) and result.get('ok') is False:
+        err = result.get('error') or 'unknown error'
+        raise click.ClickException(f"Failed to list sessions: {err}")
+
+
 @cli.group()
 @click.pass_context
 def logs(ctx):

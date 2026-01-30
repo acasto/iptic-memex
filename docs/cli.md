@@ -33,6 +33,7 @@ python main.py <subcommand> --help
 - `/show sessions` - list saved sessions
 - `/load session <id>` - resume a saved session (checkpoints fork by default)
 - `/save checkpoint [title]` - save a checkpoint template
+- `python main.py list-sessions` - list saved sessions
 
 ### Settings and shortcuts
 - `/show settings`, `/show tool-settings`, `/show models`, `/show messages`, `/show usage`, `/show cost`
