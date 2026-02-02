@@ -315,7 +315,7 @@ class UserCommandsRegistryAction(InteractionAction):
             method = ui['choices'].get('method')
             if method in ('__dynamic_models', 'models'):
                 try:
-                    ui['choices'] = sorted(list(self.session.list_models().keys()))
+                    ui['choices'] = sorted(list(self.session.list_models(showall=True).keys()))
                 except Exception:
                     ui['choices'] = []
         return ui

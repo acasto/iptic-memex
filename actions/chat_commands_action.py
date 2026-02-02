@@ -307,7 +307,7 @@ class ChatCommandsAction(InteractionAction):
 
     def _complete_models(self, prefix: str) -> List[str]:
         try:
-            return sorted([m for m in self.session.list_models().keys() if m.startswith(prefix or '')])
+            return sorted([m for m in self.session.list_models(showall=True).keys() if m.startswith(prefix or '')])
         except Exception:
             return []
 

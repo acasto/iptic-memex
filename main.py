@@ -105,7 +105,10 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw,
     # Handle file mode (completion/agent based on steps)
     if file:
         # Build session for completion mode first; we may switch to Agent below
-        session = builder.build(mode='completion', **options)
+        try:
+            session = builder.build(mode='completion', **options)
+        except RuntimeError as e:
+            raise click.ClickException(str(e))
         ctx.obj['SESSION'] = session
 
         # Add file contexts
@@ -170,7 +173,10 @@ def chat(ctx, file, resume):
     options = ctx.obj.get('OPTIONS', {})
     
     # Build session for chat mode
-    session = builder.build(mode='chat', **options)
+    try:
+        session = builder.build(mode='chat', **options)
+    except RuntimeError as e:
+        raise click.ClickException(str(e))
     ctx.obj['SESSION'] = session
     
     _maybe_resume_session(session, resume=resume)
@@ -198,7 +204,10 @@ def tui(ctx, file, resume):
     options = ctx.obj.get('OPTIONS', {})
     
     # Build session for TUI mode
-    session = builder.build(mode='tui', **options)
+    try:
+        session = builder.build(mode='tui', **options)
+    except RuntimeError as e:
+        raise click.ClickException(str(e))
     ctx.obj['SESSION'] = session
     
     _maybe_resume_session(session, resume=resume)
@@ -238,7 +247,10 @@ def web(ctx, file, resume, host, port):
     options = ctx.obj.get('OPTIONS', {})
 
     # Build session for Web mode
-    session = builder.build(mode='web', **options)
+    try:
+        session = builder.build(mode='web', **options)
+    except RuntimeError as e:
+        raise click.ClickException(str(e))
     ctx.obj['SESSION'] = session
 
     _maybe_resume_session(session, resume=resume)
@@ -352,7 +364,10 @@ def agent(ctx, file, from_stdin, no_hooks, json_output):
         return
 
     # Standard CLI agent mode (single-step agents are allowed)
-    session = builder.build(mode='completion', **options)
+    try:
+        session = builder.build(mode='completion', **options)
+    except RuntimeError as e:
+        raise click.ClickException(str(e))
     if no_hooks:
         try:
             session.set_flag("hooks_disabled", True)
@@ -406,7 +421,8 @@ def list_models(ctx, showall, details):
     else:
         models = config_manager.list_models(active_only=True)
     
-    for section, options in models.items():
+    for section in sorted(models.keys()):
+        options = models[section]
         if details:
             print()
             print(f'[ {section} ]')

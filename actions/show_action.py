@@ -104,8 +104,10 @@ class ShowAction(InteractionAction):
                 emit_error(f'Error showing tools: {e}')
 
         if args[0] == 'models':
-            sections = list((self.session.list_models() or {}).keys())
-            lines = ["Models:"] + sections if sections else ["Models:", "(none)"]
+            show_all = len(args) > 1 and str(args[1]).lower() in ('all', '--all', '-a')
+            sections = list((self.session.list_models(showall=show_all) or {}).keys())
+            header = "Models (all):" if show_all else "Models:"
+            lines = [header] + sections if sections else [header, "(none)"]
             emit_block("\n".join(lines))
 
         if args[0] == 'messages':

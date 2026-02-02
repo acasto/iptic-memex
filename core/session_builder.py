@@ -117,8 +117,19 @@ class SessionBuilder:
 
         # Provider instantiation (with UX for long startups in chat-like modes)
         model = options.get('model')
-        provider_name = session_config.get_params(model).get('provider')
+        params_for_model = session_config.get_params(model)
+        provider_name = params_for_model.get('provider')
         if provider_name:
+            try:
+                active = bool(session_config.base_config.getboolean(provider_name, 'active', fallback=False))
+            except Exception:
+                active = False
+            if not active:
+                effective_model = params_for_model.get('model') or model or provider_name
+                raise RuntimeError(
+                    f"Provider '{provider_name}' is not active for model '{effective_model}'. "
+                    "Enable it in config.ini."
+                )
             provider_class = registry.load_provider_class(provider_name)
             if provider_class:
                 # Let providers signal slow startup by exposing a class attribute

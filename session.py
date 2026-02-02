@@ -197,21 +197,79 @@ class Session:
                 print(f"Unknown model '{model}'.")
             return False
 
+        # Gate inactive providers
+        try:
+            provider_name = self.config.get_params(normalized).get('provider')
+        except Exception:
+            provider_name = None
+        if provider_name:
+            try:
+                active = bool(self.config.base_config.getboolean(provider_name, 'active', fallback=False))
+            except Exception:
+                active = False
+            if not active:
+                try:
+                    self.utils.output.error(
+                        f"Provider '{provider_name}' is not active. Enable it in config.ini to use '{normalized}'."
+                    )
+                except Exception:
+                    print(f"Provider '{provider_name}' is not active. Enable it in config.ini to use '{normalized}'.")
+                return False
+
         # Compute old/new provider based on params before/after override
-        old_provider_name = self.params.get('provider')
+        old_params = dict(self.params or {})
+        old_model = old_params.get('model')
+        old_provider_name = old_params.get('provider')
+        old_provider = self.provider
+        old_usage = None
+        if old_provider and hasattr(old_provider, 'get_usage'):
+            try:
+                old_usage = old_provider.get_usage()
+            except Exception:
+                old_usage = None
+
         self.config.set_option('model', normalized)
         self.current_model = normalized
-        new_provider_name = self.params.get('provider')
+        new_params = dict(self.params or {})
+        new_provider_name = new_params.get('provider')
 
-        if old_provider_name != new_provider_name:
+        provider_changed = old_provider_name != new_provider_name
+        model_changed = normalized != old_model
+        can_hot_switch = bool(self.provider and hasattr(self.provider, 'update_params'))
+        model_path = new_params.get('model_path')
+        needs_reload = isinstance(model_path, str) and model_path.strip() != ''
+        connection_keys = (
+            'api_key',
+            'base_url',
+            'endpoint',
+            'host',
+            'port',
+            'port_range',
+            'binary',
+            'model_path',
+            'draft_model_path',
+        )
+        def _norm_conn_val(val):
+            if val is None:
+                return None
+            if isinstance(val, str):
+                s = val.strip()
+                return s if s != '' else None
+            return val
+        connection_changed = False
+        for key in connection_keys:
+            if _norm_conn_val(old_params.get(key)) != _norm_conn_val(new_params.get(key)):
+                connection_changed = True
+                break
+        needs_rebuild = (
+            provider_changed
+            or self.provider is None
+            or connection_changed
+            or (model_changed and needs_reload and not can_hot_switch)
+        )
+
+        if needs_rebuild:
             # Rebuild provider using registry
-            old_usage = None
-            if self.provider and hasattr(self.provider, 'get_usage'):
-                try:
-                    old_usage = self.provider.get_usage()
-                except Exception:
-                    old_usage = None
-
             provider_class = self._registry.load_provider_class(new_provider_name)
             if not provider_class:
                 try:
@@ -219,6 +277,16 @@ class Session:
                 except Exception:
                     print(f"Could not load provider '{new_provider_name}'.")
                 return False
+
+            # Cleanup old provider if supported
+            if old_provider and hasattr(old_provider, 'cleanup'):
+                try:
+                    old_provider.cleanup()
+                except Exception as e:
+                    try:
+                        self.utils.output.error(f"Error during provider cleanup: {e}")
+                    except Exception:
+                        pass
 
             # Generic indicator: providers can expose 'startup_wait_message' to request a spinner/status during init
             msg = getattr(provider_class, 'startup_wait_message', None)
@@ -255,7 +323,10 @@ class Session:
                     pass
 
             try:
-                self.utils.output.info(f"Switched to {normalized} (provider {new_provider_name}).")
+                if provider_changed:
+                    self.utils.output.info(f"Switched to {normalized} (provider {new_provider_name}).")
+                else:
+                    self.utils.output.info(f"Switched to {normalized}.")
             except Exception:
                 pass
             # Log effective settings
