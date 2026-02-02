@@ -191,8 +191,29 @@ class SessionBuilder:
                 if autosave:
                     from core.session_persistence import save_session, prune_sessions
 
+                    def _has_user_turn() -> bool:
+                        try:
+                            chat = session.get_context('chat')
+                            turns = chat.get('all') if chat else []
+                        except Exception:
+                            turns = []
+                        for turn in turns or []:
+                            if not isinstance(turn, dict):
+                                continue
+                            if turn.get('role') != 'user':
+                                continue
+                            msg = turn.get('message')
+                            if isinstance(msg, str) and msg.strip():
+                                return True
+                            ctx = turn.get('context')
+                            if ctx:
+                                return True
+                        return False
+
                     def _autosave():
                         try:
+                            if not _has_user_turn():
+                                return
                             save_session(session, kind='session')
                             prune_sessions(session, kind='session')
                         except Exception:

@@ -90,6 +90,32 @@ class ManageSessionsAction(InteractionAction):
         return {'ok': True, 'path': path, 'forked': fork}
 
     def _checkpoint_session(self, title: str) -> Dict[str, Any]:
+        has_user_turn = False
+        try:
+            chat = self.session.get_context('chat')
+            turns = chat.get('all') if chat else []
+        except Exception:
+            turns = []
+        for turn in turns or []:
+            if not isinstance(turn, dict):
+                continue
+            if turn.get('role') != 'user':
+                continue
+            msg = turn.get('message')
+            if isinstance(msg, str) and msg.strip():
+                has_user_turn = True
+                break
+            ctx = turn.get('context')
+            if ctx:
+                has_user_turn = True
+                break
+        if not has_user_turn:
+            try:
+                self.session.ui.emit('warning', {'message': 'No user messages to save yet.'})
+            except Exception:
+                pass
+            return {'ok': False, 'error': 'empty_session'}
+
         path = save_session(self.session, kind='checkpoint', title=title or None)
         try:
             from core.session_persistence import prune_sessions
