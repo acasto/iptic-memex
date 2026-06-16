@@ -43,17 +43,19 @@ class DummyUtils:
 class DummyUI:
     def __init__(self):
         self.capabilities = types.SimpleNamespace(blocking=True)
+        self.events = []
     def emit(self, *a, **k):
-        pass
+        self.events.append((a, k))
     def ask_bool(self, *a, **k):
         return True
 
 
 class DummySession:
-    def __init__(self, base_dir: str, *, extra_ro: str = "", extra_rw: str = ""):
+    def __init__(self, base_dir: str, *, extra_ro: str = "", extra_rw: str = "", agent_policy=None):
         self._base_dir = base_dir
         self._extra_ro = extra_ro
         self._extra_rw = extra_rw
+        self._agent_policy = agent_policy
         self.utils = DummyUtils()
         self.ui = DummyUI()
         self._contexts = []
@@ -98,6 +100,12 @@ class DummySession:
     def add_context(self, kind: str, value=None):
         self._contexts.append((kind, value))
         return value
+
+    def in_agent_mode(self):
+        return self._agent_policy is not None
+
+    def get_agent_write_policy(self):
+        return self._agent_policy
 
     def set_flag(self, *a, **k):
         pass
@@ -199,6 +207,22 @@ def test_cmd_tool_stdout_only_nonzero_is_output(tmp_path: Path):
     assert 'non-zero status' in outputs[-1]['content']
 
 
+def test_local_cmd_warns_when_agent_write_policy_is_not_enforced(tmp_path: Path):
+    sess = DummySession(str(tmp_path), agent_policy='deny')
+    cmd = AssistantCmdToolAction(sess)
+
+    cmd.run({'command': 'pwd'})
+    cmd.run({'command': 'pwd'})
+
+    warnings = [
+        v for (k, v) in sess._contexts
+        if k == 'assistant' and isinstance(v, dict) and v.get('name') == 'command_warning'
+    ]
+    assert len(warnings) == 1
+    assert 'does not enforce the agent write policy' in warnings[0]['content']
+    assert sess.ui.events
+
+
 def test_docker_tool_stdout_only_nonzero_is_output(tmp_path: Path):
     sess = DummySession(str(tmp_path))
     docker = AssistantDockerToolAction(sess)
@@ -232,6 +256,31 @@ def test_docker_tool_mounts_base_dir_without_running_docker(tmp_path: Path):
     assert any(arg.startswith(f"{base_dir}:{base_dir}") for arg in cmdline)
     assert any(arg.startswith(f"{base_dir}:/workspace") for arg in cmdline)
     assert '-w' in cmdline and base_dir in cmdline
+
+
+def test_docker_tool_agent_deny_mounts_workspace_readonly(tmp_path: Path):
+    base_dir = str(tmp_path)
+    sess = DummySession(base_dir, agent_policy='deny')
+    docker = AssistantDockerToolAction(sess)
+
+    cmdline = docker.create_docker_command('echo hello')
+
+    assert any(arg == f"{base_dir}:{base_dir}:ro" for arg in cmdline)
+    assert any(arg == f"{base_dir}:/workspace:ro" for arg in cmdline)
+    assert '--tmpfs' in cmdline
+    assert '/tmp:rw,mode=1777' in cmdline
+
+
+def test_docker_tool_agent_allow_keeps_workspace_writable(tmp_path: Path):
+    base_dir = str(tmp_path)
+    sess = DummySession(base_dir, agent_policy='allow')
+    docker = AssistantDockerToolAction(sess)
+
+    cmdline = docker.create_docker_command('echo hello')
+
+    assert any(arg == f"{base_dir}:{base_dir}" for arg in cmdline)
+    assert any(arg == f"{base_dir}:/workspace" for arg in cmdline)
+    assert not any(arg == f"{base_dir}:{base_dir}:ro" for arg in cmdline)
 
 
 def test_fs_handler_extra_ro_root_allows_read_but_blocks_write(tmp_path: Path):

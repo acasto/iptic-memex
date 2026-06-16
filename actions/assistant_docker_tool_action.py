@@ -37,7 +37,7 @@ class AssistantDockerToolAction(InteractionAction):
         as a compatibility alias for existing prompts/assumptions.
         """
         mount_ro = self.session.get_option(self.docker_env.upper(), 'mount_readonly', False)
-        force_ro = self._coerce_bool(mount_ro, default=False)
+        force_ro = self._coerce_bool(mount_ro, default=False) or self._agent_forces_readonly()
 
         mounts: List[Dict[str, str]] = []
         try:
@@ -116,9 +116,14 @@ class AssistantDockerToolAction(InteractionAction):
         desired_env = self.session.get_tools().get('docker_env', 'ephemeral')
         # In Agent Mode, optionally force ephemeral to avoid contention
         try:
-            force_ephemeral = bool(self.session.in_agent_mode()) and bool(
-                self.session.get_option('AGENT', 'docker_always_ephemeral', True)
+            in_agent = bool(self.session.in_agent_mode())
+            always_ephemeral = self._coerce_bool(
+                self.session.get_option('AGENT', 'docker_always_ephemeral', True),
+                default=True,
             )
+            # Non-allow write policies need a fresh container so read-only mounts
+            # cannot be bypassed by a previously-created persistent container.
+            force_ephemeral = in_agent and (always_ephemeral or self._agent_forces_readonly())
         except Exception:
             force_ephemeral = False
         self.docker_env = 'ephemeral' if force_ephemeral else desired_env
@@ -157,10 +162,31 @@ class AssistantDockerToolAction(InteractionAction):
                 return False
         return default
 
+    def _agent_write_policy(self) -> Optional[str]:
+        """Return the active agent write policy if this session is in agent mode."""
+        try:
+            if not self.session.in_agent_mode():
+                return None
+        except Exception:
+            return None
+        try:
+            policy = self.session.get_agent_write_policy()
+        except Exception:
+            policy = getattr(self.session, 'user_data', {}).get('agent_write_policy')
+        if policy is None:
+            return None
+        return str(policy).strip().lower()
+
+    def _agent_forces_readonly(self) -> bool:
+        """Agent deny/dry-run policies make Docker workspace mounts read-only."""
+        return self._agent_write_policy() in ('deny', 'dry-run')
+
     def _tmp_mount_args(self) -> list[str]:
         mode = (self.tmp_mount or 'none').lower()
         if mode == 'none':
             return []
+        if self._agent_forces_readonly() and mode == 'bind':
+            return ['--tmpfs', '/tmp:rw,mode=1777']
         if mode == 'bind':
             host_base = self.tmp_value or '.assistant-tmp'
             session_id = getattr(self.session, 'session_uid', None) or getattr(self.session, 'user_data', {}).get('session_uid')

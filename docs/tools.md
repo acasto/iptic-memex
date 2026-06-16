@@ -27,7 +27,13 @@ cmd_tool = assistant_cmd_tool        # local (default)
 docker_env = ephemeral
 ```
 
-If you need a true sandbox, use the Docker CMD tool. The local CMD tool is not sandboxed.
+If you need a true sandbox, use the Docker CMD tool. The local CMD tool is not sandboxed and cannot enforce agent
+write policies; in agent mode it emits a warning when used with `--agent-writes deny` or `--agent-writes dry-run`.
+
+In agent mode, Docker CMD follows the effective write policy:
+
+- `deny` and `dry-run`: workspace/root mounts are read-only, and host-backed `/tmp` bind mounts are replaced with tmpfs.
+- `allow`: writable roots remain writable.
 
 ## File tool base_directory guard
 

@@ -137,6 +137,45 @@ class AssistantCmdToolAction(InteractionAction):
 
         return True, None
 
+    def _agent_write_policy(self) -> Optional[str]:
+        """Return the active agent write policy if this session is in agent mode."""
+        try:
+            if not self.session.in_agent_mode():
+                return None
+        except Exception:
+            return None
+        try:
+            policy = self.session.get_agent_write_policy()
+        except Exception:
+            policy = getattr(self.session, 'user_data', {}).get('agent_write_policy')
+        if policy is None:
+            return None
+        return str(policy).strip().lower()
+
+    def _warn_if_agent_write_policy_not_enforced(self) -> None:
+        policy = self._agent_write_policy()
+        if policy not in ('deny', 'dry-run'):
+            return
+        user_data = getattr(self.session, 'user_data', None)
+        if isinstance(user_data, dict):
+            key = '__local_cmd_agent_write_warning_emitted__'
+            if user_data.get(key):
+                return
+            user_data[key] = True
+        message = (
+            "Warning: local CMD runs on the host and does not enforce the agent "
+            f"write policy ({policy}). Use assistant_docker_tool for read-only "
+            "Docker mounts in agent mode."
+        )
+        try:
+            self.session.ui.emit('warning', {'message': message})
+        except Exception:
+            pass
+        self.session.add_context('assistant', {
+            'name': 'command_warning',
+            'content': message,
+        })
+
     def execute_pipeline(self, pipeline) -> Tuple[bool, str, str]:
         """Execute a validated command pipeline"""
         if not pipeline:  # Add check for empty pipeline
@@ -210,6 +249,8 @@ class AssistantCmdToolAction(InteractionAction):
                 'content': "No command provided"
             })
             return
+
+        self._warn_if_agent_write_policy_not_enforced()
 
         # Parse the pipeline
         pipeline = self.parse_pipeline(full_command)

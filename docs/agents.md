@@ -72,3 +72,8 @@ By default, agents force the Docker CMD tool to use ephemeral containers to avoi
 
 - Control via `[AGENT].docker_always_ephemeral` (defaults to `True`).
 - Set to `False` only if you intentionally share a persistent container and understand the implications.
+- With Docker CMD, `--agent-writes deny` and `--agent-writes dry-run` force read-only workspace mounts. They also force
+  an ephemeral container even if `docker_always_ephemeral = False`, since Docker cannot retrofit read-only bind mounts
+  onto an existing container.
+- Local CMD runs on the host and cannot enforce agent write policy. Use Docker CMD for agent runs that need filesystem
+  protection.

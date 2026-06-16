@@ -36,6 +36,10 @@ Notes:
 - The base directory is mounted at its absolute path and used as the working directory.
 - `/workspace` is a compatibility alias mount of the base directory.
 - Any extra allowlisted roots are mounted at their absolute paths (read-only or read-write as configured).
+- In agent mode, `writes_policy = deny` and `writes_policy = dry-run` force read-only Docker workspace mounts.
+  Persistent containers are bypassed for those policies so an old read-write container cannot defeat the policy.
+  The default host-backed `/tmp` bind mount is also replaced with tmpfs to avoid writing `.assistant-tmp` under the
+  workspace.
 
 ## Customizing the sandbox image
 
@@ -69,6 +73,9 @@ By default, agents force ephemeral containers to avoid contention across paralle
 [AGENT]
 docker_always_ephemeral = True
 ```
+
+For `writes_policy = deny` or `writes_policy = dry-run`, Docker CMD always uses an ephemeral container even when
+`docker_always_ephemeral = False`, because Docker cannot change bind-mount permissions on an existing container.
 
 ## File tool base_directory guard
 
