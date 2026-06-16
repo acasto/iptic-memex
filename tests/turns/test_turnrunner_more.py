@@ -148,3 +148,29 @@ def test_early_stop_no_tools_breaks_loop():
     res = runner.run_agent_loop(steps=3, options=TurnOptions(agent_output_mode='final', early_stop_no_tools=True))
     assert res.turns_executed == 1
     assert res.ran_tools is False
+
+
+def test_agent_loop_can_disable_status_tags():
+    seen_agent_context = {"value": False}
+
+    class CaptureProcessContexts:
+        def get_contexts(self, session):
+            seen_agent_context["value"] = "agent" in session._contexts
+            return []
+
+        def process_contexts_for_user(self, auto_submit: bool):
+            return []
+
+    class SessNoStatus(FakeSession):
+        def __init__(self, provider):
+            super().__init__(provider)
+            self._actions = {"process_contexts": CaptureProcessContexts()}
+
+    sess = SessNoStatus(ProviderOnce("Done %%DONE%%"))
+    runner = TurnRunner(sess)
+    runner.run_agent_loop(
+        steps=1,
+        options=TurnOptions(agent_output_mode='final', agent_status_tags=False),
+    )
+
+    assert seen_agent_context["value"] is False

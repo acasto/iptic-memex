@@ -18,12 +18,13 @@ echo "What is PI?" | python main.py -f -
 Run N assistant turns with tool calls and a configurable write policy.
 
 ```bash
-python main.py agent --steps 2 -f ./path/to/file
+python main.py --steps 2 agent -f ./path/to/file
 ```
 
 Notes:
 - `--steps` omitted defaults to 1.
 - `--agent-output` controls output mode (final/full/none).
+- Shared agent flags such as `--steps` and `--agent-output` are top-level options; place them before `agent`.
 
 ## TUI mode
 Terminal UI with stepwise interactions backed by the same TurnRunner.

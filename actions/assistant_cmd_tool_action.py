@@ -2,7 +2,7 @@ from base_classes import InteractionAction
 import subprocess
 import shlex
 import os
-from typing import Optional
+from typing import Optional, Tuple
 import time
 from utils.tool_args import get_str
 
@@ -76,7 +76,7 @@ class AssistantCmdToolAction(InteractionAction):
                 'properties': {
                     'command': {"type": "string", "description": "Program to execute (e.g., 'echo', 'grep')."},
                     'arguments': {"type": "string", "description": "Space-delimited arguments string (quoted as needed)."},
-                    'content': {"type": "string", "description": "Unused for CMD; include arguments in 'arguments'."},
+                    'content': {"type": "string", "description": "Optional command string (alternative to args)."},
                     'desc': {"type": "string", "description": "Optional short description for UI/status; ignored by execution.", "default": ""}
                 }
             },
@@ -137,10 +137,10 @@ class AssistantCmdToolAction(InteractionAction):
 
         return True, None
 
-    def execute_pipeline(self, pipeline):
+    def execute_pipeline(self, pipeline) -> Tuple[bool, str, str]:
         """Execute a validated command pipeline"""
         if not pipeline:  # Add check for empty pipeline
-            return False, "Empty pipeline"
+            return False, "", "Empty pipeline"
 
         processes = []
         prev_process = None
@@ -150,7 +150,7 @@ class AssistantCmdToolAction(InteractionAction):
                 cmd_parts = shlex.split(cmd)
                 valid, error = self.validate_command(cmd_parts)
                 if not valid:
-                    return False, error
+                    return False, "", error
 
                 # Set up the process
                 stdin = prev_process.stdout if prev_process else None
@@ -172,20 +172,22 @@ class AssistantCmdToolAction(InteractionAction):
 
             # Get final output from last process with timeout
             if not processes:  # Add check for empty processes list
-                return False, "No processes created"
+                return False, "", "No processes created"
 
             try:
                 output, error = processes[-1].communicate(timeout=self._default_timeout)
+                stdout = (output or '').strip()
+                stderr = (error or '').strip()
                 if processes[-1].returncode != 0:
-                    return False, error or "Process failed with no error message"
-                return True, output
+                    return False, stdout, stderr or "Process failed with no error message"
+                return True, stdout, ''
             except subprocess.TimeoutExpired:
                 for p in processes:
                     p.kill()
-                return False, f"Command pipeline timed out after {self._default_timeout} seconds"
+                return False, "", f"Command pipeline timed out after {self._default_timeout} seconds"
 
         except (OSError, subprocess.SubprocessError) as e:
-            return False, str(e)
+            return False, "", str(e)
         finally:
             for p in processes:
                 try:
@@ -198,8 +200,16 @@ class AssistantCmdToolAction(InteractionAction):
         command = get_str(args or {}, 'command', '') or ''
         raw_args = get_str(args or {}, 'arguments', '') or ''
 
-        # Combine command and arguments
-        full_command = f"{command} {raw_args}".strip()
+        structured_command = f"{command} {raw_args}".strip()
+        content_command = (content or '').strip()
+        full_command = structured_command or content_command
+
+        if not full_command:
+            self.session.add_context('assistant', {
+                'name': 'command_error',
+                'content': "No command provided"
+            })
+            return
 
         # Parse the pipeline
         pipeline = self.parse_pipeline(full_command)
@@ -212,24 +222,37 @@ class AssistantCmdToolAction(InteractionAction):
 
         _st = time.time()
         # Execute and handle output
-        success, output = self.execute_pipeline(pipeline)
+        success, stdout, stderr = self.execute_pipeline(pipeline)
         duration_ms = int((time.time() - _st) * 1000)
 
         if success:
             self.session.add_context('assistant', {
                 'name': 'command_output',
-                'content': output
+                'content': stdout or "(Command executed successfully with no output)"
             })
             try:
-                self.session.utils.logger.cmd_result(exit_code=0, stdout=output, stderr='', duration_ms=duration_ms)
+                self.session.utils.logger.cmd_result(exit_code=0, stdout=stdout, stderr='', duration_ms=duration_ms)
+            except Exception:
+                pass
+        elif stdout and not stderr:
+            content = (
+                f"{stdout}\n\n"
+                "Warning: command exited with a non-zero status but produced stdout."
+            )
+            self.session.add_context('assistant', {
+                'name': 'command_output',
+                'content': content
+            })
+            try:
+                self.session.utils.logger.cmd_result(exit_code=1, stdout=stdout, stderr='', duration_ms=duration_ms)
             except Exception:
                 pass
         else:
             self.session.add_context('assistant', {
                 'name': 'command_error',
-                'content': f"Error: {output}"
+                'content': f"Error: {stderr or stdout}"
             })
             try:
-                self.session.utils.logger.cmd_result(exit_code=1, stdout='', stderr=str(output), duration_ms=duration_ms)
+                self.session.utils.logger.cmd_result(exit_code=1, stdout=stdout, stderr=stderr, duration_ms=duration_ms)
             except Exception:
                 pass

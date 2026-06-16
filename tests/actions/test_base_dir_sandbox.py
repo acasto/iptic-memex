@@ -163,6 +163,63 @@ def test_cmd_tool_runs_with_cwd_set_to_base_dir(tmp_path: Path):
     assert any('marker.txt' in (o.get('content') or '') for o in outputs)
 
 
+def test_cmd_tool_accepts_bare_content_command(tmp_path: Path):
+    base_dir = str(tmp_path)
+    sess = DummySession(base_dir)
+    sess.get_action('assistant_fs_handler')
+    cmd = AssistantCmdToolAction(sess)
+
+    cmd.run({}, 'pwd')
+
+    outputs = [
+        v for (k, v) in sess._contexts
+        if k == 'assistant' and isinstance(v, dict) and v.get('name') == 'command_output'
+    ]
+    assert any(base_dir in (o.get('content') or '') for o in outputs)
+
+
+def test_cmd_tool_stdout_only_nonzero_is_output(tmp_path: Path):
+    sess = DummySession(str(tmp_path))
+    cmd = AssistantCmdToolAction(sess)
+    cmd.execute_pipeline = lambda pipeline: (False, 'useful stdout', '')
+
+    cmd.run({'command': 'grep'})
+
+    outputs = [
+        v for (k, v) in sess._contexts
+        if k == 'assistant' and isinstance(v, dict) and v.get('name') == 'command_output'
+    ]
+    errors = [
+        v for (k, v) in sess._contexts
+        if k == 'assistant' and isinstance(v, dict) and v.get('name') == 'command_error'
+    ]
+    assert not errors
+    assert outputs
+    assert 'useful stdout' in outputs[-1]['content']
+    assert 'non-zero status' in outputs[-1]['content']
+
+
+def test_docker_tool_stdout_only_nonzero_is_output(tmp_path: Path):
+    sess = DummySession(str(tmp_path))
+    docker = AssistantDockerToolAction(sess)
+    docker.execute_command = lambda command: (False, 'useful stdout', '')
+
+    docker.run({}, 'find .')
+
+    outputs = [
+        v for (k, v) in sess._contexts
+        if k == 'assistant' and isinstance(v, dict) and v.get('name') == 'command_output'
+    ]
+    errors = [
+        v for (k, v) in sess._contexts
+        if k == 'assistant' and isinstance(v, dict) and v.get('name') == 'command_error'
+    ]
+    assert not errors
+    assert outputs
+    assert 'useful stdout' in outputs[-1]['content']
+    assert 'non-zero status' in outputs[-1]['content']
+
+
 def test_docker_tool_mounts_base_dir_without_running_docker(tmp_path: Path):
     base_dir = str(tmp_path)
     sess = DummySession(base_dir)

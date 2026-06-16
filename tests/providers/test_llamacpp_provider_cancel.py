@@ -28,6 +28,23 @@ class FakeLLM:
         return list(range(length))
 
 
+class FakeClosableLLM(FakeLLM):
+    def __init__(self) -> None:
+        self.close_count = 0
+
+    def close(self) -> None:
+        self.close_count += 1
+
+
+class FakeDraft:
+    def __init__(self) -> None:
+        self.draft_model = FakeClosableLLM()
+        self.close_count = 0
+
+    def close(self) -> None:
+        self.close_count += 1
+
+
 def _default_messages():
     return [{'content': 'Hello from prompt'}]
 
@@ -136,3 +153,26 @@ def test_stream_chat_close_updates_usage_and_closes_generator():
     assert usage is not None
     # Only one chunk emitted before close
     assert usage['completion_tokens'] == len('foo')
+
+
+def test_cleanup_closes_llama_handles_and_clears_references():
+    provider = LlamaCppProvider(FakeSession())
+    chat_llm = FakeClosableLLM()
+    embed_llm = FakeClosableLLM()
+    draft = FakeDraft()
+
+    provider.llm = chat_llm
+    provider._chat_model_path = '/tmp/chat.gguf'
+    provider._embed_llm = embed_llm
+    provider._embed_model_path = '/tmp/embed.gguf'
+    provider.draft_model = draft
+
+    provider.cleanup()
+
+    assert chat_llm.close_count == 1
+    assert embed_llm.close_count == 1
+    assert draft.draft_model.close_count == 1
+    assert draft.close_count == 1
+    assert provider.llm is None
+    assert provider._embed_llm is None
+    assert provider.draft_model is None

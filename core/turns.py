@@ -25,6 +25,7 @@ class TurnOptions:
     # When True, do not print context summaries/details during the turn; caller
     # is expected to have shown pre-prompt updates already.
     suppress_context_print: bool = False
+    agent_status_tags: Optional[bool] = None
 
 
 @dataclass
@@ -276,14 +277,26 @@ class TurnRunner:
         if not self.session.get_context("chat"):
             self.session.add_context("chat")
 
+        include_status_tags = opts.agent_status_tags
+        if include_status_tags is None:
+            try:
+                raw_status = self.session.get_option("AGENT", "status_tags", fallback=True)
+                if isinstance(raw_status, str):
+                    include_status_tags = raw_status.strip().lower() not in ("false", "0", "no", "off")
+                else:
+                    include_status_tags = bool(raw_status)
+            except Exception:
+                include_status_tags = True
+
         for i in range(total_turns):
             final_turn = (i == total_turns - 1)
 
-            status_text = f"Turn {i + 1} of {total_turns}"
-            try:
-                self.session.add_context("agent", {"name": "agent_status", "content": f"<status>{status_text}</status>"})
-            except Exception:
-                pass
+            if include_status_tags:
+                status_text = f"Turn {i + 1} of {total_turns}"
+                try:
+                    self.session.add_context("agent", {"name": "agent_status", "content": f"<status>{status_text}</status>"})
+                except Exception:
+                    pass
 
             user_meta = self._begin_turn_meta(role="user", kind="agent_step")
             contexts = self._process_contexts(auto_submit=True, suppress_print=(output_mode != "full"))

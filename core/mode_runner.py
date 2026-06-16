@@ -58,6 +58,21 @@ def _attach_contexts(session, contexts: Optional[Iterable[Tuple[str, Any]]]) -> 
             continue
 
 
+def _agent_status_tags_enabled(session, overrides: Optional[Dict[str, Any]] = None) -> bool:
+    try:
+        if isinstance(overrides, dict) and overrides.get("no_agent_status_tags"):
+            return False
+    except Exception:
+        pass
+    try:
+        raw = session.get_option('AGENT', 'status_tags', fallback=True)
+    except Exception:
+        raw = True
+    if isinstance(raw, str):
+        return raw.strip().lower() not in ('false', '0', 'no', 'off')
+    return bool(raw)
+
+
 def _build_subsession(
     builder,
     *,
@@ -364,6 +379,7 @@ def run_agent(
                     agent_output_mode=(output or sess.get_option('AGENT', 'output', fallback='final') or 'final'),
                     early_stop_no_tools=True,
                     verbose_dump=verbose_dump,
+                    agent_status_tags=_agent_status_tags_enabled(sess, overrides),
                 ),
             )
     else:
@@ -374,6 +390,7 @@ def run_agent(
                 agent_output_mode=(output or sess.get_option('AGENT', 'output', fallback='final') or 'final'),
                 early_stop_no_tools=True,
                 verbose_dump=verbose_dump,
+                agent_status_tags=_agent_status_tags_enabled(sess, overrides),
             ),
         )
 

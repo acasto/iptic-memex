@@ -7,7 +7,7 @@ Agent mode runs a non-interactive multi-turn loop with tool calls and a configur
 Recommended: explicit agent subcommand
 
 ```bash
-python main.py agent --steps 3 -f ./path/to/file
+python main.py --steps 3 agent -f ./path/to/file
 ```
 
 Legacy (still supported): top-level file mode with `--steps`
@@ -20,10 +20,11 @@ Notes:
 - `--steps` omitted defaults to 1.
 - With top-level `-f/--file`, Memex routes to completion mode unless `--steps > 1`.
 - The explicit `agent` subcommand always runs agent mode (single-step is allowed).
+- Current CLI convention: shared options such as `--steps`, `--agent-output`, `--tools`, and `--base-dir` are top-level Click options, so place them before `agent`. Agent-only options such as `--json`, `--from-stdin`, `--no-hooks`, and agent `-f/--file` go after `agent`.
 
 ## Options
 
-Common agent flags (top-level or `agent` subcommand):
+Shared agent flags (top-level options; place before `agent` when using the subcommand):
 - `--steps N` - number of assistant turns (defaults to `[AGENT].default_steps`, fallback 1)
 - `--agent-writes deny|dry-run|allow` - file tool write policy
 - `--agent-output final|full|none` - output mode (default: final)
@@ -42,17 +43,17 @@ Agent subcommand-only flags:
 
 Multiple turns, full output:
 ```bash
-echo "Implement X and show a diff" | python main.py agent --steps 3 --agent-output full -f -
+echo "Implement X and show a diff" | python main.py --steps 3 --agent-output full agent -f -
 ```
 
 Final-only output (default):
 ```bash
-echo "Summarize this file" | python main.py agent --steps 2 -f notes.md
+echo "Summarize this file" | python main.py --steps 2 agent -f notes.md
 ```
 
 Deny writes, set workspace root:
 ```bash
-python main.py agent --steps 3 --agent-writes deny --base-dir ~/Projects/that-repo -f -
+python main.py --steps 3 --agent-writes deny --base-dir ~/Projects/that-repo agent -f -
 ```
 
 Use the legacy file mode with steps:

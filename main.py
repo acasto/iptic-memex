@@ -286,11 +286,13 @@ def agent(ctx, file, from_stdin, no_hooks, json_output):
 
     cfg = ctx.obj.get('CONFIG_MANAGER').base_config if ctx.obj.get('CONFIG_MANAGER') else None
     cfg_steps = 1
+    cfg_writes = 'deny'
     if cfg and cfg.has_section('AGENT'):
         try:
             cfg_steps = int(cfg.get('AGENT', 'default_steps', fallback='1'))
         except (TypeError, ValueError):
             cfg_steps = 1
+        cfg_writes = cfg.get('AGENT', 'writes_policy', fallback='deny')
 
     requested_steps = options.get('steps')
     effective_steps = int(requested_steps) if requested_steps is not None else cfg_steps
@@ -385,7 +387,7 @@ def agent(ctx, file, from_stdin, no_hooks, json_output):
     mode = AgentMode(
         session,
         steps=int(effective_steps),
-        writes_policy=(options.get('agent_writes') if 'agent_writes' in options else 'deny'),
+        writes_policy=(options.get('agent_writes') if 'agent_writes' in options else cfg_writes),
         use_status_tags=not options.get('no_agent_status_tags', False),
         output_mode=options.get('agent_output'),
     )

@@ -305,21 +305,21 @@ class AssistantDockerToolAction(InteractionAction):
 
         return docker_cmd
 
-    def execute_command(self, command_str: str) -> Tuple[bool, str]:
+    def execute_command(self, command_str: str) -> Tuple[bool, str, str]:
         """Execute a command through Docker based on current mode"""
         if not command_str.strip():
-            return False, "Empty command"
+            return False, "", "Empty command"
 
         try:
             if self.is_persistent:
                 # Ensure persistent container is running
                 success, error = self._start_persistent_container()
                 if not success:
-                    return False, f"Failed to start container {self.container_name}: {error}"
+                    return False, "", f"Failed to start container {self.container_name}: {error}"
 
             docker_cmd = self.create_docker_command(command_str)
             if not docker_cmd:
-                return False, "Invalid command"
+                return False, "", "Invalid command"
 
             process = subprocess.Popen(
                 docker_cmd,
@@ -330,16 +330,17 @@ class AssistantDockerToolAction(InteractionAction):
 
             try:
                 output, error = process.communicate(timeout=self._default_timeout)
+                stdout = (output or '').strip()
+                stderr = (error or '').strip()
                 if process.returncode != 0:
-                    combined_output = output + "\n" + error if output else error
-                    return False, combined_output.strip()
-                return True, output.strip()
+                    return False, stdout, stderr
+                return True, stdout, ''
             except subprocess.TimeoutExpired:
                 process.kill()
-                return False, f"Command timed out after {self._default_timeout} seconds"
+                return False, "", f"Command timed out after {self._default_timeout} seconds"
 
         except (OSError, subprocess.SubprocessError) as e:
-            return False, str(e)
+            return False, "", str(e)
 
     def setup(self) -> None:
         """Set up the action - required by InteractionAction
@@ -377,10 +378,10 @@ class AssistantDockerToolAction(InteractionAction):
             })
             return
 
-        success, output = self.execute_command(command_str)
+        success, stdout, stderr = self.execute_command(command_str)
 
         if success:
-            if not output:
+            if not stdout:
                 self.session.add_context('assistant', {
                     'name': 'command_output',
                     'content': "(Command executed successfully with no output)"
@@ -388,10 +389,18 @@ class AssistantDockerToolAction(InteractionAction):
             else:
                 self.session.add_context('assistant', {
                     'name': 'command_output',
-                    'content': output
+                    'content': stdout
                 })
+        elif stdout and not stderr:
+            self.session.add_context('assistant', {
+                'name': 'command_output',
+                'content': (
+                    f"{stdout}\n\n"
+                    "Warning: command exited with a non-zero status but produced stdout."
+                )
+            })
         else:
             self.session.add_context('assistant', {
                 'name': 'command_error',
-                'content': f"Error: {output}"
+                'content': f"Error: {stderr or stdout}"
             })

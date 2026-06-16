@@ -60,7 +60,7 @@ tools = memory
 steps = 1
 mode = silent
 runner = external
-external_cmd = python main.py agent --steps 1 --json --from-stdin --no-hooks
+external_cmd = python main.py --steps 1 agent --json --from-stdin --no-hooks
 ```
 
 Optional gating:

@@ -6,6 +6,9 @@ from base_classes import InteractionAction
 from component_registry import PromptResolver
 
 
+_DISABLED = object()
+
+
 class BuildTurnPromptAction(InteractionAction):
     """
     Resolve and template a per-turn prompt/status snippet.
@@ -26,14 +29,15 @@ class BuildTurnPromptAction(InteractionAction):
         self._resolver = PromptResolver(self.session.config)
 
     # ---- helpers ---------------------------------------------------------
-    def _normalize_source(self, value: Any) -> Optional[str]:
+    def _normalize_source(self, value: Any) -> Optional[str] | object:
         """Normalize raw config value into a usable prompt source."""
         if value is None:
             return None
 
-        # Booleans: False disables; True is treated as "no explicit source"
+        # Booleans: False explicitly disables lower-precedence turn_prompt values;
+        # True is treated as "no explicit source".
         if isinstance(value, bool):
-            return None if value is False else None
+            return _DISABLED if value is False else None
 
         try:
             s = str(value)
@@ -42,8 +46,8 @@ class BuildTurnPromptAction(InteractionAction):
         s = s.strip()
         if not s:
             return None
-        if s.lower() in ("false", "none"):
-            return None
+        if s.lower() in ("false", "no", "0", "off", "none", "disabled", "disable"):
+            return _DISABLED
         return s
 
     def _get_effective_source(self) -> Optional[str]:
@@ -60,6 +64,8 @@ class BuildTurnPromptAction(InteractionAction):
             except Exception:
                 model_val = None
             src = self._normalize_source(model_val)
+            if src is _DISABLED:
+                return None
             if src:
                 return src
 
@@ -75,6 +81,8 @@ class BuildTurnPromptAction(InteractionAction):
             except Exception:
                 prov_val = None
             src = self._normalize_source(prov_val)
+            if src is _DISABLED:
+                return None
             if src:
                 return src
 
@@ -83,7 +91,8 @@ class BuildTurnPromptAction(InteractionAction):
             default_val = self.session.get_option("DEFAULT", "turn_prompt", fallback=None)
         except Exception:
             default_val = None
-        return self._normalize_source(default_val)
+        src = self._normalize_source(default_val)
+        return None if src is _DISABLED else src
 
     def _process_templates(self, content: str) -> str:
         """Apply configured template handlers to the content."""
@@ -146,4 +155,3 @@ class BuildTurnPromptAction(InteractionAction):
 
         processed = self._process_templates(resolved)
         return processed.strip()
-

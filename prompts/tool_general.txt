@@ -17,7 +17,7 @@ Block Reference Format (for passing large content to tools):
     ...content...
     %%END%%
 
-Be cognizant of inadvertantly triggering a tool by mentioning its name in passing. If you're not meanign to run a tool,
+Be cognizant of inadvertantly triggering a tool by mentioning its name in passing. If you're not meaning to run a tool,
 then be sure to quote the tool name like this: `%%TOOL_NAME%%` to avoid triggering it.
 
 Description                         COMMAND

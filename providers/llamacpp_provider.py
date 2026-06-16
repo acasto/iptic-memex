@@ -111,6 +111,38 @@ class LlamaCppProvider(APIProvider):
             'total_time': 0.0
         }
 
+    _FLOAT_REQUEST_PARAMS = {
+        'frequency_penalty',
+        'presence_penalty',
+        'temperature',
+        'top_p',
+    }
+    _INT_REQUEST_PARAMS = {
+        'max_tokens',
+        'n',
+        'seed',
+    }
+    _SKIP_PARAM = object()
+
+    @classmethod
+    def _coerce_request_param(cls, parameter, value):
+        """Coerce config/CLI string values to llama-cpp request types."""
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped == '':
+                return cls._SKIP_PARAM
+            if parameter in cls._FLOAT_REQUEST_PARAMS:
+                try:
+                    return float(stripped)
+                except (TypeError, ValueError):
+                    return value
+            if parameter in cls._INT_REQUEST_PARAMS:
+                try:
+                    return int(stripped)
+                except (TypeError, ValueError):
+                    return value
+        return value
+
     def chat(self):
         """
         Creates a chat completion using llama-cpp-python
@@ -127,12 +159,15 @@ class LlamaCppProvider(APIProvider):
             # Map parameters from current_params to the call
             for parameter in self.parameters:
                 if parameter in current_params and current_params[parameter] is not None:
+                    value = self._coerce_request_param(parameter, current_params[parameter])
+                    if value is self._SKIP_PARAM:
+                        continue
                     # Handle stream parameter specially - only include if True
                     if parameter == 'stream':
-                        if current_params[parameter] is True:
+                        if value is True:
                             api_parms[parameter] = True
                     else:
-                        api_parms[parameter] = current_params[parameter]
+                        api_parms[parameter] = value
 
             # Drop OpenAI-style tools for llama.cpp (unsupported here).
             # Passing a bare boolean (e.g., tools=True) causes some
@@ -481,6 +516,27 @@ class LlamaCppProvider(APIProvider):
             'total_time': 0.0
         }
 
+    def cleanup(self):
+        """Release llama.cpp handles before native process-exit finalizers run."""
+        self._close_llama_handle(self.llm)
+        self.llm = None
+        self._chat_model_path = None
+
+        self._close_llama_handle(self._embed_llm)
+        self._embed_llm = None
+        self._embed_model_path = None
+
+        draft_llm = getattr(self.draft_model, 'draft_model', None)
+        self._close_llama_handle(draft_llm)
+        self._close_llama_handle(self.draft_model)
+        self.draft_model = None
+
+    def __del__(self):
+        try:
+            self.cleanup()
+        except Exception:
+            pass
+
     def get_cost(self):
         return {
             'total': 0.0,
@@ -558,3 +614,15 @@ class LlamaCppProvider(APIProvider):
                 init_kwargs.pop(k, None)
 
         return init_kwargs
+
+    @staticmethod
+    def _close_llama_handle(handle) -> None:
+        if handle is None:
+            return
+        close_fn = getattr(handle, 'close', None)
+        if not callable(close_fn):
+            return
+        try:
+            close_fn()
+        except Exception:
+            pass

@@ -97,6 +97,7 @@ class AgentMode(InteractionMode):
                         agent_output_mode=out_mode,
                         early_stop_no_tools=True,
                         verbose_dump=bool(self.session.get_params().get('agent_debug', False)),
+                        agent_status_tags=self.use_status_tags,
                     ),
                 )
 
