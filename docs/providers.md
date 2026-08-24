@@ -71,6 +71,7 @@ Two options:
 2) **LlamaCppServer** (managed server):
    - Provider: `LlamaCppServer`
    - Spawns `llama-server` and connects via the OpenAI-compatible API.
+   - On POSIX, isolates the server from terminal Ctrl+C and stops it explicitly during session cleanup.
 
 Minimal model example for LlamaCppServer:
 

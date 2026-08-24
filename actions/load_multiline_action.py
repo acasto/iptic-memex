@@ -3,6 +3,8 @@ from base_classes import StepwiseAction, Completed
 
 class LoadMultilineAction(StepwiseAction):
 
+    TERMINATOR = '.done'
+
     def __init__(self, session):
         self.session = session
         self.tc = session.utils.tab_completion
@@ -13,17 +15,28 @@ class LoadMultilineAction(StepwiseAction):
         blocking = bool(getattr(self.session.ui, 'capabilities', None) and self.session.ui.capabilities.blocking)
 
         if blocking and not content:
-            # Restore legacy behavior: capture lines until Ctrl+C
+            # Capture lines until an explicit terminator. Ctrl+D/Ctrl+C remain
+            # supported as fallbacks for compatibility with the legacy flow.
             try:
-                self.session.ui.emit('status', {'message': 'Entering multiline input mode. Press Ctrl+C when finished.'})
+                self.session.ui.emit(
+                    'status',
+                    {
+                        'message': (
+                            f'Entering multiline input mode. Enter {self.TERMINATOR} '
+                            'on its own line when finished (Ctrl+D or Ctrl+C also works).'
+                        )
+                    },
+                )
             except Exception:
                 pass
             lines = []
             try:
                 while True:
                     line = self.session.utils.input.get_input(prompt="")
+                    if line.strip() == self.TERMINATOR:
+                        break
                     lines.append(line)
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, EOFError):
                 pass
             text = "\n".join(lines).rstrip("\n")
         else:

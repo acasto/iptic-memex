@@ -350,6 +350,7 @@ Gating and CLI‑only flows
   - Generates an API key by default and configures the client to use `Authorization: Bearer ...`.
   - Streaming is supported (normal `stream=True`). We default `stream_options=False` unless explicitly set.
   - Session-local prompt caching is enabled by forcing `extra_body.cache_prompt = true` on requests. No slot persistence.
+  - On POSIX, launches the child in a separate process group so terminal Ctrl+C is handled by the app; normal session cleanup still terminates the child explicitly.
 - Tools mode:
   - Defaults to pseudo-tools (`tool_mode = pseudo`). If upstream adds official function tools, switch via config to `official`.
 - Config (config.ini):

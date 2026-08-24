@@ -14,7 +14,7 @@ python main.py <subcommand> --help
 
 ### Context loading
 - `/load file` or `/file` - load file content (auto-detects pdf/docx/xlsx/pptx/msg/audio/images)
-- `/load multiline` - paste multiline text into context
+- `/load multiline` - paste multiline text into context; finish with `.done` on its own line
 - `/load web` - fetch a web page and extract content
 - `/load raw` - load unformatted text (useful for raw chat transcripts)
 - `/load rag` - query configured RAG indexes and add a summary

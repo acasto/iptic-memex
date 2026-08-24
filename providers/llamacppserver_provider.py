@@ -167,13 +167,18 @@ class LlamaCppServerProvider(OpenAIProvider):
             log_target = self._log_handle
 
         # Spawn the server
-        env = os.environ.copy()
-        self._proc = subprocess.Popen(
-            cmd,
-            stdout=log_target,
-            stderr=subprocess.STDOUT,
-            close_fds=True,
-        )
+        popen_kwargs = {
+            'stdout': log_target,
+            'stderr': subprocess.STDOUT,
+            'close_fds': True,
+        }
+        if os.name == 'posix':
+            # Keep terminal-generated signals (notably Ctrl+C/SIGINT) under the
+            # parent application's control. The session lifecycle still stops
+            # this exact process explicitly via cleanup().
+            popen_kwargs['process_group'] = 0
+
+        self._proc = subprocess.Popen(cmd, **popen_kwargs)
 
         self._base_url = f"http://{host}:{port}/v1"
         timeout_s = float(params.get('startup_timeout', 90))
