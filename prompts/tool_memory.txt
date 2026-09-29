@@ -11,7 +11,7 @@ Access memories                     %%MEMORY%%
 %%MEMORY%%
 action="save"
 memory="My first memory"
-%%END
+%%END%%
     - Read memories:
 %%MEMORY%%
 action="read"

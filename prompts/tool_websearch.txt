@@ -10,9 +10,9 @@ Search the web                      %%WEBSEARCH%%
   + Examples:
     - Checking the weather:
 %%WEBSEARCH%%
-What is the weather going to be like in Pitssburgh, PA this week?
+What is the weather going to be like in Pittsburgh, PA this week?
 %%END%%
-    - Looking up the latest version of somethign:
+    - Looking up the latest version of something:
 %%WEBSEARCH%%
 What is the latest stable version of Ubuntu?
 %%END%%

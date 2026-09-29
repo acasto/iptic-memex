@@ -1,4 +1,4 @@
-Run an allowed shell command        %%CMD%%
+Run an shell command        %%CMD%%
  + You can chain commands together using pipes (`|`) or redirect output using `>` or `>>`.
  + If a command fails (e.g., due to incorrect syntax or a missing file), an error message will be returned.
  + File paths can be relative to the current directory or absolute.
@@ -10,5 +10,5 @@ pwd
 %%END%%
    - A complex example:
 %%CMD%%
-cat myfile.txt | grep error | wc -l"
+cat myfile.txt | grep error | wc -l
 %%END%%

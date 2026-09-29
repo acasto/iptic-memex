@@ -1,23 +1,27 @@
-* The  'file' tool can struggle with edits on longer files. In such cases consider a strategy from below using the 'cmd' tool.
-* SURGICAL EDITING TOOLKIT: Your Docker environment includes modern tools for precise file edits. Prefer these over rewriting entire files:
-  - Search/discovery: rg (ripgrep), fd (fast find)
-  - Text edits: sd (modern sed), sponge (safe pipeline writes)
-  - Structured data: jq (JSON), yq (YAML/JSON/XML), dasel, xmlstarlet, miller (CSV)
-  - Code-aware transforms: ast-grep (sg), semgrep --autofix, comby (structural search/replace)
-  - Patch application: git apply --check --3way, patch
-  - Language-specific: eslint --fix, ruff --fix, jscodeshift
+* Editing files with shell tools (complements the 'file' tool):
+  + The 'file' tool is preferred for reading and for writing/patching whole or partial files; it also handles pdf/docx/xlsx/images/audio.
+  + Use the 'cmd' tools below for surgical edits in long files, bulk transforms, or structured-data queries.
 
-* EDITING STRATEGY: Use tiered approach for maximum efficiency:
-  1. If using a diff/patch → try git apply --check then git apply --3way
-  2. For code transforms → prefer ast-grep (sg -lang <language> -p'<pattern>'), comby, or semgrep patterns
-  3. For config/data → use jq/yq/xmlstarlet with sponge for in-place updates
-  4. For simple text replacements → use sd for single-line literal/regex substitutions
-  5. For multi-line insertions → use here-docs and sed: `cat << 'EOF' > ./temp.ext` then `sed '/pattern/r ./temp.ext'`
-  6. Last resort → regenerate the file entirely
+* TOOLKIT (installed in this container):
+  - Search/discovery: rg (ripgrep), fd
+  - Text edits: sd (simple single-line replaces only), sponge (safe in-place pipeline writes: `... | sponge file`)
+  - Structured data: jq (JSON), yq (YAML), dasel (TOML/CSV/XML), xmlstarlet (XML), mlr (Miller, CSV/TSV)
+  - Code transforms: sg -lang <lang> -p '<pattern>' (add --rewrite to apply fixes), semgrep --autofix
+  - Lint/fix: ruff --fix (Python), eslint --fix (JavaScript)
+  - Patches: git apply --check, then git apply --3way; patch
 
-* CONTAINER CONSTRAINTS & EDITING RULES:
-  - Always verify changes: `grep -A3 -B3 "pattern"` or `head/tail` after edits
-  - Combine multi-step operations in single `cmd` when using temp files
-  - For syntax-aware searches, default to ast-grep over grep/rg unless explicitly requested plain text
-  - If escaping gets complex (nested quotes), switch to here-doc approach immediately
-  - sd is only for simple replacements - avoid for multi-line blocks or complex patterns
+* TIERED EDITING STRATEGY:
+  1. Diff/patch -> git apply --check, then git apply --3way
+  2. Code transforms -> sg --rewrite or semgrep --autofix
+  3. Structured data -> jq/yq/dasel/xmlstarlet, piped through sponge for in-place updates
+  4. Simple text replacements -> sd 'pattern' 'replacement' file
+  5. Multi-line insertions -> here-doc + sed: `cat << 'EOF' > /tmp/ins.ext` then `sed -i '/pattern/r /tmp/ins.ext' file`
+  6. Last resort -> rewrite the file with the file tool
+
+* CONTAINER NOTES:
+  - Ubuntu 24.04 (arm64). /workspace is the project mount (read-write); /tmp is writable scratch space.
+  - Verify edits landed: grep -A3 -B3 or head/tail afterward.
+  - Combine multi-step operations in a single cmd call when using temp files.
+  - For syntax-aware searches, default to sg over grep/rg unless explicitly requested plain text.
+  - If escaping gets complex (nested quotes), switch to the here-doc approach immediately.
+  - sd is for simple replacements only; use the file tool's patch mode for multiline or complex patterns.

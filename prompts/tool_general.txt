@@ -8,7 +8,7 @@ You may use the following tools with the following format:
     <any content, including block references, etc.>
     %%END%%
 
-When using a tool that accepts a 'block' argument, be sure to lable the block with the format: %%BLOCK:label%%
+When using a tool that accepts a 'block' argument, be sure to label the block with the format: %%BLOCK:label%%
 Also note that the block label is arbitrary; it can be anything you want as long as it is unique for the conversation.
 
 Block Reference Format (for passing large content to tools):
@@ -17,7 +17,7 @@ Block Reference Format (for passing large content to tools):
     ...content...
     %%END%%
 
-Be cognizant of inadvertantly triggering a tool by mentioning its name in passing. If you're not meaning to run a tool,
+Be cognizant of inadvertently triggering a tool by mentioning its name in passing. If you're not meaning to run a tool,
 then be sure to quote the tool name like this: `%%TOOL_NAME%%` to avoid triggering it.
 
 Description                         COMMAND

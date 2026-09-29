@@ -40,7 +40,7 @@ arguments="-1 | wc -l"
    - Search for a specific string in a file and display matching lines:
 %%CMD%%
 command="grep"
-arguments="'search_term' file.txt"
+arguments="search_term file.txt"
 %%END%%
    - Find all `.txt` files in the current directory and subdirectories:
 %%CMD%%

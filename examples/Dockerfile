@@ -58,19 +58,24 @@ RUN apt-get update && apt-get install -y \
     && ln -s /usr/bin/fdfind /usr/bin/fd
 
 # Install Python-based tools
-RUN pip3 install --no-cache-dir --break-system-packages semgrep jsonpatch
+RUN pip3 install --no-cache-dir --break-system-packages semgrep jsonpatch ruff
 
 # Install ast-grep
 RUN npm install -g @ast-grep/cli
 
-# Modern sed alternative
-RUN curl -L https://github.com/chmln/sd/releases/latest/download/sd-v1.0.0-aarch64-unknown-linux-musl.tar.gz | tar xz -C /usr/local/bin --strip-components=1
+# Static binaries, per-arch (defaults to arm64; set TARGETARCH for multi-arch builds)
+ARG TARGETARCH
 
-# YAML processing
-RUN wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 && chmod +x /usr/local/bin/yq
+# Modern sed alternative (sd names assets per-arch)
+RUN case "${TARGETARCH:-arm64}" in \
+      arm64) SD_ASSET=sd-v1.1.0-aarch64-unknown-linux-musl.tar.gz ;; \
+      amd64) SD_ASSET=sd-v1.1.0-x86_64-unknown-linux-musl.tar.gz ;; \
+    esac && \
+    curl -L "https://github.com/chmln/sd/releases/download/v1.1.0/${SD_ASSET}" | tar xz -C /usr/local/bin --strip-components=1
 
-RUN curl -L -o /usr/local/bin/comby https://github.com/comby-tools/comby/releases/download/1.8.1/comby-1.8.1-x86_64-linux && \
-    chmod +x /usr/local/bin/comby
+# YAML processing (yq) and dasel (TOML/CSV/XML), both per-arch
+RUN wget -qO /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_${TARGETARCH:-arm64}" && chmod +x /usr/local/bin/yq && \
+    curl -L -o /usr/local/bin/dasel "https://github.com/TomWright/dasel/releases/download/v3.11.2/dasel_linux_${TARGETARCH:-arm64}" && chmod +x /usr/local/bin/dasel
 
 # Set working directory
 WORKDIR /workspace

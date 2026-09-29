@@ -1,5 +1,5 @@
 Interact with files                 %%FILE%%
-  + Note: %%FILE%% only works within the /workspace directory, outside of that ccnsider other strategies such as shell commands
+  + Note: %%FILE%% only works within the /workspace directory, outside of that consider other strategies such as shell commands
   + Arguments available are:
     - mode="<read|write|edit|patch|append|summarize|delete|rename|copy>"
     - file="<path to file>"
@@ -32,7 +32,7 @@ Interact with files                 %%FILE%%
   + Only use `summarize` when digging through multiple files, for doing work you probably want to `read`.
   + Use `mode="append"` to add content without overwriting the file.
   + Be cautious with `mode="write"`, as it will overwrite the file if it exists.
-  + Be cautious when it comes to edits in the middle of files you can't fully write out. When in doubt, ask the user to copy paste.
+  + Be cautious when it comes to edits in the middle of files you can't fully write out. When in doubt about a mid-file edit, propose the change in the chat and ask Adam to apply or confirm it.
   + Referenced code blocks WILL NOT work with commands like sed, only with this file tool.
   + Wait for read results before you start writing. The results of a read operation will come in on the following turn. 
   + Be extra cautious of sequential file operations.
