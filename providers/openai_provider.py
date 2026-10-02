@@ -17,6 +17,8 @@ class OpenAIProvider(APIProvider):
         self.last_api_param = None
         self._last_response = None
         self._last_stream_tool_calls = None  # capture tool calls seen during streaming
+        self._last_finish_reason = None  # finish reason of the last response (stream or non-stream)
+        self._last_reasoning = None  # reasoning_content accumulated from streamed deltas
 
         # Initialize client with fresh params
         self.client = self._initialize_client()
@@ -109,6 +111,10 @@ class OpenAIProvider(APIProvider):
         :return: response (str)
         """
         start_time = time()
+        # Reset per-request response state
+        self._last_finish_reason = None
+        self._last_reasoning = None
+        self._last_stream_tool_calls = None
         try:
             # Get fresh parameters instead of using cached self.params
             current_params = self.session.get_params()
@@ -212,6 +218,22 @@ class OpenAIProvider(APIProvider):
             # Make the API call and store the full response
             response = self.client.chat.completions.create(**api_parms)
             self._last_response = response
+            try:
+                choices = getattr(response, 'choices', None)
+                if choices:
+                    self._last_finish_reason = getattr(choices[0], 'finish_reason', None)
+                else:
+                    self._last_finish_reason = None
+            except Exception:
+                self._last_finish_reason = None
+            # Capture reasoning_content from the message (thinking models)
+            try:
+                msg = getattr(response.choices[0], 'message', None) if getattr(response, 'choices', None) else None
+                r = getattr(msg, 'reasoning_content', None) if msg else None
+                if r:
+                    self._last_reasoning = r
+            except Exception:
+                pass
 
             if 'stream' in api_parms and api_parms['stream'] is True:
                 return response
@@ -305,11 +327,20 @@ class OpenAIProvider(APIProvider):
                 # Handle content/tool_call chunks
                 if chunk.choices and len(chunk.choices) > 0:
                     choice = chunk.choices[0]
+                    fr = getattr(choice, 'finish_reason', None)
+                    if fr is not None:
+                        self._last_finish_reason = fr
                     delta = getattr(choice, 'delta', None)
                     if delta is not None:
                         # Text content delta
                         if getattr(delta, 'content', None):
                             yield delta.content
+                        # Reasoning deltas (thinking models)
+                        rdelta = getattr(delta, 'reasoning_content', None)
+                        if rdelta:
+                            if self._last_reasoning is None:
+                                self._last_reasoning = ''
+                            self._last_reasoning += rdelta
                         # Tool call deltas
                         tool_calls = getattr(delta, 'tool_calls', None)
                         if tool_calls:
@@ -390,13 +421,30 @@ class OpenAIProvider(APIProvider):
                 for _, rec in sorted(tool_calls_map.items(), key=lambda kv: (kv[0] if kv[0] is not None else 0)):
                     args_obj = {}
                     args_str = rec.get('arguments') or ''
+                    parsed = False
                     if args_str:
                         try:
                             args_obj = json.loads(args_str)
+                            # Valid JSON but not an object (list/scalar/null) is
+                            # invalid for tool arguments: reject it too.
+                            parsed = isinstance(args_obj, dict)
+                            if not parsed:
+                                args_obj = {}
                         except Exception:
-                            # Leave as empty dict if not valid JSON; runner handles 'content' passthrough separately
+                            # Invalid arguments (malformed or cut off): do not
+                            # silently convert to {} and execute with no arguments.
                             args_obj = {}
-                    out.append({'id': rec.get('id'), 'name': rec.get('name'), 'arguments': args_obj})
+                    # An arguments string that fails to parse to an object (or a call
+                    # that produced no arguments string at all after deltas were seen)
+                    # is invalid. A parsed empty object ('{}') is legitimate.
+                    truncated_call = (bool(args_str) and not parsed) or (not args_str and rec.get('name'))
+                    out.append({
+                        'id': rec.get('id'),
+                        'name': rec.get('name'),
+                        'arguments': args_obj,
+                        # Arguments did not parse: likely cut off mid-write
+                        'truncated': truncated_call,
+                    })
                 self._last_stream_tool_calls = out
             except Exception:
                 self._last_stream_tool_calls = None
@@ -442,7 +490,11 @@ class OpenAIProvider(APIProvider):
                                 'arguments': args,
                             }
                         })
-                    message.append({'role': 'assistant', 'content': None, 'tool_calls': tool_calls_out})
+                    msg_out = {'role': 'assistant', 'content': None, 'tool_calls': tool_calls_out}
+                    # Retransmit stored reasoning so the model keeps its chain of thought
+                    if turn.get('reasoning_content'):
+                        msg_out['reasoning_content'] = turn.get('reasoning_content')
+                    message.append(msg_out)
                     continue
 
                 # Official tool outputs: include as tool role messages with tool_call_id
@@ -475,7 +527,10 @@ class OpenAIProvider(APIProvider):
                     turn_content += turn['message']
                     if turn_content.strip() == '':
                         turn_content = ' '  # Replace empty content with a space
-                    message.append({'role': turn['role'], 'content': turn_content})
+                    msg_out = {'role': turn['role'], 'content': turn_content}
+                    if turn.get('role') == 'assistant' and turn.get('reasoning_content'):
+                        msg_out['reasoning_content'] = turn.get('reasoning_content')
+                    message.append(msg_out)
                 else:
                     # Modern format with content array
                     content = []
@@ -515,7 +570,10 @@ class OpenAIProvider(APIProvider):
                             if text_context:
                                 content.insert(0, {'type': 'text', 'text': text_context})
 
-                    message.append({'role': turn['role'], 'content': content})
+                    msg_out = {'role': turn['role'], 'content': content}
+                    if turn.get('role') == 'assistant' and turn.get('reasoning_content'):
+                        msg_out['reasoning_content'] = turn.get('reasoning_content')
+                    message.append(msg_out)
 
         return message
 
@@ -525,6 +583,14 @@ class OpenAIProvider(APIProvider):
     def get_full_response(self):
         """Returns the full response object from the last API call"""
         return self._last_response
+
+    def get_finish_reason(self):
+        """Finish reason of the last response ('stop', 'length', 'tool_calls', ...)."""
+        return self._last_finish_reason
+
+    def get_current_reasoning(self):
+        """Reasoning content accumulated from the last response's deltas, if any."""
+        return self._last_reasoning
 
     def get_tool_calls(self):
         """Return normalized tool calls from the last response, if present.
@@ -549,15 +615,26 @@ class OpenAIProvider(APIProvider):
                 fn = getattr(tc, 'function', None)
                 name = getattr(fn, 'name', None) if fn else None
                 args = getattr(fn, 'arguments', None) if fn else None
-                if isinstance(args, str):
+                # Validate: arguments must parse to a JSON object. Anything else
+                # (unparseable string, list, scalar, null) is a malformed or
+                # truncated call and must be rejected, not executed with {}.
+                truncated_call = False
+                if isinstance(args, str) and args:
                     try:
                         args_obj = json.loads(args)
+                        truncated_call = not isinstance(args_obj, dict)
+                        if truncated_call:
+                            args_obj = {}
                     except Exception:
                         args_obj = {}
+                        truncated_call = True
                 elif isinstance(args, dict):
                     args_obj = args
                 else:
+                    # Missing/None arguments: reject, matching the streaming path.
+                    # Legitimate empty arguments arrive as '{}' or an explicit {}.
                     args_obj = {}
+                    truncated_call = True
                 # Map API-safe tool names back to canonical names when available
                 try:
                     mapping = self.session.get_user_data('__tool_api_to_cmd__') or {}
@@ -569,6 +646,7 @@ class OpenAIProvider(APIProvider):
                     'id': getattr(tc, 'id', None),
                     'name': name,
                     'arguments': args_obj,
+                    'truncated': truncated_call,
                 })
         except Exception:
             return []

@@ -46,6 +46,8 @@ class ModeResult:
     cost: Optional[Dict[str, Any]]
     usage: Optional[Dict[str, Any]]
     events: List[Dict[str, Any]]
+    # True when the run's final response hit the token budget (finish_reason 'length')
+    truncated: bool = False
 
 
 def _attach_contexts(session, contexts: Optional[Iterable[Tuple[str, Any]]]) -> None:
@@ -207,7 +209,7 @@ def run_completion(
     except Exception:
         events = []
 
-    return ModeResult(last_text=res.last_text, raw=raw, turns=res.turns_executed, cost=cost, usage=usage, events=events)
+    return ModeResult(last_text=res.last_text, raw=raw, turns=res.turns_executed, cost=cost, usage=usage, events=events, truncated=getattr(res, 'truncated', False))
 
 
 def run_agent(
@@ -410,4 +412,4 @@ def run_agent(
         events = list(getattr(sess.ui, 'events', []) or [])
     except Exception:
         events = []
-    return ModeResult(last_text=res.last_text, raw=None, turns=res.turns_executed, cost=cost, usage=usage, events=events)
+    return ModeResult(last_text=res.last_text, raw=None, turns=res.turns_executed, cost=cost, usage=usage, events=events, truncated=getattr(res, 'truncated', False))

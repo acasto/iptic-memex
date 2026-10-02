@@ -37,6 +37,9 @@ class TurnResult:
     turns_executed: int
     stopped_on_sentinel: bool
     ran_tools: bool
+    # True when the final response hit the token budget (finish_reason 'length')
+    # instead of completing, e.g. reasoning consumed the whole budget.
+    truncated: bool = False
 
 
 def _new_trace_id() -> str:
@@ -72,6 +75,7 @@ class TurnRunner:
         last_sanitized: Optional[str] = None
         stopped_on_sentinel = False
         any_tools = False
+        any_truncated = False
 
         # Reset per-turn cancellation flag
         try:
@@ -166,6 +170,9 @@ class TurnRunner:
             last_display = display
             last_sanitized = sanitized
             self._record_assistant(raw)
+            if self._detect_truncated():
+                any_truncated = True
+                self._warn_truncated()
             # If the turn was cancelled mid-stream, stop without executing tools
             try:
                 if self.session.get_flag('turn_cancelled'):
@@ -219,6 +226,7 @@ class TurnRunner:
             turns_executed=turns_executed,
             stopped_on_sentinel=stopped_on_sentinel,
             ran_tools=any_tools,
+            truncated=any_truncated,
         )
 
     def run_agent_loop(
@@ -239,6 +247,7 @@ class TurnRunner:
         last_sanitized: Optional[str] = None
         stopped_on_sentinel = False
         any_tools = False
+        any_truncated = False
 
         # Reset per-run cancellation flag
         try:
@@ -343,6 +352,11 @@ class TurnRunner:
             last_sanitized = sanitized
             self._record_assistant(raw)
 
+            # Detect a budget-truncated response (finish_reason 'length')
+            if self._detect_truncated():
+                any_truncated = True
+                self._warn_truncated()
+
             text_for_stop = display or sanitized or raw or ""
             # If cancelled mid-stream, stop early and do not execute tools
             try:
@@ -380,6 +394,7 @@ class TurnRunner:
             turns_executed=turns_executed,
             stopped_on_sentinel=stopped_on_sentinel,
             ran_tools=any_tools,
+            truncated=any_truncated,
         )
 
     # ---- Helpers -------------------------------------------------------
@@ -785,6 +800,34 @@ class TurnRunner:
                                 break
                         except Exception:
                             pass
+                        # Skip tool calls whose arguments did not parse (likely cut off
+                        # by the token budget mid-write); executing them with empty args
+                        # is worse than surfacing the truncation. The skipped call still
+                        # gets a tool result so the history stays well-formed.
+                        if call.get('truncated'):
+                            _skip_id = call.get('id') or call.get('call_id')
+                            _skip_name = call.get('name')
+                            self._warn_skipped_call(_skip_name)
+                            try:
+                                self.session.utils.logger.tool_end(
+                                    name=_skip_name, call_id=_skip_id, status='skipped',
+                                    result_meta={'reason': 'invalid_arguments'},
+                                )
+                            except Exception:
+                                pass
+                            try:
+                                chat_ctx = self.session.get_context('chat') or self.session.add_context('chat')
+                                extra = {'tool_call_id': _skip_id} if _skip_id else None
+                                chat_ctx.add(
+                                    f"[skipped: tool call '{_skip_name}' - invalid tool arguments "
+                                    "(missing, malformed, or cut off by the token limit)]",
+                                    role='tool',
+                                    extra=extra,
+                                )
+                            except Exception:
+                                pass
+                            cancelled_during_tools = True
+                            break
                         name = (call.get('name') or '').lower()
                         call_id = call.get('id') or call.get('call_id')
                         args = dict(call.get('arguments') or {})
@@ -1195,6 +1238,8 @@ class TurnRunner:
                         if cancelled_during_tools or self.session.get_flag('turn_cancelled'):
                             # Emit 'Cancelled' tool results for any unprocessed tool_calls
                             try:
+                                # The truncated guard already answered call idx itself,
+                                # so cancellation stubs cover only calls after it.
                                 remaining = tool_calls[idx + 1:] if 'idx' in locals() else []
                             except Exception:
                                 remaining = []
@@ -1356,6 +1401,59 @@ class TurnRunner:
         return ran_any
 
     # ---- Utilities -----------------------------------------------------
+    def _warn_truncated(self) -> None:
+        """Surface a budget-truncated response via the session UI (quiet for NullUI)."""
+        msg = (
+            "[warning] response hit the token limit (finish_reason: length) "
+            "- it may be incomplete; consider raising max_tokens"
+        )
+        try:
+            ui = getattr(self.session, 'ui', None)
+            if ui is not None and hasattr(ui, 'emit'):
+                ui.emit('warning', {'message': msg})
+                return
+        except Exception:
+            pass
+        try:
+            out = getattr(self.session.utils, 'output', None)
+            if out and hasattr(out, 'warning'):
+                out.warning(msg)
+        except Exception:
+            pass
+
+    def _warn_skipped_call(self, name: str) -> None:
+        """Surface a skipped (truncated) tool call via the session UI."""
+        msg = (
+            f"Skipping tool call '{name}' "
+            "(invalid tool arguments: missing, malformed, or cut off by the token limit)"
+        )
+        try:
+            ui = getattr(self.session, 'ui', None)
+            if ui is not None and hasattr(ui, 'emit'):
+                ui.emit('warning', {'message': msg})
+                return
+        except Exception:
+            pass
+        try:
+            out = getattr(self.session.utils, 'output', None)
+            if out and hasattr(out, 'warning'):
+                out.warning(msg)
+        except Exception:
+            pass
+
+    def _detect_truncated(self) -> bool:
+        """True when the provider reports finish_reason 'length' for the last response."""
+        try:
+            provider = self.session.get_provider()
+        except Exception:
+            provider = None
+        if provider and hasattr(provider, 'get_finish_reason'):
+            try:
+                return (provider.get_finish_reason() or '') == 'length'
+            except Exception:
+                return False
+        return False
+
     def _contains_sentinel(self, text: str, sentinels: List[str]) -> bool:
         try:
             if not text:
