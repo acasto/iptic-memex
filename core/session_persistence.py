@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 import uuid
@@ -31,6 +32,52 @@ def _now_ts() -> float:
         return time.time()
     except Exception:
         return 0.0
+
+
+def _safe_ts(value: Any) -> float:
+    try:
+        timestamp = float(value)
+        return timestamp if math.isfinite(timestamp) and timestamp > 0 else 0.0
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+
+
+def session_snippet(value: Any, limit: int = 80) -> str:
+    """Return a single-line, bounded excerpt for session descriptions."""
+    if not isinstance(value, str):
+        return ''
+    cleaned = ' '.join(value.split())
+    if len(cleaned) > limit:
+        if limit < 3:
+            return cleaned[:max(0, limit)]
+        return cleaned[:limit - 3].rstrip() + '...'
+    return cleaned
+
+
+def format_session_description(item: Dict[str, Any], *, short_id: bool = False) -> str:
+    """Format a saved session for listings and interactive choices."""
+    timestamp = item.get('updated') or item.get('mtime') or item.get('created')
+    when = 'Unknown date'
+    if timestamp:
+        try:
+            when = time.strftime('%Y-%m-%d %H:%M', time.localtime(float(timestamp)))
+        except (TypeError, ValueError, OverflowError, OSError):
+            pass
+    sid = str(item.get('id') or '')
+    if short_id and len(sid) > 12:
+        sid = sid[:12] + '...'
+    count = item.get('turn_count', 0)
+    parts = [when, f"{count} {'turn' if count == 1 else 'turns'}"]
+    if item.get('model'):
+        parts.append(session_snippet(item['model'], 40))
+    parts.append(f"{sid} [{session_snippet(item.get('kind') or 'session', 20)}]")
+    lines = [' · '.join(parts)]
+    if item.get('title'):
+        lines.append(f"  Title: {session_snippet(item['title'])}")
+    lines.append(f"  Started: {session_snippet(item.get('first_user')) or '(no user text)'}")
+    if count > 1:
+        lines.append(f"  Latest: {session_snippet(item.get('last_user')) or '(no user text)'}")
+    return '\n'.join(lines)
 
 
 def _safe_json_value(value: Any) -> Any:
@@ -143,8 +190,15 @@ def serialize_session(session, *, kind: str = "session", title: Optional[str] = 
         turns = []
 
     sid = session_id or getattr(session, "session_uid", None) or generate_session_id("sess")
-    created = _now_ts()
     updated = _now_ts()
+    created = updated
+    if kind == 'session':
+        created = _safe_ts(session.get_user_data('__session_created__')) or updated
+        session.set_user_data('__session_created__', created)
+        if title is None:
+            title = session.get_user_data('__session_title__', '')
+        else:
+            session.set_user_data('__session_title__', title)
 
     payload = {
         "version": 1,
@@ -225,12 +279,6 @@ def load_session_data(path: str) -> Dict[str, Any]:
 
 
 def list_sessions(session, directory: Optional[str] = None) -> List[Dict[str, Any]]:
-    def _safe_ts(value: Any) -> float:
-        try:
-            return float(value)
-        except Exception:
-            return 0.0
-
     def _safe_str(value: Any) -> str:
         if isinstance(value, str):
             return value
@@ -241,29 +289,27 @@ def list_sessions(session, directory: Optional[str] = None) -> List[Dict[str, An
         except Exception:
             return ""
 
-    def _first_user_message(chat: Any) -> str:
+    def _user_messages(chat: Any) -> List[str]:
         if not isinstance(chat, list):
-            return ""
+            return []
+        messages = []
         for turn in chat:
             if not isinstance(turn, dict):
                 continue
             role = _safe_str(turn.get("role")).lower()
             if role != "user":
                 continue
+            meta = turn.get('meta')
+            if isinstance(meta, dict) and meta.get('auto_submit'):
+                continue
             msg = turn.get("message")
             if msg is None:
                 msg = turn.get("content")
-            return _safe_str(msg)
-        return ""
-
-    def _clean_snippet(text: str, limit: int = 80) -> str:
-        if not text:
-            return ""
-        cleaned = " ".join(text.split())
-        if len(cleaned) > limit:
-            trimmed = cleaned[: max(0, limit - 3)].rstrip()
-            return f"{trimmed}..."
-        return cleaned
+            snippet = session_snippet(msg)
+            if not snippet and not msg and not turn.get('context'):
+                continue
+            messages.append(snippet)
+        return messages
 
     out_dir = _resolve_sessions_dir(session, directory)
     if not os.path.isdir(out_dir):
@@ -278,6 +324,8 @@ def list_sessions(session, directory: Optional[str] = None) -> List[Dict[str, An
                 data = json.load(f)
         except Exception:
             continue
+        if not isinstance(data, dict):
+            continue
         try:
             mtime = os.path.getmtime(path)
         except Exception:
@@ -286,7 +334,7 @@ def list_sessions(session, directory: Optional[str] = None) -> List[Dict[str, An
         model = _safe_str(params.get("model"))
         created = _safe_ts(data.get("created"))
         updated = _safe_ts(data.get("updated"))
-        first_user = _clean_snippet(_first_user_message(data.get("chat")))
+        messages = _user_messages(data.get("chat"))
         items.append(
             {
                 "id": data.get("id") or fname,
@@ -297,10 +345,18 @@ def list_sessions(session, directory: Optional[str] = None) -> List[Dict[str, An
                 "created": created,
                 "updated": updated,
                 "model": model,
-                "first_user": first_user,
+                "first_user": messages[0] if messages else '',
+                "last_user": messages[-1] if messages else '',
+                "turn_count": len(messages),
             }
         )
-    items.sort(key=lambda x: (x.get("mtime") or 0.0, x.get("id") or ""), reverse=True)
+    items.sort(
+        key=lambda x: (
+            x.get('updated') or x.get('mtime') or x.get('created') or 0.0,
+            str(x.get('id') or ''),
+        ),
+        reverse=True,
+    )
     return items
 
 
@@ -356,6 +412,8 @@ def apply_session_data(session, data: Dict[str, Any], *, fork: bool = False) -> 
     try:
         session.session_uid = session_id
         session.set_user_data("session_uid", session_id)
+        session.set_user_data('__session_created__', _now_ts() if fork else data.get('created'))
+        session.set_user_data('__session_title__', data.get('title') or '')
     except Exception:
         pass
 

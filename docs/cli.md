@@ -71,6 +71,12 @@ python main.py <subcommand> --help
 ## Resume sessions from CLI
 
 ```bash
-python main.py chat --resume
-python main.py chat --resume <id-or-path>
+python main.py chat --resume                 # Pick a saved session
+python main.py chat --resume --latest        # Resume the most recent session
+python main.py chat --resume --last          # Alias for --latest
+python main.py chat --resume <id-or-path>     # Resume directly
 ```
+
+In chat, `/load session` opens the same picker. Entries show the last save date,
+user turn count, model, and opening/latest message excerpts, truncated to 80
+characters. `/show sessions` and `list-sessions` show these details too.

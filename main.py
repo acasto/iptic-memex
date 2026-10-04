@@ -166,8 +166,15 @@ def cli(ctx, conf, model, prompt, temperature, max_tokens, stream, verbose, raw,
 @cli.command()
 @click.pass_context
 @click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
-@click.option('--resume', default=None, help='Resume session (most recent if no value)')
-def chat(ctx, file, resume):
+@click.option('--resume', default=None, is_flag=False, flag_value='__pick__',
+              help='Pick a saved session, or resume an explicit ID/path')
+@click.option('--latest', '--last', is_flag=True,
+              help='With --resume, load the most recently saved session without prompting')
+def chat(ctx, file, resume, latest):
+    if latest and resume is None:
+        raise click.UsageError('--latest/--last requires --resume')
+    if latest and resume != '__pick__':
+        raise click.UsageError('--latest/--last cannot be combined with a session ID/path')
     # Get builder and options from context
     builder = ctx.obj['BUILDER']
     options = ctx.obj.get('OPTIONS', {})
@@ -179,7 +186,7 @@ def chat(ctx, file, resume):
         raise click.ClickException(str(e))
     ctx.obj['SESSION'] = session
     
-    _maybe_resume_session(session, resume=resume)
+    _maybe_resume_session(session, resume='__last__' if latest else resume)
 
     # Add file contexts if provided
     if file:
@@ -196,7 +203,8 @@ def chat(ctx, file, resume):
 @cli.command()
 @click.pass_context
 @click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
-@click.option('--resume', default=None, help='Resume session (most recent if no value)')
+@click.option('--resume', default=None, is_flag=False, flag_value='__last__',
+              help='Resume session (most recent if no value)')
 def tui(ctx, file, resume):
     """Start TUI (Terminal User Interface) mode"""
     # Get builder and options from context
@@ -237,7 +245,8 @@ def tui(ctx, file, resume):
 @cli.command()
 @click.pass_context
 @click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
-@click.option('--resume', default=None, help='Resume session (most recent if no value)')
+@click.option('--resume', default=None, is_flag=False, flag_value='__last__',
+              help='Resume session (most recent if no value)')
 @click.option('--host', default=None, help='Host interface to bind (overrides config)')
 @click.option('--port', type=int, default=None, help='Port to bind (overrides config)')
 def web(ctx, file, resume, host, port):
@@ -520,6 +529,8 @@ def list_sessions(ctx):
     if not action:
         raise click.ClickException("manage_sessions action not available.")
     result = action.run(['list'])
+    if hasattr(result, 'payload'):
+        result = result.payload
     if isinstance(result, dict) and result.get('ok') is False:
         err = result.get('error') or 'unknown error'
         raise click.ClickException(f"Failed to list sessions: {err}")
@@ -620,58 +631,21 @@ def is_image_file(filename: str) -> bool:
 def _maybe_resume_session(session, *, resume: str | None) -> None:
     if resume is None:
         return
-    try:
-        from core.session_persistence import apply_session_data, latest_session_path, load_session_data, resolve_session_path
-    except Exception:
+    action = session.get_action('manage_sessions')
+    if not action:
+        raise click.ClickException('manage_sessions action not available.')
+    if resume == '__pick__':
+        action.run(['resume'])
         return
-
-    target = ""
-    if isinstance(resume, str) and resume and resume != "__last__":
-        target = resume
-    if not target:
-        target = latest_session_path(session)
-    path = resolve_session_path(session, target) if target else ""
-    if not path:
-        try:
-            session.utils.output.warning("No saved session found to resume.")
-        except Exception:
-            pass
-        return
-    try:
-        data = load_session_data(path)
-    except Exception:
-        try:
-            session.utils.output.warning("Failed to load session data.")
-        except Exception:
-            pass
-        return
-    kind = (data.get("kind") or "session").lower()
-    fork = (kind == "checkpoint")
-    apply_session_data(session, data, fork=fork)
-    try:
-        msg = f"Resumed session from {path}"
-        if fork:
-            msg += " (forked from checkpoint)"
-        session.ui.emit('status', {'message': msg})
-    except Exception:
-        pass
+    if not resume or resume == '__last__':
+        from core.session_persistence import latest_session_path
+        resume = latest_session_path(session)
+        if not resume:
+            session.ui.emit('warning', {'message': 'No saved session found to resume.'})
+            return
+    action.run(['resume', resume])
 
 
 # take care of business
 if __name__ == "__main__":
-    def _normalize_resume_argv(argv: list[str]) -> list[str]:
-        out: list[str] = []
-        i = 0
-        while i < len(argv):
-            arg = argv[i]
-            if arg == "--resume":
-                next_arg = argv[i + 1] if i + 1 < len(argv) else None
-                if next_arg is None or (isinstance(next_arg, str) and next_arg.startswith("-")):
-                    out.extend(["--resume", "__last__"])
-                    i += 1
-                    continue
-            out.append(arg)
-            i += 1
-        return out
-
-    cli(obj={}, args=_normalize_resume_argv(sys.argv[1:]))
+    cli(obj={})

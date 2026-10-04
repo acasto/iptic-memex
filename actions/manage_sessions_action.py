@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import os
-import time
-from typing import Any, Dict, List
+from typing import Any, Dict
 
-from base_classes import InteractionAction
+from base_classes import Completed, StepwiseAction
 from core.session_persistence import (
     apply_session_data,
+    format_session_description,
     list_sessions,
     load_session_data,
     resolve_session_path,
@@ -14,28 +14,64 @@ from core.session_persistence import (
 )
 
 
-class ManageSessionsAction(InteractionAction):
+class ManageSessionsAction(StepwiseAction):
     """List, resume, and checkpoint persistent sessions."""
 
     def __init__(self, session):
         self.session = session
 
-    def run(self, args=None):
+    def start(self, args=None, content=None) -> Completed:
+        """List sessions, load a supplied target, or prompt for a saved session."""
         args = args or []
         if isinstance(args, str):
             args = [args]
         if not args:
-            return {'ok': False, 'error': 'missing_mode'}
+            return Completed({'ok': False, 'error': 'missing_mode'})
         mode = str(args[0]).strip().lower()
         if mode == 'list':
-            return self._list_sessions()
+            return Completed(self._list_sessions())
         if mode == 'resume':
             target = args[1] if len(args) > 1 else ''
-            return self._resume_session(target)
+            if not target:
+                return self._pick_session()
+            return Completed(self._resume_session(target))
         if mode == 'checkpoint':
             title = args[1] if len(args) > 1 else ''
-            return self._checkpoint_session(title)
-        return {'ok': False, 'error': 'invalid_mode'}
+            return Completed(self._checkpoint_session(title))
+        return Completed({'ok': False, 'error': 'invalid_mode'})
+
+    def _pick_session(self) -> Completed:
+        items = list_sessions(self.session)
+        if not items:
+            self.session.ui.emit('warning', {'message': 'No saved sessions found.'})
+            return Completed({'ok': False, 'error': 'not_found'})
+        choices: Dict[str, str] = {}
+        for item in items:
+            label = format_session_description(item, short_id=True)
+            if label in choices:
+                label += f"\n  ID: {item['id']}"
+            choices[label] = item['path']
+        # Store the displayed snapshot: non-blocking UIs can recreate the action on resume.
+        self.session.set_user_data('__session_picker_choices__', choices)
+        options = list(choices) + ['Cancel']
+        selected = self.session.ui.ask_choice(
+            'Choose a saved session (newest first):', options, default='Cancel',
+        )
+        return self.resume('session_picker', selected)
+
+    def resume(self, state_token: str, response: Any) -> Completed:
+        """Load the selected session from the snapshot shown in the picker."""
+        if isinstance(response, dict):
+            response = response.get('response')
+        choices = self.session.get_user_data('__session_picker_choices__', {})
+        self.session.set_user_data('__session_picker_choices__', {})
+        if response is None or response == 'Cancel':
+            return Completed({'ok': True, 'cancelled': True})
+        path = choices.get(response) if isinstance(response, str) else None
+        if not path:
+            self.session.ui.emit('warning', {'message': 'Invalid session selection.'})
+            return Completed({'ok': False, 'error': 'invalid_selection'})
+        return Completed(self._resume_session(path))
 
     def _list_sessions(self) -> Dict[str, Any]:
         items = list_sessions(self.session)
@@ -44,27 +80,7 @@ class ManageSessionsAction(InteractionAction):
             if not items:
                 self.session.ui.emit('status', {'message': '(none)'})
             for it in items:
-                name = it.get('id') or it.get('path') or ''
-                kind = it.get('kind') or 'session'
-                title = it.get('title') or ''
-                model = it.get('model') or ''
-                snippet = it.get('first_user') or ''
-                ts = it.get('updated') or it.get('created') or it.get('mtime') or 0.0
-                when = ''
-                if ts:
-                    try:
-                        when = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(float(ts)))
-                    except Exception:
-                        when = ''
-                msg = f"- {name} [{kind}]"
-                if when:
-                    msg += f" {when}"
-                if model:
-                    msg += f" model={model}"
-                if title:
-                    msg += f" — {title}"
-                if snippet:
-                    msg += f" — \"{snippet}\""
+                msg = '- ' + format_session_description(it)
                 self.session.ui.emit('status', {'message': msg})
         except Exception:
             pass
@@ -75,8 +91,15 @@ class ManageSessionsAction(InteractionAction):
             return {'ok': False, 'error': 'missing_target'}
         path = resolve_session_path(self.session, target)
         if not path or not os.path.isfile(path):
+            self.session.ui.emit('warning', {'message': 'Saved session not found.'})
             return {'ok': False, 'error': 'not_found'}
-        data = load_session_data(path)
+        try:
+            data = load_session_data(path)
+            if not isinstance(data, dict):
+                raise ValueError('Invalid session data')
+        except (OSError, ValueError):
+            self.session.ui.emit('error', {'message': 'Failed to load session data.'})
+            return {'ok': False, 'error': 'invalid_data'}
         kind = (data.get('kind') or 'session').lower()
         fork = (kind == 'checkpoint')
         apply_session_data(self.session, data, fork=fork)
