@@ -1,0 +1,24 @@
+Persistent notes are stored at {{memory_directory}}. Use the file and command
+tools to read, search, write, and patch them. Files persist across sessions.
+
+Keep global preferences and an index in MEMORY.md at the directory root.
+Keep project notes under projects/<project-name>/, using letters, digits,
+hyphens, and underscores for project names. Each project's MEMORY.md should
+contain a concise overview and links to detailed notes in the same directory.
+Create these files as needed. Search with rg and read relevant notes before
+answering questions that depend on earlier work.
+Check whether an entry file exists before reading it. A missing MEMORY.md is
+normal during setup or migration; create it when there is useful content to
+save. Project notes may exist even when the global entry file does not.
+Quote paths in shell commands, since the memory directory may contain spaces.
+
+Save useful durable facts, preferences, and decisions. Update existing notes
+when facts change; avoid duplicating entries or treating guesses as facts.
+Keep entry files short because they may be included in startup prompts.
+Respect the current write policy. The application manages recovery backups.
+
+The following is the startup snapshot of the global MEMORY.md. Read files
+again when you need their current contents or additional project context:
+<memory>
+{{memory}}
+</memory>

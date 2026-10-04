@@ -11,6 +11,7 @@ This folder contains deeper documentation for the Memex platform. Start with get
 - [hooks.md](hooks.md) - metacognitive hooks and gating
 - [runners.md](runners.md) - internal/external runners and chat seed behavior
 - [sessions.md](sessions.md) - autosave, resume, checkpoints
+- [memory.md](memory.md) - file memory, startup templates, recovery, SQLite migration
 - [rag.md](rag.md) - RAG setup and commands
 - [mcp.md](mcp.md) - MCP setup and CLI helpers
 - [sandbox.md](sandbox.md) - filesystem sandbox and base-dir

@@ -154,6 +154,12 @@ class AssistantFsHandlerAction(InteractionAction):
                 continue
             policies[r] = "rw"
 
+        # Feature roots are exposed through this shared policy; Docker only
+        # consumes get_allowed_roots() and needs no feature-specific knowledge.
+        from core.memory_files import memory_directory, memory_enabled
+        if memory_enabled(self.session):
+            policies[str(memory_directory(self.session))] = "rw"
+
         # Drop empty roots defensively
         return {k: v for (k, v) in policies.items() if k}
 

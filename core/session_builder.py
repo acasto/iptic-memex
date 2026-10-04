@@ -29,6 +29,7 @@ class SessionBuilder:
             ui_mode = (mode or 'chat').lower()
         except Exception:
             ui_mode = 'chat'
+        interactive = ui_mode in ('chat', 'web', 'tui')
         if not eff_options.get('model') and ui_mode in ('completion', 'internal'):
             try:
                 base_cfg = getattr(self.config_manager, 'base_config', None)
@@ -50,7 +51,6 @@ class SessionBuilder:
         session.current_model = eff_options.get('model')
 
         # Initialize UI first so we can present status/spinners during provider startup
-        ui_mode = (mode or 'chat').lower()
         try:
             if ui_mode in ('web',):
                 from ui.web import WebUI
@@ -135,7 +135,7 @@ class SessionBuilder:
                 # Let providers signal slow startup by exposing a class attribute
                 # 'startup_wait_message' (str). If present, show an indicator while
                 # instantiating the provider in chat-like UIs.
-                show_loading = ui_mode in ('chat', 'web', 'tui') and bool(getattr(provider_class, 'startup_wait_message', None))
+                show_loading = interactive and bool(getattr(provider_class, 'startup_wait_message', None))
                 if show_loading:
                     msg = getattr(provider_class, 'startup_wait_message', 'Loading...')
                     ready_msg = getattr(provider_class, 'startup_ready_message', None)
@@ -161,6 +161,9 @@ class SessionBuilder:
                 else:
                     session.provider = provider_class(session)
 
+        from core.memory_files import prepare_memory
+        prepare_memory(session, interactive=interactive)
+
         try:
             if mode != 'completion' or 'prompt' in options:
                 prompt_resolver = registry.get_prompt_resolver()
@@ -176,7 +179,7 @@ class SessionBuilder:
         # Only autoload for interactive modes here. Non-interactive (completion/internal)
         # will trigger autoload from their respective runners to apply correct gating.
         try:
-            if ui_mode in ('chat', 'web', 'tui'):
+            if interactive:
                 from memex_mcp.bootstrap import autoload_mcp
                 autoload_mcp(session)
         except Exception:
@@ -184,7 +187,7 @@ class SessionBuilder:
 
         # Optional session autosave for interactive modes
         try:
-            if ui_mode in ('chat', 'web', 'tui'):
+            if interactive:
                 autosave = session.get_option('SESSIONS', 'session_autosave', fallback=False)
                 if isinstance(autosave, str):
                     autosave = autosave.strip().lower() in ('true', '1', 'yes', 'on')

@@ -64,6 +64,7 @@ Start here for the rest of the platform details:
 - [Hooks](docs/hooks.md)
 - [Runners](docs/runners.md)
 - [Sessions](docs/sessions.md)
+- [Memory](docs/memory.md)
 - [RAG](docs/rag.md)
 - [MCP](docs/mcp.md)
 - [Skills](docs/skills.md)

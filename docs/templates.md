@@ -24,6 +24,8 @@ Order matters. Each handler receives the output of the previous handler.
   - `{{turn:<key>}}` (per-turn metadata)
 - `prompt_template_chat` (chat transcript placeholders) - see below
 - `prompt_template_memory` (memory recall via `{{memory}}` / `{{memory:project}}`)
+- `prompt_template_memory_file` (file memory via the same placeholders plus
+  `{{memory_directory}}`; select instead of the SQLite handler) - see [memory.md](memory.md)
 - `prompt_template_file` (inline file includes):
   - `{{file:PATH}}` inserts the file contents (missing/unreadable files become empty string)
   - Modifiers: `optional=<bool>` (default true), `encoding=<str>` (default utf-8), `max_chars=<n>`, `max_bytes=<n>`
