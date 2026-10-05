@@ -200,8 +200,113 @@ the assembled system/messages, including native blocks and tool results.
 
 ## Google
 
-Configure `[Google]` in `config.ini` and select it in `models.ini`.
-Tool calling behavior follows the `tool_mode` rules described below.
+Configure `[Google]` in `config.ini` and select it in `models.ini`. This provider uses
+the native `google-genai` SDK's `generateContent` API. Install `google-genai>=1.55.0`
+from `requirements.txt`; `google-generativeai` is the older package and is not used
+by this provider.
+
+Authentication comes from `api_key`, `GOOGLE_API_KEY`, or `GEMINI_API_KEY`. Explicit
+`vertexai`, `project`, and `location` options are forwarded to the SDK; when omitted,
+the SDK can resolve its normal environment credentials and backend settings.
+Client options include `base_url`, `api_version`, `default_headers`, `timeout`
+(seconds), and `max_retries` (additional attempts). Native `http_options` is also
+accepted as a dictionary or JSON/literal dictionary; its `timeout` is milliseconds
+and `retry_options.attempts` counts the initial attempt. Native HTTP options take
+precedence over the corresponding convenience options.
+
+### Requests and thinking
+
+Native `GenerateContentConfig` fields supported by the installed SDK can be set
+directly. Common examples include `temperature`, `top_p`, `top_k`, `seed`,
+`candidate_count`, `stop_sequences` (a list), `response_mime_type`,
+`response_json_schema`, `response_schema`, and `thinking_config`. Structured values
+can be dictionaries/lists or JSON/Python literal strings; they are never evaluated
+as executable expressions.
+
+Token caps use `max_output_tokens`, then `max_completion_tokens`, then `max_tokens`.
+The native setting wins. Gemini's cap includes generated thinking tokens.
+
+```ini
+[my-gemini-model]
+provider = Google
+model_name = your-gemini-model
+max_output_tokens = 8192
+thinking_config = {"thinking_level": "low", "include_thoughts": true}
+vision = True
+```
+
+Use `thinking_level` for Gemini 3 models and `thinking_budget` for Gemini 2.5 models.
+The provider forwards explicit settings without inferring support from model names.
+Convenience options `thinking_level`, `thinking_budget`, `include_thoughts`, and
+`reasoning_effort` fill missing fields in `thinking_config`; `reasoning_effort` maps
+to `thinking_level`. The legacy `reasoning` boolean does not override the model's
+native thinking defaults. Available levels and budgets depend on the selected model.
+Thought summaries are stored separately as `reasoning_content`, rather than being
+mixed into the visible assistant answer.
+
+`extra_body` supplies additional native wire fields. Its shape follows the REST API,
+for example `{"generationConfig": {"seed": 42}}`. The same escape hatch is available
+under `http_options.extra_body`; the latter wins on conflicts and nested dictionaries
+are merged. `excluded_parameters` accepts a list or CSV and removes native fields
+and their corresponding extra-body fields. Excluding a native token cap also blocks
+its aliases. Required request fields such as model and contents should not be excluded.
+
+### Tools, transcripts, and streaming
+
+Official tool mode merges registry function declarations with configured native
+`tools`, including supported built-in tools. Explicit function definitions win over
+duplicate registry names. Full canonical schemas are copied into
+`parameters_json_schema` without mutating the registry. Native `tool_config` wins
+over `tool_choice`; the latter supports `auto`, `none`, `required`/`any`, or an
+OpenAI-style function selector. Tool mode `none`/`pseudo` suppresses native tool
+declarations, including those supplied through `extra_body`. The SDK's automatic
+client function execution is disabled; TurnRunner executes registered client tools.
+
+Native model parts, thought signatures, API function names, and function IDs survive
+tool follow-ups and JSON checkpoints. Parallel results are grouped into one user
+message with matching IDs. Native replay requires an unchanged prompt prefix, model,
+backend, system instruction, tools, thinking settings, and assistant content. Edited,
+trimmed, or imported tool histories are sent as labeled historical text with the
+executed arguments and results, avoiding unsigned native calls that Gemini 3 rejects. Replacing
+`contents` through `extra_body` disables native transcript replay for that response.
+
+Streaming collects text and function calls from all chunks of the selected candidate,
+retains signed empty-text parts, and merges cumulative usage. With multiple candidates,
+only one candidate supplies the displayed answer and executable tools. Tool calls are
+consumed once. Failed, blocked, cancelled, malformed, and unfinished responses cannot
+execute client tools; token-limit calls are marked truncated. Vertex-style partial
+function arguments are retained for inspection and rejected for execution, rather
+than being treated as complete calls with empty arguments. Images are sent only when
+`vision=True`, including in message introspection. Cancellation and cleanup close
+HTTP responses and SDK client resources.
+
+### Caching and accounting
+
+Implicit caching is managed by Google's servers and can occur without an explicit
+cache setting. `cached_content = cachedContents/<id>` refers to an existing explicit
+cache; that cache owns its system instruction and tool declarations, so the provider
+omits the automatically assembled system instruction and registry tools. Cache
+creation, TTL changes, and deletion are managed separately. The old `endpoint`,
+`prompt_caching`, and `cache_ttl` settings were unused and do not control implicit
+caching.
+
+Usage reports inclusive prompt counts, generated output (candidates plus thinking),
+and separate `total_cached`/`turn_cached`, `total_reasoning`/`turn_reasoning`,
+`total_candidates`/`turn_candidates`, and native tool-prompt counts. Streaming counts
+are cumulative, not summed chunk by chunk. Unknown usage remains distinguishable via
+`turn_usage_known`; interrupted streams retain any counts already observed.
+
+Costs use `price_in`, `price_out`, and `price_unit`. Cached input uses
+`price_cache_read`, falling back to `price_cache_in`, then the ordinary input rate.
+Thinking tokens are charged at the output rate. Costs are accumulated at each
+request's prices and restored across provider rebuilds; switching models does not
+reprice earlier requests. These are token estimates using configured rates; explicit
+cache storage, built-in tool fees, service-tier adjustments, and separate modality
+rates are not automatically calculated.
+
+See Google's [thinking/signature guidance](https://ai.google.dev/gemini-api/docs/generate-content/thinking)
+and [context caching documentation](https://ai.google.dev/gemini-api/docs/generate-content/caching)
+for model-specific behavior.
 
 ## Local models: llama.cpp
 

@@ -49,9 +49,9 @@ def test_google_get_tool_calls_parses_candidates_function_call():
     fc = types.SimpleNamespace(name='CMD', args={'command': 'echo', 'arguments': 'hello'})
     part = types.SimpleNamespace(function_call=fc)
     content = types.SimpleNamespace(parts=[part])
-    cand = types.SimpleNamespace(content=content)
+    cand = types.SimpleNamespace(content=content, finish_reason='STOP')
     resp = types.SimpleNamespace(candidates=[cand])
-    gp._last_response = resp
+    gp._capture(resp)
 
     calls = gp.get_tool_calls()
     assert isinstance(calls, list) and len(calls) == 1
@@ -79,6 +79,12 @@ def test_build_contents_maps_function_response():
             'raw_message': 'ok'
         }
     ]
+    messages[1].update({
+        'raw_message': '', 'google_text': '',
+        'google_content': {'role': 'model', 'parts': [{'function_call': {
+            'name': 'cmd', 'args': {'command': 'ls'}}}]},
+        'google_prefix': gp._fingerprint([{'role': 'user', 'parts': [{'text': 'run cmd'}]}], {}),
+    })
 
     contents = gp._build_contents(messages)
     assert len(contents) == 3

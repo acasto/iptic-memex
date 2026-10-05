@@ -1,614 +1,703 @@
+"""Google Gen AI generateContent, with signed native history and safe tool turns."""
+
+import ast
+import hashlib
 import json
 import os
+import re
+from copy import deepcopy
+from collections.abc import Iterator
+from time import monotonic
+from uuid import uuid4
+
 from google import genai
 from google.genai import types as gx_types
+
 from base_classes import APIProvider
 from actions.process_contexts_action import ProcessContextsAction
+from providers.api_utils import as_dict, excluded_parameters, extra_body, field
+from providers.google_usage import GoogleUsage
+from utils.tool_args import get_bool, get_int
 
 
-class GoogleProvider(APIProvider):
-    """
-    Google Generative AI provider with proper system prompt and context caching
-    """
-    ##%%BLOCK:refactor_google_no_caching%%
+def _literal(value):
+    """Parse structured configuration without evaluating executable expressions."""
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return ast.literal_eval(value)
+    return as_dict(value) if hasattr(value, 'model_dump') else deepcopy(value)
+
+
+def _camel(name):
+    return re.sub(r'_([a-z])', lambda match: match[1].upper(), name)
+
+
+def _merge_dict(left, right):
+    """Merge transport escape hatches without discarding unrelated nested fields."""
+    for key, value in right.items():
+        if isinstance(value, dict) and isinstance(left.get(key), dict):
+            _merge_dict(left[key], value)
+        else:
+            left[key] = deepcopy(value)
+    return left
+
+
+class GoogleProvider(GoogleUsage, APIProvider):
+    """Use the native Gemini API while leaving client tool execution to core."""
+
+    _blocked_reasons = {
+        'SAFETY', 'RECITATION', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'SPII', 'IMAGE_SAFETY',
+        'IMAGE_PROHIBITED_CONTENT', 'IMAGE_RECITATION', 'ESCALATION', 'PUP_LIMITED_DISABLED',
+    }
+    _structured_config = {
+        'thinking_config', 'response_schema', 'response_json_schema', 'tool_config',
+        'automatic_function_calling', 'safety_settings', 'image_config', 'speech_config',
+        'labels', 'routing_config', 'model_selection_config', 'model_armor_config',
+        'response_modalities',
+    }
+
     def __init__(self, session):
         self.session = session
-        self._last_response = None
-
-        # List of parameters that can be passed to the Google API
-        self.parameters = [
-            'model',
-            'max_tokens',
-            'temperature',
-            'top_p',
-            'top_k',
-            'stop_sequences',
-            'candidate_count',
-            'stream',
-            'tools',
-            'tool_choice'
-        ]
-
         self.client = None
-        self.turn_usage = None
-        self.total_usage = {
-            'prompt_tokens': 0,
-            'completion_tokens': 0,
-            'total_tokens': 0,
-            'cached_tokens': 0
-        }
+        self._active_stream = None
+        self._http_responses = []
+        self._tool_api_to_cmd = {}
+        self._tool_schemas = {}
+        self._init_usage()
+        self._clear_response()
 
     def _ensure_client(self) -> None:
-        """Lazily initialize the google-genai client when first needed."""
+        """Initialize lazily with configurable SDK transport and authentication."""
         if self.client is not None:
             return
-        params = self.session.get_params()
-        api_key = params.get('api_key') or os.environ.get('GOOGLE_API_KEY')
-        try:
-            if api_key:
-                self.client = genai.Client(api_key=api_key)
-            else:
-                # Let the client resolve credentials from environment/defaults
-                self.client = genai.Client()
-        except Exception as e:
-            raise RuntimeError(f"Failed to initialize Google GenAI client: {e}")
+        p = self.session.get_params()
+        options = {}
+        api_key = p.get('api_key') or os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
+        if api_key:
+            options['api_key'] = api_key
+        for name in ('vertexai', 'enterprise', 'project', 'location'):
+            if p.get(name) is not None:
+                options[name] = (get_bool(p, name) if name in ('vertexai', 'enterprise')
+                                 else p[name])
+        http = extra_body(p.get('http_options'))
+        for name in ('base_url', 'api_version'):
+            if p.get(name) is not None:
+                http.setdefault(name, p[name])
+        if p.get('timeout') is not None:
+            # The shared provider timeout is seconds; native HttpOptions uses milliseconds.
+            http.setdefault('timeout', int(float(p['timeout']) * 1000))
+        if p.get('max_retries') is not None:
+            http.setdefault('retry_options', {'attempts': max(0, get_int(p, 'max_retries', 0)) + 1})
+        if p.get('default_headers') is not None:
+            http.setdefault('headers', extra_body(p['default_headers']))
+        client_args = http.setdefault('client_args', {})
+        hooks = client_args.setdefault('event_hooks', {})
+        hooks.setdefault('response', []).append(self._track_response)
+        options['http_options'] = gx_types.HttpOptions(**http)
+        self.client = genai.Client(**options)
 
-    def _get_system_prompt(self) -> str:
-        """Get system prompt from context"""
-        prompt_context = self.session.get_context('prompt')
-        if prompt_context:
-            return prompt_context.get()['content']
-        return ""
+    def _track_response(self, response):
+        # SDK stream generators do not always close their httpx.Response on early exit.
+        self._http_responses.append(response)
+        if self._cancelled():
+            response.close()
+
+    def _close_responses(self):
+        for response in self._http_responses:
+            try:
+                response.close()
+            except Exception:
+                pass
+        self._http_responses = []
+
+    def _cancelled(self):
+        token = getattr(self.session, 'get_cancellation_token', lambda: None)()
+        return bool(token and token.is_cancelled()) or bool(
+            getattr(self.session, 'get_flag', lambda name: False)('turn_cancelled'))
+
+    def _clear_response(self):
+        self._last_response = None
+        self._last_tool_calls = []
+        self._last_finish_reason = None
+        self._native_content = None
+        self._visible_text = ''
+        self._current_reasoning = ''
+        self._request_prefix = None
+        self._candidate_index = None
+        self._native_replay_safe = True
+
+    def _begin_request(self):
+        self._close_responses()
+        self._clear_response()
+        self.turn_usage = None
+        self._turn_time = 0
+        self._usage_params = deepcopy(self.session.get_params())
+        self._started_at = monotonic()
+        token = getattr(self.session, 'get_cancellation_token', lambda: None)()
+        if token is not None:
+            # Capture this request's list so a token retained from an old turn cannot
+            # close a later request's connection after the provider has been reused.
+            responses = self._http_responses
+            token.register_cleanup(lambda: [response.close() for response in responses])
+
+    def _get_system_prompt(self):
+        context = self.session.get_context('prompt')
+        return field(context.get(), 'content', '') if context else ''
 
     def _get_safety_settings(self):
-        """Get safety settings from current config"""
-        params = self.session.get_params()
-        
-        settings = []
-        default = params.get('safety_default', 'BLOCK_MEDIUM_AND_ABOVE')
+        p = self.session.get_params()
+        default = p.get('safety_default', 'BLOCK_MEDIUM_AND_ABOVE')
+        return [{'category': category, 'threshold': p.get(f'safety_{name}', default)}
+                for name, category in (
+                    ('harassment', 'HARM_CATEGORY_HARASSMENT'),
+                    ('hate_speech', 'HARM_CATEGORY_HATE_SPEECH'),
+                    ('sexually_explicit', 'HARM_CATEGORY_SEXUALLY_EXPLICIT'),
+                    ('dangerous_content', 'HARM_CATEGORY_DANGEROUS_CONTENT'),
+                )]
 
-        categories = {
-            'harassment': 'HARM_CATEGORY_HARASSMENT',
-            'hate_speech': 'HARM_CATEGORY_HATE_SPEECH',
-            'sexually_explicit': 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
-            'dangerous_content': 'HARM_CATEGORY_DANGEROUS_CONTENT'
-        }
+    def _official_tools(self):
+        return getattr(self.session, 'get_effective_tool_mode', lambda: 'none')() == 'official'
 
-        for category_key, enum_name in categories.items():
-            threshold = params.get(f'safety_{category_key}', default)
-            settings.append({
-                'category': getattr(gx_types.HarmCategory, enum_name),
-                'threshold': getattr(gx_types.HarmBlockThreshold, threshold)
-            })
-
-        return settings
+    def get_tools_for_request(self) -> list:
+        """Preserve canonical JSON schemas and use the SDK's JSON Schema field."""
+        if not self._official_tools():
+            return []
+        command = self.session.get_action('assistant_commands')
+        if not command or not hasattr(command, 'get_tool_specs'):
+            return []
+        self._tool_api_to_cmd = getattr(self.session, 'get_user_data', lambda name: None)(
+            '__tool_api_to_cmd__') or {}
+        decls = []
+        schema_field = ('parameters_json_schema'
+                        if 'parameters_json_schema' in gx_types.FunctionDeclaration.model_fields
+                        else 'parameters')
+        for spec in command.get_tool_specs() or []:
+            if not spec.get('name'):
+                continue
+            decls.append({'name': spec['name'], 'description': spec.get('description') or '',
+                          schema_field: deepcopy(spec.get('parameters') or {
+                              'type': 'object', 'properties': {},
+                          })})
+        return [{'function_declarations': decls}] if decls else []
 
     def _build_tools_config(self):
-        """Return google-genai Tool definitions when official tool mode is enabled."""
-        try:
-            mode = getattr(self.session, 'get_effective_tool_mode', lambda: 'none')()
-        except Exception:
-            mode = 'none'
-        if mode != 'official':
-            return None
-        try:
-            cmd = self.session.get_action('assistant_commands')
-        except Exception:
-            cmd = None
-        if not cmd or not hasattr(cmd, 'get_tool_specs'):
-            return None
-        try:
-            canonical = cmd.get_tool_specs() or []
-        except Exception:
-            canonical = []
-        decls = []
-        for spec in canonical:
-            try:
-                params_obj = {}
-                p = spec.get('parameters') or {}
-                params_obj['type'] = p.get('type') or 'object'
-                params_obj['properties'] = p.get('properties') or {}
-                required = p.get('required')
-                if isinstance(required, list):
-                    params_obj['required'] = required
-                decls.append({
-                    'name': spec.get('name'),
-                    'description': spec.get('description'),
-                    'parameters': params_obj,
-                })
-            except Exception:
+        """Retain the historical helper for integrations that inspect tool definitions."""
+        return [gx_types.Tool(**tool) for tool in self.get_tools_for_request()] or None
+
+    def _tools(self, p):
+        if not self._official_tools():
+            return []
+        value = p.get('tools')
+        if isinstance(value, str) and value.lstrip().startswith(('[', '{')):
+            value = _literal(value)
+        configured = ([value] if isinstance(value, dict) else value
+                      if isinstance(value, list) else [])
+        tools = deepcopy(configured)
+        # Configured function declarations win over duplicate registry definitions.
+        names = {field(decl, 'name') for tool in tools
+                 for decl in (field(tool, 'function_declarations',
+                                    field(tool, 'functionDeclarations', [])) or [])}
+        for tool in self.get_tools_for_request():
+            decls = [decl for decl in tool['function_declarations'] if decl['name'] not in names]
+            if decls:
+                tools.append({'function_declarations': decls})
+        return tools
+
+    def _generation_config(self):
+        p = self.session.get_params()
+        excluded = excluded_parameters(p)
+        cfg = {}
+        # All fields supported by the installed SDK are configurable, rather than
+        # assuming a model-name-specific subset. New wire fields have an escape hatch.
+        for name in gx_types.GenerateContentConfig.model_fields:
+            if name in ('tools', 'system_instruction', 'http_options') or name in excluded:
                 continue
-        if not decls:
+            if p.get(name) is not None:
+                cfg[name] = (_literal(p[name]) if name in self._structured_config else p[name])
+        if 'max_output_tokens' not in cfg and 'max_output_tokens' not in excluded:
+            for alias in ('max_completion_tokens', 'max_tokens'):
+                if alias not in excluded and p.get(alias) is not None:
+                    cfg['max_output_tokens'] = int(p[alias])
+                    break
+        thinking = cfg.setdefault('thinking_config', {})
+        for alias, native in (('thinking_budget', 'thinking_budget'),
+                              ('thinking_level', 'thinking_level'),
+                              ('reasoning_effort', 'thinking_level'),
+                              ('include_thoughts', 'include_thoughts')):
+            if alias not in excluded and p.get(alias) is not None:
+                thinking.setdefault(native, p[alias])
+        if not thinking or 'thinking_config' in excluded:
+            cfg.pop('thinking_config', None)
+        if 'safety_settings' not in cfg and 'safety_settings' not in excluded:
+            cfg['safety_settings'] = self._get_safety_settings()
+        if 'system_instruction' not in excluded:
+            system = p.get('system_instruction', self._get_system_prompt())
+            if system:
+                cfg['system_instruction'] = system
+        tools = self._tools(p) if 'tools' not in excluded else []
+        if tools:
+            cfg['tools'] = tools
+        if 'tool_config' not in cfg and 'tool_config' not in excluded:
+            choice = p.get('tool_choice') if 'tool_choice' not in excluded else None
+            if choice is not None:
+                if isinstance(choice, str) and choice.lower() in ('auto', 'none', 'any', 'required'):
+                    choice = {'mode': {'required': 'ANY'}.get(choice.lower(), choice.upper())}
+                else:
+                    choice = _literal(choice)
+                    if choice.get('type') == 'function':
+                        choice = {'mode': 'ANY', 'allowed_function_names': [
+                            field(choice.get('function'), 'name')]}
+                cfg['tool_config'] = {'function_calling_config': choice}
+        # Never let the SDK independently execute client tools outside TurnRunner.
+        cfg['automatic_function_calling'] = {'disable': True}
+        http = extra_body(p.get('http_options'))
+        body = extra_body(p.get('extra_body'))
+        _merge_dict(body, extra_body(http.pop('extra_body', None)))
+        for name in excluded:
+            cfg.pop(name, None)
+            body.pop(name, None)
+            body.pop(_camel(name), None)
+            generation = body.get('generationConfig', body.get('generation_config', {}))
+            if isinstance(generation, dict):
+                generation.pop(name, None)
+                generation.pop(_camel(name), None)
+        if not self._official_tools() or 'tools' in excluded:
+            cfg.pop('tools', None)
+            cfg.pop('tool_config', None)
+            body.pop('tools', None)
+            body.pop('toolConfig', None)
+            body.pop('tool_config', None)
+        if cfg.get('cached_content') or body.get('cachedContent') or body.get('cached_content'):
+            # A cache owns its system instruction and tool declarations.
+            cfg.pop('system_instruction', None)
+            cfg.pop('tools', None)
+        if body:
+            http['extra_body'] = body
+        if http:
+            cfg['http_options'] = http
+        self._tool_schemas = {}
+        for tool in body.get('tools', cfg.get('tools', tools)):
+            declarations = field(tool, 'function_declarations',
+                                 field(tool, 'functionDeclarations', [])) or []
+            for decl in declarations:
+                self._tool_schemas[field(decl, 'name')] = (
+                    field(decl, 'parameters_json_schema') or field(decl, 'parametersJsonSchema')
+                    or field(decl, 'parameters') or {})
+        return cfg
+
+    @staticmethod
+    def _fingerprint(contents, scope):
+        payload = json.dumps([scope, contents], sort_keys=True, separators=(',', ':'))
+        return hashlib.sha256(payload.encode()).hexdigest()
+
+    def _api_name(self, call):
+        if call.get('api_name'):
+            return call['api_name']
+        mapping = self._tool_api_to_cmd or getattr(self.session, 'get_user_data', lambda name: None)(
+            '__tool_api_to_cmd__') or {}
+        return next((api for api, canonical in mapping.items() if canonical == call.get('name')),
+                    call.get('name'))
+
+    @staticmethod
+    def _native_id(call):
+        if 'google_call_id' in call:
+            return call['google_call_id']
+        # Older checkpoints stored API IDs directly and generated google-func-* locally.
+        ident = call.get('id') or call.get('call_id')
+        return ident if ident and not ident.startswith('google-func-') else None
+
+    def _native_parts(self, msg, contents, scope):
+        native = msg.get('google_content')
+        if (not isinstance(native, dict) or msg.get('context')
+                or msg.get('raw_message', '') != msg.get('google_text')
+                or msg.get('google_prefix') != self._fingerprint(contents, scope)):
             return None
-        return [gx_types.Tool(function_declarations=decls)]
+        if 'tool_calls' in msg:
+            original = [(field(p.get('function_call'), 'id'),
+                         field(p.get('function_call'), 'name'),
+                         field(p.get('function_call'), 'args') or {})
+                        for p in native.get('parts', []) if p.get('function_call')]
+            current = [(self._native_id(call), self._api_name(call), call.get('arguments'))
+                       for call in msg.get('tool_calls') or []]
+            if original != current:
+                return None
+        return deepcopy(native.get('parts') or [])
 
-    def _prepare_request(self):
-        """Build request payload (contents + config + model) for google-genai."""
-        self._ensure_client()
-        current_params = self.session.get_params()
-
-        messages = self.assemble_message()
-        if not messages:
-            return None, None, None
-
-        contents = self._build_contents(messages)
-        if not contents:
-            return None, None, None
-
-        # Process generation parameters using fresh params
-        gen_params = {}
-        for param in self.parameters:
-            if param in current_params and current_params[param] is not None:
-                gen_params[param] = current_params[param]
-
-        tools_obj = self._build_tools_config()
-
-        # Strip fields that don't belong in GenerateContentConfig
-        gen_params.pop('tools', None)
-        gen_params.pop('tool_choice', None)
-        gen_params.pop('stream', None)
-        gen_params.pop('model', None)
-
-        if 'max_tokens' in gen_params:
-            try:
-                gen_params['max_output_tokens'] = int(gen_params.pop('max_tokens'))
-            except (TypeError, ValueError):
-                gen_params.pop('max_tokens', None)
-
-        cfg_kwargs = dict(gen_params)
-
-        safety_settings = self._get_safety_settings()
-        if safety_settings:
-            cfg_kwargs['safety_settings'] = safety_settings
-
-        system_prompt = self._get_system_prompt()
-        if system_prompt:
-            cfg_kwargs['system_instruction'] = system_prompt
-
-        if tools_obj:
-            cfg_kwargs['tools'] = tools_obj
-
-        config = gx_types.GenerateContentConfig(**cfg_kwargs)
-
-        api_model = current_params.get('model_name', current_params.get('model'))
-        return contents, config, api_model
-
-    def _build_contents(self, messages):
-        """Convert internal chat history into google-genai Content objects."""
+    def _build_contents(self, messages, scope=None):
+        """Rebuild native history with exact signed parts and grouped tool results."""
         contents = []
-        pending_calls = []
-        system_prompt = self._get_system_prompt()
-        system_consumed = False
-
+        pending = []
+        last_was_tool = False
+        scope = scope or {}
         for msg in messages:
             role = msg.get('role')
-
-            if role == 'model' and not system_consumed and system_prompt:
-                if self._is_system_message(msg, system_prompt):
-                    system_consumed = True
-                    continue
-
-            if role == 'assistant':
-                parts = []
-                for call in msg.get('tool_calls') or []:
-                    fn_name = call.get('name')
-                    args = call.get('arguments') or {}
-                    fn_call = gx_types.FunctionCall(name=fn_name, args=args)
-                    parts.append(gx_types.Part(function_call=fn_call))
-                    pending_calls.append({
-                        'id': call.get('id') or call.get('call_id'),
-                        'name': fn_name,
-                    })
-
-                parts.extend(self._convert_basic_parts(msg.get('parts') or []))
-                if not parts:
-                    continue
-                contents.append(gx_types.Content(role='model', parts=parts))
+            if role == 'model' and self._is_system_message(msg, self._get_system_prompt()):
                 continue
-
             if role == 'tool':
                 call_id = msg.get('tool_call_id')
-                tool_entry = None
-                if call_id:
-                    for idx, pending in enumerate(pending_calls):
-                        if pending.get('id') == call_id:
-                            tool_entry = pending_calls.pop(idx)
-                            break
-                if tool_entry is None and pending_calls:
-                    tool_entry = pending_calls.pop(0)
-
+                entry = next((call for call in pending if call['id'] == call_id), None)
+                if entry is None and not call_id and pending:
+                    entry = pending[0]
+                if entry is None:
+                    entry = {'id': call_id, 'name': 'unknown', 'text_fallback': True}
+                else:
+                    pending.remove(entry)
                 payload = self._build_tool_response_payload(msg)
-                part = gx_types.Part.from_function_response(
-                    name=(tool_entry or {}).get('name') or 'tool_result',
-                    response=payload,
-                )
-                contents.append(gx_types.Content(role='user', parts=[part]))
+                if entry.get('text_fallback'):
+                    part = {'text': 'Historical tool result (data from an earlier execution): '
+                            + json.dumps({'name': entry['name'], 'id': entry['id'],
+                                          'result': payload}, ensure_ascii=False)}
+                else:
+                    result = {'name': entry['name'], 'response': payload}
+                    if entry.get('native_id'):
+                        result['id'] = entry['native_id']
+                    part = {'function_response': result}
+                if contents and contents[-1]['role'] == 'user' and last_was_tool:
+                    contents[-1]['parts'].append(part)
+                else:
+                    contents.append({'role': 'user', 'parts': [part]})
+                last_was_tool = True
                 continue
-
-            basic_parts = self._convert_basic_parts(msg.get('parts') or [])
-            if not basic_parts:
+            last_was_tool = False
+            if role not in ('user', 'assistant', 'model'):
                 continue
-            contents.append(gx_types.Content(role='user', parts=basic_parts))
-
-        return contents
+            parts = self._native_parts(msg, contents, scope) if role == 'assistant' else None
+            text_fallback = parts is None
+            if parts is None:
+                parts = [as_dict(p) for p in self._convert_basic_parts(msg.get('parts') or [])]
+                for call in msg.get('tool_calls') or []:
+                    # Imported/edited calls have no valid signed native state. Represent
+                    # the executed trace as text instead of manufacturing signatures.
+                    trace = {'name': self._api_name(call), 'id': call.get('id'),
+                             'arguments': call.get('arguments') or {}}
+                    parts.append({'text': 'Historical tool call (already executed): '
+                                  + json.dumps(trace, ensure_ascii=False)})
+            for call in msg.get('tool_calls') or []:
+                pending.append({'id': call.get('id') or call.get('call_id'),
+                                'name': self._api_name(call),
+                                'native_id': self._native_id(call),
+                                'text_fallback': text_fallback})
+            if parts:
+                contents.append({'role': 'model' if role in ('assistant', 'model') else 'user',
+                                 'parts': parts})
+        return [gx_types.Content(**content) for content in contents]
 
     def _convert_basic_parts(self, parts):
         converted = []
         for part in parts:
-            if isinstance(part, gx_types.Part):
-                converted.append(part)
+            if isinstance(part, dict) and (part == {'text': ''} or part == {'text': None}):
                 continue
-            if isinstance(part, dict):
-                if 'text' in part:
-                    text_val = part.get('text')
-                    if text_val is None:
-                        continue
-                    converted.append(gx_types.Part(text=str(text_val)))
-                elif 'inline_data' in part:
-                    data = part['inline_data'] or {}
-                    converted.append(gx_types.Part(inline_data=gx_types.Blob(
-                        mime_type=data.get('mime_type'),
-                        data=data.get('data'),
-                    )))
-                else:
-                    converted.append(gx_types.Part(text=str(part)))
-            else:
-                converted.append(gx_types.Part(text=str(part)))
+            converted.append(part if isinstance(part, gx_types.Part)
+                             else gx_types.Part(**part) if isinstance(part, dict)
+                             else gx_types.Part(text=str(part)))
         return converted
 
-    def _is_system_message(self, msg, system_prompt):
-        if not system_prompt:
-            return False
-        parts = msg.get('parts') or []
-        if len(parts) != 1:
-            return False
-        part = parts[0]
-        if isinstance(part, dict) and 'text' in part:
-            return str(part['text']) == system_prompt
-        if isinstance(part, gx_types.Part) and getattr(part, 'text', None):
-            return part.text == system_prompt
-        return False
+    @staticmethod
+    def _is_system_message(msg, system_prompt):
+        return bool(system_prompt) and msg.get('parts') == [{'text': system_prompt}]
 
     def _build_tool_response_payload(self, msg):
-        text = self._extract_text_from_parts(msg.get('parts') or [])
-        if not text:
-            text = msg.get('raw_message') or ''
-        text = text or ''
+        text = self._extract_text_from_parts(msg.get('parts') or []) or msg.get('raw_message') or ''
         try:
             parsed = json.loads(text)
             if isinstance(parsed, dict):
                 return parsed
-        except Exception:
+        except (TypeError, ValueError):
             pass
         return {'output': text}
 
-    def _extract_text_from_parts(self, parts):
-        chunks = []
-        for part in parts:
-            if isinstance(part, dict) and 'text' in part and part['text']:
-                chunks.append(str(part['text']))
-            elif isinstance(part, gx_types.Part) and getattr(part, 'text', None):
-                chunks.append(part.text)
-        return '\n'.join(chunks)
-
-    def chat(self):
-        """Handle non-streaming chat completion requests."""
-        try:
-            contents, config, api_model = self._prepare_request()
-            if not contents:
-                return None
-
-            response = self.client.models.generate_content(
-                model=api_model,
-                contents=contents,
-                config=config,
-            )
-            self._last_response = response
-
-            # Store usage metrics if available
-            usage = getattr(response, 'usage_metadata', None)
-            if usage is not None:
-                prompt_tokens = getattr(usage, 'prompt_token_count', 0) or 0
-                completion_tokens = getattr(usage, 'candidates_token_count', 0) or 0
-                total_tokens = getattr(usage, 'total_token_count', 0) or 0
-                cached_tokens = getattr(usage, 'cached_content_token_count', 0) or 0
-                self.turn_usage = {
-                    'prompt_tokens': prompt_tokens,
-                    'completion_tokens': completion_tokens,
-                    'total_tokens': total_tokens,
-                    'cached_tokens': cached_tokens,
-                }
-                self.total_usage['prompt_tokens'] += prompt_tokens
-                self.total_usage['completion_tokens'] += completion_tokens
-                self.total_usage['total_tokens'] += total_tokens
-                self.total_usage['cached_tokens'] += cached_tokens
-
-            # If the model responded with function calls, avoid the `.text`
-            # accessor entirely so we don't trigger warnings about non-text
-            # parts; TurnRunner will handle tool execution via get_tool_calls.
-            try:
-                has_funcs = bool(getattr(response, 'function_calls', None))
-            except Exception:
-                has_funcs = False
-            if has_funcs:
-                return ''
-
-            # Otherwise, use the google-genai convenience accessor for text.
-            try:
-                txt = getattr(response, 'text', None)
-            except Exception:
-                txt = None
-            return txt or ''
-
-        except Exception as e:
-            error_msg = f"Error in chat completion: {str(e)}"
-            print(error_msg)
-            return error_msg
-
-    def stream_chat(self):
-        """Stream chat responses and capture final usage stats"""
-        try:
-            contents, config, api_model = self._prepare_request()
-            if not contents:
-                return
-
-            response_stream = self.client.models.generate_content_stream(
-                model=api_model,
-                contents=contents,
-                config=config,
-            )
-
-            final_chunk = None
-            tool_chunk = None
-            for chunk in response_stream:
-                # For chunks that contain function calls, capture them for tool
-                # execution and skip text extraction to avoid warnings.
-                try:
-                    has_funcs = bool(getattr(chunk, 'function_calls', None))
-                except Exception:
-                    has_funcs = False
-
-                if has_funcs:
-                    tool_chunk = chunk
-                else:
-                    try:
-                        txt = getattr(chunk, 'text', None)
-                    except Exception:
-                        txt = None
-                    if txt:
-                        yield txt
-
-                final_chunk = chunk
-
-            # Capture usage from final chunk
-            target_chunk = tool_chunk or final_chunk
-            if target_chunk and hasattr(target_chunk, 'usage_metadata'):
-                usage = target_chunk.usage_metadata
-                prompt_tokens = getattr(usage, 'prompt_token_count', 0) or 0
-                completion_tokens = getattr(usage, 'candidates_token_count', 0) or 0
-                total_tokens = getattr(usage, 'total_token_count', 0) or 0
-                cached_tokens = getattr(usage, 'cached_content_token_count', 0) or 0
-                self.turn_usage = {
-                    'prompt_tokens': prompt_tokens,
-                    'completion_tokens': completion_tokens,
-                    'total_tokens': total_tokens,
-                    'cached_tokens': cached_tokens,
-                }
-                # Update total usage
-                self.total_usage['prompt_tokens'] += prompt_tokens
-                self.total_usage['completion_tokens'] += completion_tokens
-                self.total_usage['total_tokens'] += total_tokens
-                self.total_usage['cached_tokens'] += cached_tokens
-                # Store last response for tool-call extraction (prefer the
-                # chunk that actually contains function calls when present).
-                self._last_response = tool_chunk or final_chunk
-
-        except Exception as e:
-            # Suppress noisy conversion errors (e.g., function_call parts not convertible to text)
-            msg = str(e)
-            if 'Could not convert' in msg and 'function_call' in msg:
-                return
-            yield f"Stream error: {msg}"
+    @staticmethod
+    def _extract_text_from_parts(parts):
+        return '\n'.join(str(field(part, 'text')) for part in parts if field(part, 'text'))
 
     def assemble_message(self) -> list:
-        """Assemble the message from context"""
-        message = []
-        if self.session.get_context('prompt'):
-            message.append({
-                'role': 'model',
-                'parts': [{
-                    'text': self._get_system_prompt()
-                }]
-            })
-
+        """Assemble contexts without stripping native transcript metadata."""
+        messages = []
+        if self._get_system_prompt():
+            messages.append({'role': 'model', 'parts': [{'text': self._get_system_prompt()}]})
         chat = self.session.get_context('chat')
-        if chat is not None:
-            for turn in chat.get():
-                parts = []
-                turn_contexts = []
+        for turn in chat.get() if chat else []:
+            parts, contexts = [], []
+            for context in turn.get('context') or []:
+                if context['type'] == 'image':
+                    if get_bool(self.session.get_params(), 'vision', False):
+                        data = context['context'].get()
+                        parts.append({'inline_data': {'mime_type': data['mime_type'],
+                                                      'data': data['content']}})
+                else:
+                    contexts.append(context)
+            if contexts:
+                text = ProcessContextsAction.process_contexts_for_assistant(contexts)
+                if text:
+                    parts.insert(0, {'text': text})
+            if turn.get('message'):
+                parts.append({'text': turn['message']})
+            entry = {**turn, 'parts': parts, 'raw_message': turn.get('message', '')}
+            messages.append(entry)
+        return messages
 
-                # Process contexts
-                if 'context' in turn and turn['context']:
-                    for ctx in turn['context']:
-                        if ctx['type'] == 'image':
-                            img_data = ctx['context'].get()
-                            parts.append({
-                                'inline_data': {
-                                    'mime_type': img_data['mime_type'],
-                                    'data': img_data['content']
-                                }
-                            })
-                        else:
-                            turn_contexts.append(ctx)
+    def _prepare_request(self, *, remember=True):
+        cfg = self._generation_config()
+        p = self.session.get_params()
+        model = p.get('model_name') or p.get('model')
+        scope = {'model': model, **{key: as_dict(cfg[key]) for key in (
+            'system_instruction', 'tools', 'thinking_config', 'cached_content',
+        ) if key in cfg}}
+        scope['backend'] = {name: p[name] for name in (
+            'base_url', 'api_version', 'vertexai', 'enterprise', 'project', 'location',
+        ) if name in p}
+        scope['http_backend'] = {name: field(cfg.get('http_options'), name) for name in (
+            'base_url', 'api_version',
+        ) if field(cfg.get('http_options'), name) is not None}
+        body = field(cfg.get('http_options'), 'extra_body', {}) or {}
+        scope['extra_body'] = body
+        contents = self._build_contents(self.assemble_message(), scope)
+        if remember:
+            self._request_prefix = self._fingerprint([as_dict(c) for c in contents], scope)
+            if 'contents' in body:
+                self._native_replay_safe = False
+        return contents, gx_types.GenerateContentConfig(**cfg), model
 
-                    # Add text contexts
-                    if turn_contexts:
-                        text_context = ProcessContextsAction.process_contexts_for_assistant(turn_contexts)
-                        if text_context:
-                            parts.insert(0, {'text': text_context})
+    def _candidate(self, response):
+        candidates = field(response, 'candidates') or []
+        if self._candidate_index is None and candidates:
+            first = next((candidate for candidate in candidates
+                          if field(candidate, 'index', 0) == 0), candidates[0])
+            self._candidate_index = field(first, 'index') or 0
+        return next((candidate for candidate in candidates
+                     if (field(candidate, 'index') or 0) == self._candidate_index), None)
 
-                # Add message text
-                parts.append({'text': turn['message'].strip()})
+    def _capture(self, response, *, completed=True):
+        self._last_response = response
+        candidate = self._candidate(response)
+        content = field(candidate, 'content')
+        parts = field(content, 'parts') or []
+        self._native_content = as_dict(content) if content else None
+        self._visible_text = ''.join(field(part, 'text') or '' for part in parts
+                                     if not field(part, 'thought'))
+        self._current_reasoning = ''.join(field(part, 'text') or '' for part in parts
+                                          if field(part, 'thought'))
+        reason = field(candidate, 'finish_reason')
+        reason = field(reason, 'value', reason)
+        blocked = field(field(response, 'prompt_feedback'), 'block_reason')
+        blocked = field(blocked, 'value', blocked)
+        blocked = blocked not in (None, '', 'BLOCK_REASON_UNSPECIFIED', 'BLOCKED_REASON_UNSPECIFIED')
+        if blocked or reason in self._blocked_reasons:
+            self._last_finish_reason = 'content_filter'
+        elif not completed or not reason:
+            self._last_finish_reason = 'error'
+        elif reason == 'MAX_TOKENS':
+            self._last_finish_reason = 'length'
+        elif reason != 'STOP':
+            self._last_finish_reason = 'error'
+        else:
+            self._last_finish_reason = 'stop'
+        calls, seen = [], set()
+        for part in parts:
+            fn = field(part, 'function_call')
+            if not fn:
+                continue
+            if not field(fn, 'name'):
+                self._native_replay_safe = False
+                self._last_finish_reason = 'error'
+                continue
+            api_name = field(fn, 'name')
+            args = field(fn, 'args')
+            invalid = (args is not None and not isinstance(args, dict)) or bool(
+                field(fn, 'partial_args') or field(fn, 'will_continue'))
+            required = field(self._tool_schemas.get(api_name), 'required') or []
+            if any(name not in (args or {}) for name in required):
+                invalid = True
+            native_id = field(fn, 'id')
+            if native_id and native_id in seen:
+                invalid = True
+                for call in calls:
+                    if call.get('google_call_id') == native_id:
+                        call['truncated'] = True
+            seen.add(native_id)
+            calls.append({
+                'id': native_id or f'google-func-{uuid4().hex}', 'google_call_id': native_id,
+                'api_name': api_name,
+                'name': self._tool_api_to_cmd.get(api_name, self._tool_api_to_cmd.get(
+                    api_name.lower(), api_name.lower())),
+                'arguments': deepcopy(args) if isinstance(args, dict) else {},
+                **({'truncated': True} if invalid or self._last_finish_reason != 'stop' else {}),
+            })
+        if any(call.get('truncated') for call in calls):
+            self._native_replay_safe = False
+        self._last_tool_calls = (calls if self._last_finish_reason in ('stop', 'length') else [])
 
-                if parts:
-                    entry = {
-                        'role': turn['role'],
-                        'parts': parts,
-                        'raw_message': turn.get('message'),
-                    }
-                    if 'tool_call_id' in turn:
-                        entry['tool_call_id'] = turn.get('tool_call_id')
-                    if 'tool_calls' in turn:
-                        entry['tool_calls'] = turn.get('tool_calls')
-                    message.append(entry)
-        return message
+    def _notice(self):
+        if self._last_finish_reason == 'content_filter':
+            return '[Response blocked by Gemini.]'
+        if self._last_finish_reason == 'error':
+            candidate = self._candidate(self._last_response)
+            reason = field(candidate, 'finish_reason') or 'missing terminal finish reason'
+            return f'[Gemini response incomplete or failed: {field(reason, "value", reason)}]'
+        return ''
 
-    def get_full_response(self):
-        """Returns the full response object from the last API call"""
+    def chat(self) -> str:
+        """Generate a complete response, resetting transient state even on failure."""
+        self._begin_request()
+        native_usage = None
+        try:
+            if self._cancelled():
+                self._last_finish_reason = 'cancelled'
+                return ''
+            contents, config, model = self._prepare_request()
+            if not contents:
+                return ''
+            self._ensure_client()
+            response = self.client.models.generate_content(model=model, contents=contents, config=config)
+            native_usage = field(response, 'usage_metadata')
+            self._capture(response)
+            if self._cancelled():
+                self._last_finish_reason = 'cancelled'
+                self._last_tool_calls = []
+                return ''
+            notice = self._notice()
+            if notice:
+                self._visible_text += ('\n' if self._visible_text else '') + notice
+            return self._visible_text
+        except Exception as error:
+            self._last_tool_calls = []
+            self._last_finish_reason = 'cancelled' if self._cancelled() else 'error'
+            return '' if self._cancelled() else f'Error in chat completion: {error}'
+        finally:
+            self._close_responses()
+            self._record_usage(native_usage, monotonic() - self._started_at)
+
+    def stream_chat(self) -> Iterator[str]:
+        """Aggregate native parts, terminal status, and cumulative usage across chunks."""
+        self._begin_request()
+        aggregate, native_usage, parts = {}, None, []
+        candidate_data = {}
+        completed = False
+        try:
+            if self._cancelled():
+                self._last_finish_reason = 'cancelled'
+                return
+            contents, config, model = self._prepare_request()
+            if not contents:
+                return
+            self._ensure_client()
+            stream = self.client.models.generate_content_stream(model=model, contents=contents,
+                                                                 config=config)
+            self._active_stream = stream
+            for chunk in stream:
+                if self._cancelled():
+                    self._last_finish_reason = 'cancelled'
+                    break
+                data = as_dict(chunk)
+                aggregate.update({key: value for key, value in data.items()
+                                  if key not in ('candidates', 'usage_metadata')})
+                usage = field(chunk, 'usage_metadata')
+                if usage is not None:
+                    if native_usage is None:
+                        native_usage = {}
+                    native_usage.update(as_dict(usage))
+                candidate = self._candidate(chunk)
+                if candidate is None:
+                    continue
+                candidate_dict = as_dict(candidate)
+                candidate_data.update({key: value for key, value in candidate_dict.items()
+                                       if key != 'content'})
+                chunk_parts = field(field(candidate, 'content'), 'parts') or []
+                parts.extend(as_dict(part) for part in chunk_parts)
+                if field(candidate, 'finish_reason'):
+                    completed = True
+                for part in chunk_parts:
+                    if field(part, 'text') and not field(part, 'thought'):
+                        yield field(part, 'text')
+            candidate_data['content'] = {'role': 'model', 'parts': parts}
+            aggregate['candidates'] = [candidate_data] if candidate_data else []
+            aggregate['usage_metadata'] = native_usage
+            self._capture(gx_types.GenerateContentResponse(**aggregate), completed=completed)
+            if self._cancelled():
+                self._last_finish_reason = 'cancelled'
+                self._last_tool_calls = []
+            else:
+                notice = self._notice()
+                if notice:
+                    self._visible_text += ('\n' if self._visible_text else '') + notice
+                    yield ('\n' if parts else '') + notice
+        except GeneratorExit:
+            self._last_finish_reason = 'cancelled'
+            self._last_tool_calls = []
+            raise
+        except Exception as error:
+            self._last_tool_calls = []
+            self._last_finish_reason = 'cancelled' if self._cancelled() else 'error'
+            if not self._cancelled():
+                yield f'Stream error: {error}'
+        finally:
+            self._close_responses()
+            if self._active_stream is not None:
+                self._active_stream.close()
+                self._active_stream = None
+            if self._last_response is None and (aggregate or parts or native_usage is not None):
+                reason = self._last_finish_reason
+                candidate_data['content'] = {'role': 'model', 'parts': parts}
+                aggregate['candidates'] = [candidate_data]
+                aggregate['usage_metadata'] = native_usage
+                self._capture(gx_types.GenerateContentResponse(**aggregate), completed=False)
+                self._last_finish_reason = reason or 'error'
+                self._last_tool_calls = []
+            self._record_usage(native_usage, monotonic() - self._started_at)
+
+    def get_full_response(self) -> gx_types.GenerateContentResponse | None:
+        """Return the SDK response, reconstructed from all chunks after streaming."""
         return self._last_response
 
-    def get_messages(self):
-        """Return assembled messages"""
-        return self.assemble_message()
+    def get_finish_reason(self) -> str | None:
+        """Expose terminal failure, blocking, cancellation, or length to TurnRunner."""
+        return self._last_finish_reason
 
-    def get_tool_calls(self):
-        """Return normalized tool calls from the last response, if present.
+    def get_current_reasoning(self) -> str:
+        """Return thought summaries separately from the visible assistant answer."""
+        return self._current_reasoning
 
-        Shape: [{"id": str|None, "name": str, "arguments": dict}]
-        """
-        resp = self._last_response
-        out = []
-        if not resp:
-            return out
-        generated = []
-        try:
-            # Prefer candidates -> content.parts[*].function_call
-            candidates = getattr(resp, 'candidates', None)
-            if candidates:
-                for cand in candidates:
-                    content = getattr(cand, 'content', None)
-                    parts = getattr(content, 'parts', None) if content else None
-                    if parts:
-                        for p in parts:
-                            fc = getattr(p, 'function_call', None) if hasattr(p, 'function_call') else (
-                                p.get('function_call') if isinstance(p, dict) else None)
-                            if fc:
-                                name = getattr(fc, 'name', None) if hasattr(fc, 'name') else fc.get('name')
-                                args = getattr(fc, 'args', None) if hasattr(fc, 'args') else (fc.get('args') or {})
-                                if name:
-                                    n = str(name).strip().lower()
-                                    # Map API-safe tool names back to canonical names when available
-                                    try:
-                                        mapping = self.session.get_user_data('__tool_api_to_cmd__') or {}
-                                        if isinstance(mapping, dict) and n in mapping:
-                                            n = mapping.get(n, n)
-                                    except Exception:
-                                        pass
-                                    call_id = getattr(fc, 'id', None) if hasattr(fc, 'id') else (
-                                        fc.get('id') if isinstance(fc, dict) else None
-                                    )
-                                    if not call_id:
-                                        call_id = f"google-func-{len(out) + 1}"
-                                    record = {'id': call_id, 'name': n, 'arguments': args or {}}
-                                    out.append(record)
-                                    generated.append(record)
-                if out:
-                    return out
-            # Some SDKs expose response.function_calls
-            fcs = getattr(resp, 'function_calls', None)
-            if isinstance(fcs, list):
-                for fc in fcs:
-                    name = getattr(fc, 'name', None) if hasattr(fc, 'name') else (fc.get('name') if isinstance(fc, dict) else None)
-                    args = getattr(fc, 'args', None) if hasattr(fc, 'args') else (fc.get('args') if isinstance(fc, dict) else {})
-                    if name:
-                        n = str(name).strip().lower()
-                        try:
-                            mapping = self.session.get_user_data('__tool_api_to_cmd__') or {}
-                            if isinstance(mapping, dict) and n in mapping:
-                                n = mapping.get(n, n)
-                        except Exception:
-                            pass
-                        call_id = getattr(fc, 'id', None) if hasattr(fc, 'id') else (
-                            fc.get('id') if isinstance(fc, dict) else None
-                        )
-                        if not call_id:
-                            call_id = f"google-func-{len(out) + 1}"
-                        record = {'id': call_id, 'name': n, 'arguments': args or {}}
-                        out.append(record)
-                        generated.append(record)
-            return out
-        except Exception:
-            return []
-
-    def get_usage(self):
-        """Return usage statistics including cache metrics"""
-        if not self.total_usage:
+    def get_assistant_metadata(self) -> dict:
+        """Save JSON-safe native content with a fingerprint of the request prefix."""
+        if (self._last_finish_reason != 'stop' or not self._native_replay_safe
+                or not self._native_content):
             return {}
+        return {'google_content': deepcopy(self._native_content),
+                'google_text': self._visible_text, 'google_prefix': self._request_prefix}
 
-        stats = {
-            'total_in': self.total_usage['prompt_tokens'],
-            'total_out': self.total_usage['completion_tokens'],
-            'total_tokens': self.total_usage['total_tokens'],
-            'turn_in': self.turn_usage['prompt_tokens'] if self.turn_usage else 0,
-            'turn_out': self.turn_usage['completion_tokens'] if self.turn_usage else 0,
-            'turn_total': self.turn_usage['total_tokens'] if self.turn_usage else 0
-        }
+    def get_tool_calls(self) -> list:
+        """Consume normalized client tool calls exactly once."""
+        calls, self._last_tool_calls = self._last_tool_calls, []
+        return deepcopy(calls)
 
-        if self.total_usage['cached_tokens'] > 0:
-            stats['cached_tokens'] = self.total_usage['cached_tokens']
+    def get_messages(self) -> list:
+        """Inspect the same signed history and vision gating used by real requests."""
+        contents, config, _ = self._prepare_request(remember=False)
+        messages = [as_dict(content) for content in contents]
+        system = field(config, 'system_instruction')
+        body = field(field(config, 'http_options'), 'extra_body', {}) or {}
+        messages = deepcopy(body.get('contents', messages))
+        system = body.get('systemInstruction', body.get('system_instruction', system))
+        if system:
+            if isinstance(system, str):
+                parts = [{'text': system}]
+            elif isinstance(system, list):
+                parts = [as_dict(part) for part in self._convert_basic_parts(system)]
+            else:
+                parts = as_dict(field(system, 'parts'))
+            messages.insert(0, {'role': 'system', 'parts': parts})
+        return messages
 
-        return stats
-
-    def reset_usage(self):
-        """Reset usage statistics"""
-        self.turn_usage = None
-        self.total_usage = {
-            'prompt_tokens': 0,
-            'completion_tokens': 0,
-            'total_tokens': 0,
-            'cached_tokens': 0
-        }
-
-    def get_cost(self) -> dict:
-        """Calculate cost specifically for Google's caching model"""
-        usage = self.get_usage()
-        if not usage:
-            return {'total_cost': 0.0}
-
-        try:
-            params = self.session.get_params()
-            
-            price_unit = float(params.get('price_unit', 1000000))
-            price_in = float(params.get('price_in', 0))
-            price_out = float(params.get('price_out', 0))
-
-            # Regular costs
-            input_cost = (usage['total_in'] / price_unit) * price_in
-            output_cost = (usage['total_out'] / price_unit) * price_out
-
-            result = {
-                'input_cost': round(input_cost, 6),
-                'output_cost': round(output_cost, 6),
-                'total_cost': round(input_cost + output_cost, 6)
-            }
-
-            # Only include cache savings if there are actually cached tokens
-            if 'cached_tokens' in usage and usage['cached_tokens'] > 0:
-                cache_tokens = usage['cached_tokens']
-                cache_savings = round((cache_tokens / price_unit) * price_in, 6)
-                result['cache_savings'] = cache_savings
-
-            return result
-        except (ValueError, TypeError):
-            return None
-
-    def cleanup(self):
-        """Clean up resources (placeholder for compatibility)."""
-        # No explicit resources to clean up with the current google-genai client.
-        return None
+    def cleanup(self) -> None:
+        """Release pending responses and SDK client resources."""
+        self._close_responses()
+        if self.client is not None:
+            self.client.close()
+            self.client = None
 
     def __del__(self):
-        """Attempt cleanup on deletion"""
         try:
             self.cleanup()
         except Exception:

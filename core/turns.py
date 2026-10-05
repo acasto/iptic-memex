@@ -1303,6 +1303,15 @@ class TurnRunner:
             pass
 
         # Textual command handling via assistant_commands
+        # A token-limited textual command has no native argument boundary that
+        # lets us establish it was completed. Native truncated calls above already
+        # receive explicit skipped results; don't execute the textual fallback.
+        if provider and hasattr(provider, 'get_finish_reason'):
+            try:
+                if provider.get_finish_reason() == 'length':
+                    return False
+            except Exception:
+                pass
         try:
             ac = self.session.get_action('assistant_commands')
             if ac and hasattr(ac, 'parse_commands') and callable(getattr(ac, 'parse_commands')):
