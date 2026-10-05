@@ -119,9 +119,88 @@ adds or subtracts reasoning tokens. Costs accumulate at each request's configure
 prices, so changing models does not reprice earlier calls; totals survive provider rebuilds between
 these two providers.
 
-## Anthropic and Google
+## Anthropic
 
-Anthropic and Google providers are configured in `config.ini` and selected in `models.ini` the same way.
+Configure `[Anthropic]` in `config.ini`, and select `provider = Anthropic` in
+`models.ini`. `ANTHROPIC_API_KEY` is supported. `base_url`, client `timeout`,
+`max_retries`, and `default_headers` remain configurable for compatible services.
+
+The provider returns all visible text blocks and preserves native output blocks
+in assistant transcript metadata. This includes signed and redacted thinking,
+original client tool calls, and server/MCP tool results. Streaming reconstructs
+the native message, including thinking signatures and final usage, for raw
+inspection. Client calls retain both their API name and canonical dispatch name.
+
+Native blocks are replayed when the assistant text, tool arguments, model,
+system prompt, tools, thinking configuration, and preceding messages still
+match the original request. Cache breakpoint placement may move without
+invalidating replay. Edited or trimmed histories and incompatible configuration
+changes fall back to text and normalized client-tool history. Transcript and
+checkpoint reloads preserve native replay metadata; signatures are never edited
+or fabricated. See [Claude thinking](https://platform.claude.com/docs/en/build-with-claude/thinking).
+
+Native request controls include `thinking`, `output_config`, `tool_choice`,
+`service_tier`, `container`, and `context_management`. Explicit native settings
+win over convenience aliases: `reasoning_effort` maps to `output_config.effort`,
+and `thinking_budget` maps to an enabled thinking configuration with that budget.
+Choose a thinking configuration supported by the selected model; no model-name
+heuristics enable thinking automatically. For example:
+
+```ini
+thinking = {"type": "adaptive"}
+output_config = {"effort": "high"}
+```
+
+`tools` may contain additional native definitions (such as server tools); these
+are combined with registry client tools in official mode. An explicitly configured
+definition takes precedence when names collide. Use dictionary `extra_body` for
+additional backend fields and `betas` (CSV/list) for beta headers. New body fields
+unsupported by an older SDK are forwarded through its `extra_body` argument.
+`excluded_parameters` (CSV/list) applies to native controls, aliases, and escape
+hatch fields. Excluding `cache_control` also removes explicit cache breakpoints.
+Dictionary/array configuration strings are parsed as JSON or Python literals,
+never executed.
+
+Prompt caching keeps explicit system/latest-message breakpoints by default,
+including on tool results. Set `cache_strategy = automatic` to use the API's
+moving top-level breakpoint instead. `prompt_cache_ttl = 5m|1h` controls generated
+breakpoints; an explicitly supplied `cache_control` takes precedence. See
+[Claude caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching).
+
+Anthropic reports ordinary input, cache writes, and cache reads as separate
+counts. `total_in`/`turn_in` include all three; `total_uncached_in`/`turn_uncached_in`
+expose ordinary input. Costs accumulate at each request's configured prices and
+survive provider rebuilds. `price_cache_write` and `price_cache_read` are explicit
+rate names; legacy Anthropic `price_cache_in` and `price_cache_out` remain aliases
+for **writes** and **reads**, respectively. `price_cache_write_1h` prices one-hour
+writes separately (defaults to twice `price_in`). Configured token prices estimate
+token charges; additional server-tool fees are not included. Raw native usage
+retains server-tool counters for inspection.
+
+Stop reasons distinguish completed replies, truncation, refusal, and server-tool
+pauses. Malformed/non-object arguments and unfinished or truncated tool calls
+cannot execute. Failed requests clear stale calls. Streams close on cancellation
+and retain usage already observed. Server-tool `pause_turn` responses continue
+automatically up to `max_server_continuations` additional requests (default 3;
+set 0 to disable). Reaching the bound surfaces a pause notice and leaves the
+native stop reason available for inspection. See
+[Claude stop reasons](https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons).
+
+Remote MCP remains gated by `[MCP].active`, including raw `extra_body` settings.
+The default connector uses `mcp-client-2025-11-20`, with one `mcp_toolset` per
+server and allowlists mapped into its tool configuration. Existing shared
+`mcp_servers`, `mcp_headers_<label>`, and `mcp_allowed_<label>` settings still work.
+Set `mcp_beta = legacy` (or `mcp-client-2025-04-04`) for the deprecated format;
+other connector beta versions may be selected explicitly. Required beta headers
+are retained even when using a compatible older SDK without a beta namespace.
+See [Claude MCP migration](https://platform.claude.com/docs/en/agents-and-tools/mcp-connector#migration-guide).
+
+Image attachments are sent only with `vision = true`. `get_messages()` reflects
+the assembled system/messages, including native blocks and tool results.
+
+## Google
+
+Configure `[Google]` in `config.ini` and select it in `models.ini`.
 Tool calling behavior follows the `tool_mode` rules described below.
 
 ## Local models: llama.cpp

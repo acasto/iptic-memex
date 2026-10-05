@@ -131,6 +131,7 @@ def test_anthropic_mcp_servers_mapping(monkeypatch):
                 'provider': 'Anthropic',
                 'api_key': 'x',
                 'model_name': 'claude-3',
+                'mcp_beta': 'legacy',
                 # Same per-server keys used by OpenAIResponses, provider maps them differently
                 'mcp_servers': 'c7=https://c7/sse, files=https://files/sse',
                 'mcp_headers_c7': '{"Authorization": "Bearer TOKEN"}',

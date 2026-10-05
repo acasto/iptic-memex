@@ -728,7 +728,8 @@ class TurnRunner:
         # a successful assistant request to execute a tool.
         try:
             if provider and hasattr(provider, 'get_finish_reason'):
-                if provider.get_finish_reason() in ('error', 'failed', 'content_filter'):
+                if provider.get_finish_reason() in (
+                        'error', 'failed', 'content_filter', 'cancelled', 'pause_turn'):
                     return False
         except Exception:
             pass
