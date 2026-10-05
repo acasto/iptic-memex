@@ -695,6 +695,13 @@ class TurnRunner:
             meta = self._begin_turn_meta(role="assistant", kind="assistant", add_status_context=False, build_prompt=False)
             if extra is None:
                 extra = {}
+            if provider and hasattr(provider, 'get_assistant_metadata'):
+                try:
+                    provider_extra = provider.get_assistant_metadata()
+                    if isinstance(provider_extra, dict):
+                        extra.update(provider_extra)
+                except Exception:
+                    pass
             if isinstance(extra, dict) and isinstance(meta, dict):
                 # Do not clobber existing keys (e.g., reasoning_content)
                 if 'meta' in extra and isinstance(extra['meta'], dict):
@@ -716,6 +723,15 @@ class TurnRunner:
             provider = self.session.get_provider()
         except Exception:
             provider = None
+
+        # Error text or partially streamed commands must never be treated as
+        # a successful assistant request to execute a tool.
+        try:
+            if provider and hasattr(provider, 'get_finish_reason'):
+                if provider.get_finish_reason() in ('error', 'failed', 'content_filter'):
+                    return False
+        except Exception:
+            pass
 
         # Skip tool execution if cancellation has been requested
         try:
@@ -768,19 +784,14 @@ class TurnRunner:
                                 pass
                             extra_fields = {'tool_calls': tool_calls}
                             if last_turn:
-                                try:
-                                    if 'reasoning_content' in last_turn:
-                                        extra_fields['reasoning_content'] = last_turn['reasoning_content']
-                                except Exception:
-                                    pass
-                                # Preserve prior per-turn metadata when present
-                                try:
-                                    last_meta = last_turn.get('meta')
-                                except Exception:
-                                    last_meta = None
-                                if isinstance(last_meta, dict):
-                                    extra_fields['meta'] = dict(last_meta)
-                            self._chat_add(chat_ctx, '', 'assistant', None, extra_fields)
+                                extra_fields.update({
+                                    key: value for key, value in last_turn.items()
+                                    if key not in ('role', 'message', 'context', 'timestamp', 'tool_calls')
+                                })
+                            self._chat_add(
+                                chat_ctx, (last_turn or {}).get('message') or text or '',
+                                'assistant', (last_turn or {}).get('context'), extra_fields,
+                            )
                         except Exception:
                             pass
 

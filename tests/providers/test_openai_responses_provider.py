@@ -362,10 +362,10 @@ def test_usage_and_cost_calculation_nonstream(monkeypatch):
     usage = prov.get_usage()
     assert usage['total_in'] == 1000 and usage['total_out'] == 500 and usage.get('total_reasoning') == 100
     cost = prov.get_cost()
-    # input: 1000/1e6*2 = 0.002; output: (500+100)/1e6*10 = 0.006; total=0.008
+    # Reasoning is already included in output_tokens: 0.002 + 0.005 = 0.007.
     assert round(cost['input_cost'], 6) == 0.002
-    assert round(cost['output_cost'], 6) == 0.006
-    assert round(cost['total_cost'], 6) == 0.008
+    assert round(cost['output_cost'], 6) == 0.005
+    assert round(cost['total_cost'], 6) == 0.007
 
 def test_streaming_captures_response_id_and_uses_previous_id(monkeypatch):
     # Fake streaming event iterator
@@ -396,15 +396,17 @@ def test_streaming_captures_response_id_and_uses_previous_id(monkeypatch):
     session = FakeSession(
         prompt_text=None,
         chat_turns=[{'role': 'user', 'message': 'hello'}],
-        params={'provider': 'OpenAIResponses', 'api_key': 'x', 'model_name': 'gpt-5', 'stream': True},
+        params={'provider': 'OpenAIResponses', 'api_key': 'x', 'model_name': 'gpt-5',
+                'stream': True, 'store': True, 'use_previous_response': True},
     )
     prov = mod.OpenAIResponsesProvider(session)
     chunks = list(prov.stream_chat())
     assert prov._last_response_id == 'resp_stream_1'
 
-    # Next call with store/use_previous_response should include previous_response_id
-    session._params['store'] = True
-    session._params['use_previous_response'] = True
+    # The turn runner records native output before the next user turn.
+    session._chat._data.append({'role': 'assistant', 'message': '',
+                                **prov.get_assistant_metadata()})
+    session._chat._data.append({'role': 'user', 'message': 'next question'})
     _ = prov.chat()
     assert prov._client.responses.last_params.get('previous_response_id') == 'resp_stream_1'
 
@@ -445,78 +447,29 @@ def test_streaming_usage_and_cost(monkeypatch):
     usage = prov.get_usage()
     assert usage['total_in'] == 2000 and usage['total_out'] == 1000 and usage.get('total_reasoning') == 200
     cost = prov.get_cost()
-    # input: 2000/1e6*2 = 0.004; output: (1000+200)/1e6*10 = 0.012; total=0.016
+    # Reasoning is already included in output_tokens: 0.004 + 0.010 = 0.014.
     assert round(cost['input_cost'], 6) == 0.004
-    assert round(cost['output_cost'], 6) == 0.012
-    assert round(cost['total_cost'], 6) == 0.016
+    assert round(cost['output_cost'], 6) == 0.010
+    assert round(cost['total_cost'], 6) == 0.014
 
-def test_chain_minimize_window_includes_tool_call(monkeypatch):
+def test_untracked_response_id_does_not_minimize_history(monkeypatch):
     mod = load_provider_module()
-    class CaptureClient(FakeResponsesClient):
-        def create(self, **kwargs):
-            self.last_params = kwargs
-            return FakeResponse(output_text="ok")
-    class CaptureOpenAI(FakeOpenAI):
-        def __init__(self, **options):
-            super().__init__(**options)
-            self.responses = CaptureClient()
-    monkeypatch.setattr(mod, 'OpenAI', CaptureOpenAI)
-
-    # Simulate chaining enabled with previous_response_id present
+    monkeypatch.setattr(mod, 'OpenAI', FakeOpenAI)
     session = FakeSession(
-        prompt_text=None,
-        chat_turns=[
-            {'role': 'user', 'message': 'u1'},
-            {'role': 'assistant', 'message': '', 'tool_calls': [
-                {'id': 'fc_x', 'name': 'math', 'arguments': {'expression': '2+2'}}
-            ]},
-            {'role': 'tool', 'message': '4', 'tool_call_id': 'fc_x'},
-        ],
-        params={'provider': 'OpenAIResponses', 'api_key': 'x', 'model_name': 'gpt-5', 'store': True, 'use_previous_response': True},
-    )
-    prov = mod.OpenAIResponsesProvider(session)
-    prov._last_response_id = 'resp_prev'
-    _ = prov.chat()
-    items = prov._client.responses.last_params.get('input')
-    # When chaining, we only include the assistant function_call + tool output, not the earlier user turn
-    types = [it.get('type') for it in items if isinstance(it, dict)]
-    assert 'function_call' in types and 'function_call_output' in types
-    assert all(t != 'message' for t in types)
-
-
-def test_chain_minimize_window_includes_all_new_user_turns(monkeypatch):
-    mod = load_provider_module()
-
-    class CaptureClient(FakeResponsesClient):
-        def create(self, **kwargs):
-            self.last_params = kwargs
-            return FakeResponse(output_text="ok")
-
-    class CaptureOpenAI(FakeOpenAI):
-        def __init__(self, **options):
-            super().__init__(**options)
-            self.responses = CaptureClient()
-
-    monkeypatch.setattr(mod, 'OpenAI', CaptureOpenAI)
-
-    session = FakeSession(
-        prompt_text=None,
         chat_turns=[
             {'role': 'user', 'message': 'earlier user'},
             {'role': 'assistant', 'message': 'prior reply'},
             {'role': 'user', 'message': 'follow-up question'},
-            {'role': 'user', 'message': 'extra context'},
         ],
-        params={'provider': 'OpenAIResponses', 'api_key': 'x', 'model_name': 'gpt-5', 'store': True, 'use_previous_response': True},
+        params={'provider': 'OpenAIResponses', 'api_key': 'x', 'model_name': 'gpt-5',
+                'store': True, 'use_previous_response': True},
     )
-
     prov = mod.OpenAIResponsesProvider(session)
-    prov._last_response_id = 'resp_prev'
-    _ = prov.chat()
-
-    items = prov._client.responses.last_params.get('input')
-    user_contents = [it.get('content') for it in items if isinstance(it, dict) and it.get('role') == 'user']
-    assert user_contents == ['follow-up question', 'extra context']
+    prov._last_response_id = 'resp_untracked'
+    prov.chat()
+    sent = prov._client.responses.last_params
+    assert 'previous_response_id' not in sent
+    assert len(sent['input']) == 3
 
 
 def test_full_history_includes_assistant_when_not_chaining(monkeypatch):

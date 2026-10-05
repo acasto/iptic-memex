@@ -1,14 +1,20 @@
 import os
 from time import time
+import json
+from copy import deepcopy
 from typing import Any, Generator, List, Dict
 
 from openai import OpenAI
 
-from base_classes import APIProvider
+from base_classes import APIProvider, InteractionNeeded
+from providers.openai_common import (
+    OpenAIUsage, as_dict, excluded_parameters, extra_body, field,
+    parse_tool_arguments, sdk_params, strict_schema,
+)
 from actions.process_contexts_action import ProcessContextsAction
 
 
-class OpenAIResponsesProvider(APIProvider):
+class OpenAIResponsesProvider(OpenAIUsage, APIProvider):
     """OpenAI Responses API handler
 
     This provider is isolated from the legacy Chat Completions-based
@@ -26,13 +32,14 @@ class OpenAIResponsesProvider(APIProvider):
         self._tool_api_to_cmd: Dict[str, str] = {}
         self._pending_mcp_approvals: list[dict] = []
 
-        # usage tracking
-        self.turn_usage = None
-        self.running_usage: Dict[str, Any] = {
-            'total_in': 0,
-            'total_out': 0,
-            'total_time': 0.0
-        }
+        self._last_output_items = []
+        self._last_status = None
+        self._last_finish_reason = None
+        self._response_model = None
+        self._last_stored = False
+        self._chain_prefix = None
+        self.last_api_param = None
+        self._init_usage()
 
     @staticmethod
     def supports_mcp_passthrough() -> bool:
@@ -66,8 +73,9 @@ class OpenAIResponsesProvider(APIProvider):
                 base_url += endpoint
             options['base_url'] = base_url
 
-        if params.get('timeout') is not None:
-            options['timeout'] = params['timeout']
+        for key in ('timeout', 'max_retries', 'organization', 'project'):
+            if params.get(key) is not None:
+                options[key] = params[key]
 
         return OpenAI(**options)
 
@@ -85,10 +93,10 @@ class OpenAIResponsesProvider(APIProvider):
             calls: list[str] = []
             for item in outputs:
                 try:
-                    itype = getattr(item, 'type', None)
+                    itype = field(item, 'type')
                     if itype == 'mcp_list_tools':
-                        label = getattr(item, 'server_label', None) or getattr(item, 'serverLabel', None)
-                        tools = getattr(item, 'tools', None) or []
+                        label = field(item, 'server_label') or field(item, 'serverLabel')
+                        tools = field(item, 'tools') or []
                         names = []
                         for t in tools or []:
                             name = getattr(t, 'name', None) if not isinstance(t, dict) else t.get('name')
@@ -97,11 +105,11 @@ class OpenAIResponsesProvider(APIProvider):
                         if label and names:
                             imported.append(f"{label}: {', '.join(names[:6])}{'…' if len(names) > 6 else ''}")
                     elif itype == 'mcp_call':
-                        label = getattr(item, 'server_label', None) or getattr(item, 'serverLabel', None)
-                        name = getattr(item, 'name', None)
-                        output = getattr(item, 'output', None)
+                        label = field(item, 'server_label') or field(item, 'serverLabel')
+                        name = field(item, 'name')
+                        output = field(item, 'output')
                         if output is None:
-                            err = getattr(item, 'error', None)
+                            err = field(item, 'error')
                             if err:
                                 calls.append(f"{label}.{name} error: {err}")
                             continue
@@ -114,8 +122,8 @@ class OpenAIResponsesProvider(APIProvider):
                         if label and name:
                             calls.append(f"{label}.{name} → {text}")
                     elif itype == 'mcp_approval_request':
-                        label = getattr(item, 'server_label', None) or getattr(item, 'serverLabel', None)
-                        name = getattr(item, 'name', None)
+                        label = field(item, 'server_label') or field(item, 'serverLabel')
+                        name = field(item, 'name')
                         calls.append(f"Approval requested for {label}.{name}")
                 except Exception:
                     continue
@@ -136,12 +144,13 @@ class OpenAIResponsesProvider(APIProvider):
             pending: list[dict] = []
             for item in outputs:
                 try:
-                    if getattr(item, 'type', None) == 'mcp_approval_request':
+                    if field(item, 'type') == 'mcp_approval_request':
                         pending.append({
-                            'id': getattr(item, 'id', None),
-                            'approval_request_id': getattr(item, 'approval_request_id', None) or getattr(item, 'id', None),
-                            'server_label': getattr(item, 'server_label', None) or getattr(item, 'serverLabel', None),
-                            'name': getattr(item, 'name', None),
+                            'id': field(item, 'id'),
+                            'approval_request_id': field(item, 'approval_request_id') or field(item, 'id'),
+                            'server_label': field(item, 'server_label') or field(item, 'serverLabel'),
+                            'name': field(item, 'name'),
+                            'arguments': field(item, 'arguments'),
                         })
                 except Exception:
                     continue
@@ -160,471 +169,379 @@ class OpenAIResponsesProvider(APIProvider):
             return None
         return content if content.strip() != '' else ' '
 
-    def _stringify_content(self, content: Any) -> str:
-        """Normalize a message 'content' field into plain text.
-
-        - If already a string, return as-is.
-        - If it's a list of parts (OpenAI-style), concatenate any text fields.
-        - Otherwise, return empty string.
-        """
-        try:
-            if isinstance(content, str):
-                return content
-            if isinstance(content, list):
-                out: List[str] = []
-                for part in content:
-                    if isinstance(part, dict):
-                        # Common keys: 'type' with 'text' or 'content' variants
-                        if 'text' in part and isinstance(part['text'], str):
-                            out.append(part['text'])
-                        elif 'content' in part and isinstance(part['content'], str):
-                            out.append(part['content'])
-                return "\n".join(out)
-        except Exception:
-            pass
-        return ""
-
-    def _assemble_input(self, chain_minimize: bool = False) -> List[Dict[str, Any]]:
-        """Build Responses API `input` from chat history and contexts.
-
-        We mirror the existing context assembly but target a simple, safe
-        shape for Responses: a list of {role, content} where content is text.
-        Non-text contexts are summarized into text via ProcessContextsAction
-        for an initial MVP. (We can extend to typed parts later.)
-        """
-        input_items: List[Dict[str, Any]] = []
-        chat = self.session.get_context('chat')
-        if not chat:
-            return input_items
-
-        turns = chat.get()
-        import json
-
-        # When chaining with previous_response_id and minimization is enabled,
-        # include only the turns that occurred after the last assistant reply
-        # (tool call + outputs, or any new user/context messages).
-        if chain_minimize and turns:
-            last_assistant_idx = None
-            for i in range(len(turns) - 1, -1, -1):
-                if turns[i].get('role') == 'assistant':
-                    last_assistant_idx = i
-                    break
-
-            if last_assistant_idx is not None:
-                start_idx = last_assistant_idx + 1
-                window = turns[start_idx:] if start_idx < len(turns) else []
-                if not window:
-                    # Fallback: include the last assistant when no newer turns exist
-                    window = turns[last_assistant_idx:last_assistant_idx + 1]
-                # If the next interaction is a tool output, include the assistant
-                # turn that initiated the tool call so we send function_call + output.
-                if window and window[0].get('role') == 'tool':
-                    window = [turns[last_assistant_idx]] + window
-            else:
-                # No assistant messages yet; include the last turn as a best-effort window
-                window = [turns[-1]]
-        else:
-            window = turns
-
-        for turn in window:
+    def _assemble_input(self, turns=None) -> List[Dict[str, Any]]:
+        """Assemble typed input, preserving native output items and images."""
+        if turns is None:
+            chat = self.session.get_context('chat')
+            turns = chat.get() if chat else []
+        input_items = []
+        params = self.session.get_params()
+        model = params.get('model_name', params.get('model'))
+        for turn in turns:
             role = turn.get('role')
-            # Assistant tool calls: include as function_call items for pairing with outputs
-            if role == 'assistant' and 'tool_calls' in turn:
-                try:
-                    for tc in (turn.get('tool_calls') or []):
-                        name = tc.get('name')
-                        args = tc.get('arguments')
-                        call_id = tc.get('id') or tc.get('call_id')
-                        if not name or not call_id:
-                            continue
-                        if not isinstance(args, str):
-                            try:
-                                args = json.dumps(args or {})
-                            except Exception:
-                                args = '{}'
-                        input_items.append({
-                            'type': 'function_call',
-                            'call_id': call_id,
-                            'name': name,
-                            'arguments': args,
-                        })
-                except Exception:
-                    pass
-            # Convert tool outputs to function_call_output items
+            if role == 'assistant' and 'responses_output' in turn:
+                if (turn.get('responses_model') == model
+                        and turn.get('message', '') == turn.get('responses_text', '')):
+                    input_items.extend(deepcopy(turn.get('responses_input') or []))
+                    input_items.extend(deepcopy(turn['responses_output']))
+                    continue
             if role == 'tool':
                 call_id = turn.get('tool_call_id') or turn.get('id')
-                output_text = turn.get('message') or ''
-                # If the tool returned JSON text (object/array/string), pass it through;
-                # otherwise wrap plain text as a JSON string.
-                try:
-                    ot = (output_text or '').strip()
-                    output_json: str
-                    if ot and ot[0] in '{["':
-                        json.loads(ot)
-                        output_json = ot
-                    else:
-                        output_json = json.dumps(output_text)
-                except Exception:
-                    output_json = json.dumps(output_text or "")
                 if call_id:
-                    input_items.append({'type': 'function_call_output', 'call_id': call_id, 'output': output_json})
-                # Skip normal message handling for tool turns
+                    input_items.append({'type': 'function_call_output', 'call_id': call_id,
+                                        'output': turn.get('message') or ''})
                 continue
-            # Combine primary text + any non-image contexts into a single text block
-            text_parts: List[str] = []
-            # Primary message text (the canonical field used across the app)
-            msg_text = turn.get('message')
-            if isinstance(msg_text, str):
-                text_parts.append(msg_text)
-
-            # Collect non-image contexts into a text summary
-            if role == 'user' and 'context' in turn and turn['context']:
-                other_contexts = []
-                for ctx in turn['context']:
-                    if ctx.get('type') == 'image':
-                        # Defer rich image mapping to a future iteration
+            if role not in ('user', 'assistant', 'system', 'developer'):
+                continue
+            if role == 'assistant' and turn.get('tool_calls'):
+                for call in turn['tool_calls']:
+                    arguments = call.get('arguments')
+                    input_items.append({
+                        'type': 'function_call', 'call_id': call.get('id') or call.get('call_id'),
+                        'name': call.get('api_name') or call.get('name'),
+                        'arguments': arguments if isinstance(arguments, str) else json.dumps(arguments or {}),
+                    })
+            text_parts = []
+            images = []
+            for context in turn.get('context') or []:
+                if context.get('type') == 'image':
+                    if not params.get('vision', False):
                         continue
-                    other_contexts.append(ctx)
-                if other_contexts:
-                    summarized = ProcessContextsAction.process_contexts_for_assistant(other_contexts)
-                    if summarized:
-                        text_parts.append(str(summarized))
-
-            if role:
-                merged = "\n\n".join([p for p in text_parts if isinstance(p, str)])
-                if merged.strip() == '':
-                    # Avoid sending empty strings which the API rejects; fall back to a single space.
-                    merged = ' '
-                if role in ('user', 'assistant'):
-                    input_items.append({'role': role, 'content': merged})
-
+                    data = context['context'].get()
+                    images.append({'type': 'input_image',
+                                   'image_url': f"data:{data['mime_type']};base64,{data['content']}"})
+                else:
+                    text_parts.append(context)
+            text = turn.get('message') or ''
+            if text_parts:
+                context_text = ProcessContextsAction.process_contexts_for_assistant(text_parts)
+                if context_text:
+                    text = str(context_text) + ('\n\n' + text if text else '')
+            # A tool-call-only assistant must not acquire an extra blank message.
+            if role == 'assistant' and turn.get('tool_calls') and not text:
+                continue
+            if images:
+                content = [{'type': 'input_text', 'text': text or ' '}, *images]
+            else:
+                content = text or ' '
+            input_items.append({'role': role, 'content': content})
         return input_items
 
-    # --- API calls ------------------------------------------------------
-    def chat(self) -> Any:
-        """Create a Responses request; return string or a streaming handle.
+    def _chain_input(self, full_input, params):
+        """Continue only an unchanged, provider-visible prefix we actually sent."""
+        if not (params.get('store') and params.get('use_previous_response')
+                and self._last_stored and self._last_response_id
+                and self._response_model == params.get('model_name', params.get('model'))):
+            return full_input, False
+        chat = self.session.get_context('chat')
+        turns = chat.get() if chat else []
+        for index in range(len(turns) - 1, -1, -1):
+            if turns[index].get('responses_response_id') == self._last_response_id:
+                prefix = self._assemble_input(turns[:index + 1])
+                if prefix == self._chain_prefix:
+                    return self._assemble_input(turns[index + 1:]), True
+                break
+        # An edited, trimmed, cleared or loaded transcript must replay its own history.
+        return full_input, False
 
-        For non-streaming requests, returns `response.output_text`.
-        For streaming, returns the streaming iterator (consumed by stream_chat).
-        """
-        start = time()
+    def _approval_inputs(self, params):
+        """Resolve pending MCP approvals through the existing interaction broker."""
+        inputs = []
+        for request in self._pending_mcp_approvals:
+            request_id = request.get('approval_request_id') or request.get('id')
+            if not request_id:
+                continue
+            approved = bool(params.get('mcp_auto_approve', False))
+            if not approved:
+                prompt = f"Allow MCP tool {request.get('server_label')}.{request.get('name')}?"
+                if request.get('arguments'):
+                    prompt += '\nArguments: ' + str(request['arguments'])[:4000]
+                spec = {'prompt': prompt, 'default': False}
+                ui = getattr(self.session, 'ui', None)
+                if getattr(getattr(ui, 'capabilities', None), 'blocking', False):
+                    approved = ui.ask_bool(prompt, default=False)
+                else:
+                    broker = self.session.get_user_data('__interaction_broker__')
+                    prompt_fn = getattr(broker, 'prompt', None)
+                    if not callable(prompt_fn):
+                        prompt_fn = self.session.get_user_data('__interaction_prompt__')
+                    if not callable(prompt_fn):
+                        raise RuntimeError('MCP approval requires an interactive UI or mcp_auto_approve')
+                    approved = prompt_fn(InteractionNeeded('bool', spec, 'mcp_approval'))
+                if approved is None:
+                    raise RuntimeError('MCP approval cancelled')
+            inputs.append({'type': 'mcp_approval_response', 'approve': bool(approved),
+                           'approval_request_id': request_id})
+        return inputs
+
+    def _request_params(self, params, input_items, will_chain):
+        """Map Memex settings to native Responses parameters without guessing models."""
+        excluded = excluded_parameters(params)
+        api = {'model': params.get('model_name', params.get('model')),
+               'input': input_items, 'store': bool(params.get('store', False))}
+        instructions = self._assemble_instructions()
+        if instructions:
+            api['instructions'] = instructions
+        if will_chain:
+            api['previous_response_id'] = self._last_response_id
+        for key in ('temperature', 'top_p', 'max_output_tokens', 'include', 'metadata',
+                    'parallel_tool_calls', 'tool_choice', 'text', 'truncation',
+                    'service_tier', 'user', 'safety_identifier', 'prompt_cache_key',
+                    'prompt_cache_retention'):
+            if params.get(key) is not None:
+                api[key] = deepcopy(params[key])
+        if 'max_output_tokens' not in api:
+            for key in ('max_completion_tokens', 'max_tokens'):
+                if params.get(key) is not None and key not in excluded:
+                    api['max_output_tokens'] = params[key]
+                    break
+        reasoning = params.get('reasoning')
+        if isinstance(reasoning, dict):
+            api['reasoning'] = deepcopy(reasoning)
+        if params.get('reasoning_effort') is not None and 'reasoning_effort' not in excluded:
+            api.setdefault('reasoning', {})['effort'] = str(params['reasoning_effort']).lower()
+        if params.get('reasoning_summary') is not None and 'reasoning_summary' not in excluded:
+            api.setdefault('reasoning', {})['summary'] = params['reasoning_summary']
+        if params.get('verbosity') is not None and 'verbosity' not in excluded:
+            api.setdefault('text', {})['verbosity'] = str(params['verbosity']).lower()
+        if params.get('extra_body') is not None:
+            api['extra_body'] = extra_body(params['extra_body'])
+            for key in excluded:
+                api['extra_body'].pop(key, None)
+        mode = getattr(self.session, 'get_effective_tool_mode', lambda: 'none')()
+        if mode == 'official':
+            tools = self.get_tools_for_request()
+            if tools:
+                api['tools'] = tools
+        if params.get('stream'):
+            api['stream'] = True
+        for key in excluded:
+            api.pop(key, None)
+        return api
+
+    def _finish_response(self, response):
+        """Record terminal output once, using call_id for function-result pairing."""
+        self._last_response = response
+        self._last_status = field(response, 'status') or 'completed'
+        self._last_response_id = field(response, 'id')
+        self._last_stored = bool(self.last_api_param.get('store')) and self._last_status != 'failed'
+        self._last_finish_reason = 'stop'
+        if self._last_status == 'incomplete':
+            reason = field(field(response, 'incomplete_details'), 'reason')
+            self._last_finish_reason = 'length' if reason == 'max_output_tokens' else reason or 'incomplete'
+        elif self._last_status == 'failed':
+            self._last_finish_reason = 'error'
+        self._record_usage(field(response, 'usage'))
+        outputs = field(response, 'output', []) or []
+        self._last_output_items = [as_dict(item) for item in outputs]
+        self._last_tool_calls = []
+        for item in outputs:
+            if field(item, 'type') != 'function_call':
+                continue
+            api_name = field(item, 'name')
+            arguments, invalid = parse_tool_arguments(field(item, 'arguments'))
+            self._last_tool_calls.append({
+                'id': field(item, 'call_id') or field(item, 'id'),
+                'name': self._tool_api_to_cmd.get(api_name, api_name), 'api_name': api_name,
+                'arguments': arguments,
+                'truncated': invalid or self._last_status != 'completed'
+                             or field(item, 'status') == 'incomplete',
+            })
+        if self._last_tool_calls and self._last_status == 'completed':
+            self._last_finish_reason = 'tool_calls'
+        self._pending_mcp_approvals = []
+        self._capture_mcp_approvals(outputs)
+        self._response_model = self.last_api_param.get('model')
+        self._chain_prefix = deepcopy(self._request_full_input) + self._last_output_items
+        summary = self._summarize_mcp_outputs(outputs)
+        if summary:
+            self._log('mcp_event', 'summary', {'text': summary})
+
+    def _log(self, event, *args):
         try:
-            p = self.session.get_params()
-            instructions = self._assemble_instructions()
-            # Determine if we'll chain with previous_response_id and minimize input
-            will_chain = bool(p.get('store') and p.get('use_previous_response') and self._last_response_id)
-            chain_minimize = will_chain
-            input_items = self._assemble_input(chain_minimize=chain_minimize)
-            # Provider-specific start log (additional metadata)
-            try:
-                meta = {
-                    'provider': 'OpenAIResponses',
-                    'model': p.get('model'),
-                    'model_name': p.get('model_name'),
-                    'stream': bool(p.get('stream', False)),
-                    'store': bool(p.get('store', False)),
-                    'use_previous_response': bool(p.get('use_previous_response', False)),
-                    'chain_minimize': chain_minimize,
-                }
-                self.session.utils.logger.provider_start(meta, component='providers.openairesponses')
-            except Exception:
-                pass
-            # Auto-approval for MCP (optional): if enabled and we have any pending
-            # approval requests from the prior response, append mcp_approval_response
-            # items and force chaining with previous_response_id.
-            try:
-                auto_approve = bool(p.get('mcp_auto_approve'))
-            except Exception:
-                auto_approve = False
-            if auto_approve and self._pending_mcp_approvals:
-                for req in list(self._pending_mcp_approvals):
-                    arid = req.get('approval_request_id') or req.get('id')
-                    if not arid:
-                        continue
-                    input_items.append({
-                        'type': 'mcp_approval_response',
-                        'approve': True,
-                        'approval_request_id': arid,
-                    })
-                # Clear after staging
-                self._pending_mcp_approvals = []
-                # Force chain with previous response for approvals to reference
-                if self._last_response_id:
-                    will_chain = True
-                    chain_minimize = True
+            logger = self.session.utils.logger
+            getattr(logger, event)(*args, component='providers.openairesponses')
+        except Exception:
+            pass
 
-            # Base params
-            api_params: Dict[str, Any] = {
-                'model': p.get('model_name', p.get('model')),
-            }
-            if instructions:
-                api_params['instructions'] = instructions
-            # Always include input; Responses requires it
-            if not input_items:
+    def _response_text(self, response):
+        """Surface refusals and terminal errors as well as normal output text."""
+        text = field(response, 'output_text') or ''
+        refusals = []
+        if not text:
+            parts = []
+            for item in field(response, 'output', []) or []:
+                if field(item, 'type') != 'message':
+                    continue
+                for part in field(item, 'content', []) or []:
+                    if field(part, 'type') == 'output_text':
+                        parts.append(field(part, 'text', ''))
+                    elif field(part, 'type') == 'refusal':
+                        refusals.append(field(part, 'refusal', ''))
+            text = ''.join(parts) or ''.join(refusals)
+        if not text:
+            text = self._summarize_mcp_outputs(field(response, 'output', []) or [])
+        if self._last_status == 'failed':
+            error = field(field(response, 'error'), 'message', 'Response failed')
+            text += ('\n' if text else '') + f'Response failed: {error}'
+        elif self._last_status == 'incomplete':
+            reason = field(field(response, 'incomplete_details'), 'reason', 'unknown')
+            text += ('\n' if text else '') + f'[Response incomplete: {reason}]'
+        return text
+
+    def chat(self) -> Any:
+        """Create a native Responses request and retain its terminal output."""
+        start = time()
+        self.turn_usage = None
+        self._last_tool_calls = None
+        self._last_output_items = []
+        self._last_status = None
+        self._last_finish_reason = None
+        self._delivered_text = ''
+        self._last_response = None
+        self.last_api_param = None
+        try:
+            params = self.session.get_params()
+            self._usage_params = deepcopy(params)
+            full_input = self._assemble_input()
+            input_items, will_chain = self._chain_input(full_input, params)
+            approval_ids = {field(item, 'id') for item in full_input
+                            if field(item, 'type') == 'mcp_approval_request'}
+            self._pending_mcp_approvals = [
+                request for request in self._pending_mcp_approvals
+                if (request.get('approval_request_id') or request.get('id')) in approval_ids
+            ]
+            approvals = self._approval_inputs(params)
+            self._request_approvals = deepcopy(approvals)
+            input_items = input_items + approvals
+            if not input_items and not will_chain:
                 input_items = [{'role': 'user', 'content': ' '}]
-            api_params['input'] = input_items
-
-            # Privacy/storage controls
-            # Storage/chaining: enable if requested, or if we need it for MCP approvals
-            if p.get('store') is not None:
-                api_params['store'] = bool(p.get('store'))
-            # If we staged approvals and have a previous response id, force store + chaining
-            if auto_approve and self._last_response_id:
-                api_params['store'] = True
-            # Optional: use previous response id when storing is enabled
-            if will_chain and self._last_response_id:
-                api_params['previous_response_id'] = self._last_response_id
-
-            # Token cap: Responses uses 'max_output_tokens'
-            mct = p.get('max_completion_tokens') or p.get('max_tokens')
-            if mct is not None:
-                api_params['max_output_tokens'] = mct
-            # Reasoning effort: Responses expects a nested 'reasoning' object
-            if p.get('reasoning') and p.get('reasoning_effort') is not None:
-                try:
-                    api_params['reasoning'] = {'effort': str(p['reasoning_effort']).lower()}
-                except Exception:
-                    api_params['reasoning'] = {'effort': p['reasoning_effort']}
-
-            # Tools (custom). For MVP, we keep this off unless explicitly provided later.
-            try:
-                mode = getattr(self.session, 'get_effective_tool_mode', lambda: 'none')()
-                if mode == 'official':
-                    tools_spec = self.get_tools_for_request() or []
-                    if tools_spec:
-                        api_params['tools'] = tools_spec
-                        if p.get('tool_choice') is not None:
-                            api_params['tool_choice'] = p.get('tool_choice')
-            except Exception:
-                pass
-
-            # Streaming
-            stream = bool(p.get('stream'))
-            if stream:
-                api_params['stream'] = True
-                # Responses API does not accept stream_options.include_usage; omit entirely
-                resp = self._client.responses.create(**api_params)
-                self._last_response = resp
-                return resp
-
-            # Non-streaming
-            resp = self._client.responses.create(**api_params)
-            self._last_response = resp
-            try:
-                # Track response id for optional chaining
-                self._last_response_id = getattr(resp, 'id', None)
-                # Usage (best-effort; Responses may differ in shape)
-                usage = getattr(resp, 'usage', None)
-                if usage is not None:
-                    self.turn_usage = usage
-                    # Prefer Responses fields: input_tokens/output_tokens
-                    ti = getattr(usage, 'input_tokens', None)
-                    to = getattr(usage, 'output_tokens', None)
-                    if ti is None:
-                        ti = getattr(usage, 'prompt_tokens', 0)
-                    if to is None:
-                        to = getattr(usage, 'completion_tokens', 0)
-                    self.running_usage['total_in'] += ti or 0
-                    self.running_usage['total_out'] += to or 0
-                    # Reasoning tokens (Responses: output_tokens_details)
-                    try:
-                        otd = getattr(usage, 'output_tokens_details', None)
-                        if isinstance(otd, dict):
-                            rt = otd.get('reasoning_tokens', 0)
-                        else:
-                            rt = getattr(otd, 'reasoning_tokens', 0)
-                        if rt:
-                            self.running_usage['reasoning_tokens'] = self.running_usage.get('reasoning_tokens', 0) + rt
-                    except Exception:
-                        pass
-                # Parse outputs for function calls and MCP items
-                self._last_tool_calls = []
-                outputs = getattr(resp, 'output', None)
-                mcp_summary_text = ''
-                if isinstance(outputs, list):
-                    import json
-                    # Collect function_call items for our official tool pipeline
-                    for item in outputs:
-                        try:
-                            itype = getattr(item, 'type', None)
-                            if itype == 'function_call':
-                                name = getattr(item, 'name', None)
-                                if isinstance(name, str) and name in self._tool_api_to_cmd:
-                                    name = self._tool_api_to_cmd.get(name, name)
-                                args = getattr(item, 'arguments', None)
-                                call_id = getattr(item, 'id', None) or getattr(item, 'call_id', None)
-                                args_obj = {}
-                                if isinstance(args, str):
-                                    try:
-                                        args_obj = json.loads(args)
-                                    except Exception:
-                                        args_obj = {}
-                                elif isinstance(args, dict):
-                                    args_obj = args
-                                self._last_tool_calls.append({'id': call_id, 'name': name, 'arguments': args_obj})
-                        except Exception:
-                            continue
-                    # Capture MCP approvals and build summary
-                    try:
-                        self._capture_mcp_approvals(outputs)
-                    except Exception:
-                        pass
-                    # Build user-visible fallback text if the model didn't emit text
-                    mcp_summary_text = self._summarize_mcp_outputs(outputs)
-            except Exception:
-                pass
-
-            # Output text helper
-            text = getattr(resp, 'output_text', None)
-            if isinstance(text, str) and text.strip() != '':
-                return text
-            # If no output_text, surface a concise MCP summary so users see progress
-            if mcp_summary_text:
-                return mcp_summary_text
-            return ''
-
-        except Exception as e:
+            self._request_full_input = full_input + approvals
+            api = self._request_params(params, input_items, will_chain)
+            self.last_api_param = api
+            self._log('provider_start', {
+                'provider': 'OpenAIResponses', 'model': api.get('model'),
+                'stream': bool(api.get('stream')), 'store': api.get('store'),
+                'chain_minimize': will_chain,
+            })
+            create = self._client.responses.create
+            response = create(**sdk_params(create, api))
+            if approvals:
+                self._pending_mcp_approvals = []
+            if api.get('stream'):
+                return response
+            self._finish_response(response)
+            self._delivered_text = self._response_text(response)
+            return self._delivered_text
+        except Exception as exc:
             self._last_response = None
-            return f"An error occurred in OpenAIResponsesProvider: {e}"
+            self._last_response_id = None
+            self._last_stored = False
+            self._last_finish_reason = 'error'
+            return f'An error occurred in OpenAIResponsesProvider: {exc}'
         finally:
-            try:
-                elapsed_ms = int((time() - start) * 1000)
-            except Exception:
-                elapsed_ms = None
-            try:
-                meta = {
-                    'response_id': self._last_response_id,
-                    'elapsed_ms': elapsed_ms,
-                }
-                self.session.utils.logger.provider_done(meta, component='providers.openairesponses')
-            except Exception:
-                pass
             self.running_usage['total_time'] += time() - start
+            if not self.last_api_param or not self.last_api_param.get('stream'):
+                self._log('provider_done', {
+                    'response_id': self._last_response_id,
+                    'elapsed_ms': int((time() - start) * 1000),
+                })
 
     def stream_chat(self) -> Generator[Any, None, None]:
-        """Stream Responses output as text. MVP: best-effort handling.
-
-        If `chat()` returned a string, just yield it. If it returned a
-        streaming iterator of events, we attempt to surface text deltas
-        and capture usage on the terminal event.
-        """
-        resp = self.chat()
+        """Consume typed events; incomplete streams never expose executable calls."""
+        response = self.chat()
+        if isinstance(response, str):
+            if response:
+                yield response
+            return
+        if response is None:
+            return
         start = time()
-
-        if isinstance(resp, str):
-            if resp:
-                yield resp
-            return
-
-        if resp is None:
-            return
-
+        terminal = False
         try:
-            for event in resp:
-                # Typed events per Responses streaming API
-                try:
-                    etype = getattr(event, 'type', None)
-                    resp_obj = getattr(event, 'response', None)
-
-                    # Text deltas only
-                    if etype == 'response.output_text.delta':
-                        delta = getattr(event, 'delta', None)
-                        if isinstance(delta, str) and delta:
-                            yield delta
-                        # Continue to allow ID capture below as well
-
-                    # Capture response id for chaining on any event that carries it
-                    if resp_obj is not None and getattr(resp_obj, 'id', None):
-                        try:
-                            self._last_response_id = getattr(resp_obj, 'id', None)
-                        except Exception:
-                            pass
-
-                    # On completed, record usage and parse tool/MCP outputs
-                    if etype == 'response.completed' and resp_obj is not None:
-                        usage = getattr(resp_obj, 'usage', None)
-                        if usage is not None:
-                            self.turn_usage = usage
-                            ti = getattr(usage, 'input_tokens', None)
-                            to = getattr(usage, 'output_tokens', None)
-                            if ti is None:
-                                ti = getattr(usage, 'prompt_tokens', 0)
-                            if to is None:
-                                to = getattr(usage, 'completion_tokens', 0)
-                            self.running_usage['total_in'] += ti or 0
-                            self.running_usage['total_out'] += to or 0
-                            # Reasoning tokens from streaming usage
-                            try:
-                                otd = getattr(usage, 'output_tokens_details', None)
-                                if isinstance(otd, dict):
-                                    rt = otd.get('reasoning_tokens', 0)
-                                else:
-                                    rt = getattr(otd, 'reasoning_tokens', 0)
-                                if rt:
-                                    self.running_usage['reasoning_tokens'] = self.running_usage.get('reasoning_tokens', 0) + rt
-                            except Exception:
-                                pass
-
-                        # Parse and normalize function tool calls from final output
-                        outputs = getattr(resp_obj, 'output', None)
-                        if isinstance(outputs, list):
-                            import json
-                            calls = []
-                            for item in outputs:
-                                try:
-                                    itype = getattr(item, 'type', None)
-                                    if itype == 'function_call':
-                                        name = getattr(item, 'name', None)
-                                        if isinstance(name, str) and name in self._tool_api_to_cmd:
-                                            name = self._tool_api_to_cmd.get(name, name)
-                                        args = getattr(item, 'arguments', None)
-                                        call_id = getattr(item, 'id', None) or getattr(item, 'call_id', None)
-                                        args_obj = {}
-                                        if isinstance(args, str):
-                                            try:
-                                                args_obj = json.loads(args)
-                                            except Exception:
-                                                args_obj = {}
-                                        elif isinstance(args, dict):
-                                            args_obj = args
-                                        calls.append({'id': call_id, 'name': name, 'arguments': args_obj})
-                                except Exception:
-                                    continue
-                            if calls:
-                                self._last_tool_calls = calls
-                            # Capture MCP approvals for the next request
-                            try:
-                                self._capture_mcp_approvals(outputs)
-                            except Exception:
-                                pass
-                            # Emit MCP summary event for logging
-                            try:
-                                summary_text = self._summarize_mcp_outputs(outputs)
-                                if summary_text:
-                                    self.session.utils.logger.mcp_event('summary', {'text': summary_text}, component='providers.openairesponses')
-                            except Exception:
-                                pass
-                            # If we didn't stream any text, emit a short MCP summary at the end
-                            try:
-                                summary = self._summarize_mcp_outputs(outputs)
-                                if summary:
-                                    yield summary
-                            except Exception:
-                                pass
-                except Exception:
-                    # If we don't recognize the event, ignore quietly
-                    pass
-        except Exception as e:
-            yield f"Stream interrupted (Responses): {e}"
+            for event in response:
+                event_type = field(event, 'type')
+                if event_type in ('response.output_text.delta', 'response.refusal.delta'):
+                    delta = field(event, 'delta')
+                    if isinstance(delta, str) and delta:
+                        self._delivered_text += delta
+                        yield delta
+                elif event_type in ('response.completed', 'response.incomplete', 'response.failed'):
+                    final = field(event, 'response')
+                    if final is None:
+                        raise ValueError(f'{event_type} omitted its response')
+                    self._finish_response(final)
+                    terminal = True
+                    text = self._response_text(final)
+                    if not self._delivered_text:
+                        self._delivered_text = text
+                        if text:
+                            yield text
+                    elif self._last_status in ('incomplete', 'failed'):
+                        # The final text contains the visible terminal diagnostic.
+                        diagnostic = text.rsplit('\n', 1)[-1]
+                        self._delivered_text += '\n' + diagnostic
+                        yield '\n' + diagnostic
+                    break
+                elif event_type == 'error':
+                    raise RuntimeError(field(event, 'message', 'Responses stream error'))
+            if not terminal:
+                raise RuntimeError('Stream ended before a terminal response event')
+        except Exception as exc:
+            terminal = False
+            yield f'Stream interrupted (Responses): {exc}'
         finally:
-            # Ensure upstream stream is closed when cooperatively cancelled
-            try:
-                close_fn = getattr(resp, 'close', None)
-                if callable(close_fn):
-                    close_fn()
-            except Exception:
-                pass
+            if not terminal:
+                self._last_response = None
+                self._last_response_id = None
+                self._last_stored = False
+                self._last_tool_calls = None
+                self._last_output_items = []
+                self._last_finish_reason = 'error'
+            close = getattr(response, 'close', None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
             self.running_usage['total_time'] += time() - start
+            self._log('provider_done', {
+                'response_id': self._last_response_id,
+                'elapsed_ms': int((time() - start) * 1000),
+            })
+
+    def get_assistant_metadata(self):
+        """Return serializable native output for subsequent tool and user turns."""
+        if self._last_response is None or self._last_status in (None, 'failed'):
+            return {}
+        return {
+            'responses_output': deepcopy(self._last_output_items),
+            'responses_input': deepcopy(self._request_approvals),
+            'responses_response_id': self._last_response_id,
+            'responses_model': self._response_model,
+            'responses_text': self._delivered_text,
+        }
+
+    def get_finish_reason(self):
+        """Expose incomplete token limits to the shared turn runner."""
+        return self._last_finish_reason
+
+    def reset_usage(self):
+        """Clear accounting and server conversation state when the chat is cleared."""
+        super().reset_usage()
+        self._last_response = None
+        self._last_response_id = None
+        self._last_stored = False
+        self._last_output_items = []
+        self._last_tool_calls = None
+        self._pending_mcp_approvals = []
+        self._chain_prefix = None
+        self._last_status = None
+        self._last_finish_reason = None
+
+    def cleanup(self):
+        """Close the SDK client when a session ends or rebuilds its provider."""
+        self._client.close()
 
     # --- Introspection --------------------------------------------------
     def get_messages(self) -> Any:
@@ -668,12 +585,14 @@ class OpenAIResponsesProvider(APIProvider):
             if 'context' in turn and turn['context']:
                 for ctx in turn['context']:
                     if ctx.get('type') == 'image':
+                        if not self.session.get_params().get('vision', False):
+                            continue
                         try:
                             img_data = ctx['context'].get()
                             content.append({
                                 'type': 'image_url',
                                 'image_url': {
-                                    'url': f"data:image/{img_data['mime_type'].split('/')[-1]};base64,{img_data['content']}"
+                                    'url': f"data:{img_data['mime_type']};base64,{img_data['content']}"
                                 }
                             })
                         except Exception:
@@ -686,14 +605,26 @@ class OpenAIResponsesProvider(APIProvider):
                     if text_ctx:
                         content.insert(0, {'type': 'text', 'text': text_ctx})
 
-            out.append({'role': role, 'content': content})
+            view = {'role': role, 'content': content}
+            if role == 'assistant' and turn.get('tool_calls'):
+                view['tool_calls'] = [{
+                    'id': call.get('id') or call.get('call_id'), 'type': 'function',
+                    'function': {
+                        'name': call.get('api_name') or call.get('name'),
+                        'arguments': (call['arguments'] if isinstance(call.get('arguments'), str)
+                                      else json.dumps(call.get('arguments') or {})),
+                    },
+                } for call in turn['tool_calls']]
+            if role == 'tool' and turn.get('tool_call_id'):
+                view['tool_call_id'] = turn['tool_call_id']
+            out.append(view)
 
         return out
 
     def get_full_response(self) -> Any:
         return self._last_response
 
-    # Tool calls normalization (MVP: none; return empty list)
+    # Normalized calls are consumed once by the turn runner.
     def get_tool_calls(self) -> List[Dict[str, Any]]:
         calls = list(self._last_tool_calls or [])
         # Clear after read so we don't re-run tools on the follow-up turn
@@ -721,60 +652,10 @@ class OpenAIResponsesProvider(APIProvider):
                 allow_nullable = False
             for spec in canonical:
                 try:
-                    params = spec.get('parameters') or {'type': 'object', 'properties': {}}
-                    # Force Responses-required schema shape: additionalProperties must be present and false
-                    try:
-                        params = dict(params)
-                    except Exception:
-                        params = {'type': 'object', 'properties': {}}
-                    if 'type' not in params:
-                        params['type'] = 'object'
-                    if 'properties' not in params or not isinstance(params['properties'], dict):
-                        params['properties'] = {}
-                    # Optionally mark optional properties as nullable
-                    if allow_nullable:
-                        try:
-                            orig_required = []
-                            try:
-                                sp = spec.get('parameters') or {}
-                                rq = sp.get('required')
-                                if isinstance(rq, list):
-                                    orig_required = [str(x) for x in rq]
-                            except Exception:
-                                orig_required = []
-                            for key, sch in list(params['properties'].items()):
-                                if key in orig_required:
-                                    continue
-                                # Wrap existing schema in anyOf [..., {type: 'null'}]
-                                try:
-                                    if isinstance(sch, dict):
-                                        # If already anyOf, ensure null is included
-                                        if 'anyOf' in sch and isinstance(sch['anyOf'], list):
-                                            has_null = any(isinstance(it, dict) and it.get('type') == 'null' for it in sch['anyOf'])
-                                            if not has_null:
-                                                sch['anyOf'].append({'type': 'null'})
-                                        else:
-                                            # Preserve description at top-level if present
-                                            desc = sch.get('description')
-                                            first = dict(sch)
-                                            # Create new schema with anyOf
-                                            new_s = {'anyOf': [first, {'type': 'null'}]}
-                                            if desc is not None:
-                                                new_s['description'] = desc
-                                            params['properties'][key] = new_s
-                                except Exception:
-                                    # If anything goes wrong, leave schema as-is
-                                    continue
-                        except Exception:
-                            pass
-                    params['additionalProperties'] = False
-                    # Responses strict mode requires required == all property keys
-                    try:
-                        prop_keys = list((params.get('properties') or {}).keys())
-                    except Exception:
-                        prop_keys = []
-                    params['required'] = prop_keys
-
+                    params = strict_schema(
+                        spec.get('parameters') or {'type': 'object', 'properties': {}},
+                        nullable_optionals=allow_nullable,
+                    )
                     out.append({
                         'type': 'function',
                         'name': spec.get('name'),
@@ -806,7 +687,7 @@ class OpenAIResponsesProvider(APIProvider):
     def _build_mcp_tools(self) -> list:
         """Construct OpenAI Responses MCP tool entries from config/session params.
 
-        Docs (temp/openai_mcp.txt): tools entry shape examples:
+        Responses MCP tool entry shape:
           {
             "type": "mcp",
             "server_label": "dmcp",
@@ -870,7 +751,6 @@ class OpenAIResponsesProvider(APIProvider):
                 if isinstance(headers_val, dict):
                     headers_obj = headers_val
                 elif isinstance(headers_val, str) and headers_val.strip().startswith('{'):
-                    import json
                     try:
                         parsed = json.loads(headers_val)
                         if isinstance(parsed, dict):
@@ -908,7 +788,7 @@ class OpenAIResponsesProvider(APIProvider):
                         tool['allowed_tools'] = allow_list
 
                 # Optional approval policy: global or per-label
-                ra = params.get('mcp_require_approval') or params.get(f'mcp_require_approval_{label}')
+                ra = params.get(f'mcp_require_approval_{label}') or params.get('mcp_require_approval')
                 if isinstance(ra, str) and ra.strip().lower() in ('always', 'never'):
                     tool['require_approval'] = ra.strip().lower()
 
@@ -917,71 +797,3 @@ class OpenAIResponsesProvider(APIProvider):
                 continue
 
         return tools
-
-    # --- Usage and cost -------------------------------------------------
-    def get_usage(self) -> Dict[str, Any]:
-        stats = {
-            'total_in': self.running_usage.get('total_in', 0),
-            'total_out': self.running_usage.get('total_out', 0),
-            'total_tokens': self.running_usage.get('total_in', 0) + self.running_usage.get('total_out', 0),
-            'total_time': self.running_usage.get('total_time', 0.0),
-        }
-        # Include reasoning totals if tracked
-        if 'reasoning_tokens' in self.running_usage:
-            stats['total_reasoning'] = self.running_usage.get('reasoning_tokens', 0)
-        if self.turn_usage is not None:
-            ti = getattr(self.turn_usage, 'input_tokens', None)
-            to = getattr(self.turn_usage, 'output_tokens', None)
-            if ti is None:
-                ti = getattr(self.turn_usage, 'prompt_tokens', 0)
-            if to is None:
-                to = getattr(self.turn_usage, 'completion_tokens', 0)
-            stats.update({
-                'turn_in': ti or 0,
-                'turn_out': to or 0,
-                'turn_total': getattr(self.turn_usage, 'total_tokens', (ti or 0) + (to or 0)),
-            })
-            # Per-turn reasoning
-            try:
-                otd = getattr(self.turn_usage, 'output_tokens_details', None)
-                if isinstance(otd, dict):
-                    rt = otd.get('reasoning_tokens', None)
-                else:
-                    rt = getattr(otd, 'reasoning_tokens', None)
-                if rt is not None:
-                    stats['turn_reasoning'] = rt
-            except Exception:
-                pass
-        return stats
-
-    def reset_usage(self) -> None:
-        self.turn_usage = None
-        self.running_usage = {
-            'total_in': 0,
-            'total_out': 0,
-            'total_time': 0.0,
-        }
-
-    def get_cost(self) -> dict:
-        """Calculate cost using model pricing (same approach as OpenAI provider)."""
-        usage = self.get_usage()
-        if not usage:
-            return None
-        try:
-            price_unit = float(self.session.get_params().get('price_unit', 1000000))
-            price_in = float(self.session.get_params().get('price_in', 0))
-            price_out = float(self.session.get_params().get('price_out', 0))
-
-            input_cost = (usage['total_in'] / price_unit) * price_in
-            bill_reasoning = bool(self.session.get_params().get('bill_reasoning_as_output', True))
-            total_reasoning = usage.get('total_reasoning', 0)
-            billable_out = usage['total_out'] + (total_reasoning if bill_reasoning else 0)
-            output_cost = (billable_out / price_unit) * price_out
-
-            return {
-                'input_cost': round(input_cost, 6),
-                'output_cost': round(output_cost, 6),
-                'total_cost': round(input_cost + output_cost, 6),
-            }
-        except (ValueError, TypeError):
-            return None

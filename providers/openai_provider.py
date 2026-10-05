@@ -1,13 +1,18 @@
 import os
+import json
 from time import time
 import openai
 from openai import OpenAI
 from base_classes import APIProvider
 from actions.process_contexts_action import ProcessContextsAction
 from typing import List, Optional
+from copy import deepcopy
+from providers.openai_common import (
+    OpenAIUsage, excluded_parameters, extra_body, field, parse_tool_arguments, sdk_params,
+)
 
 
-class OpenAIProvider(APIProvider):
+class OpenAIProvider(OpenAIUsage, APIProvider):
     """
     OpenAI API handler
     """
@@ -19,16 +24,21 @@ class OpenAIProvider(APIProvider):
         self._last_stream_tool_calls = None  # capture tool calls seen during streaming
         self._last_finish_reason = None  # finish reason of the last response (stream or non-stream)
         self._last_reasoning = None  # reasoning_content accumulated from streamed deltas
+        self._reasoning_field = None
+        self._tool_calls_read = False
 
         # Initialize client with fresh params
         self.client = self._initialize_client()
 
-        # List of parameters that can be passed to the OpenAI API that we want to handle automatically
-        # todo: add list of items for include/exclude to the providers config
+        # Native parameters; backend extensions remain configurable via extra_body.
         self.parameters = [
             'model',
             'messages',
             'max_tokens',
+            'max_completion_tokens',
+            'reasoning_effort',
+            'verbosity',
+            'parallel_tool_calls',
             'frequency_penalty',
             'logit_bias',
             'logprobs',
@@ -47,12 +57,7 @@ class OpenAIProvider(APIProvider):
         ]
 
         # place to store usage data
-        self.turn_usage = None
-        self.running_usage = {
-            'total_in': 0,
-            'total_out': 0,
-            'total_time': 0.0
-        }
+        self._init_usage()
 
     def _initialize_client(self) -> OpenAI:
         """Initialize OpenAI client with current connection parameters"""
@@ -90,8 +95,9 @@ class OpenAIProvider(APIProvider):
             
             options['base_url'] = base_url
 
-        if 'timeout' in params and params['timeout'] is not None:
-            options['timeout'] = params['timeout']
+        for key in ('timeout', 'max_retries', 'organization', 'project'):
+            if params.get(key) is not None:
+                options[key] = params[key]
 
         return OpenAI(**options)
 
@@ -115,9 +121,15 @@ class OpenAIProvider(APIProvider):
         self._last_finish_reason = None
         self._last_reasoning = None
         self._last_stream_tool_calls = None
+        self._last_response = None
+        self._reasoning_field = None
+        self.turn_usage = None
+        self.last_api_param = None
+        self._tool_calls_read = False
         try:
             # Get fresh parameters instead of using cached self.params
             current_params = self.session.get_params()
+            self._usage_params = deepcopy(current_params)
             
             messages = self.assemble_message()
             api_parms = {}
@@ -126,9 +138,7 @@ class OpenAIProvider(APIProvider):
             is_reasoning = current_params.get('reasoning', False)
 
             # Get excluded parameters if any
-            excluded_params = []
-            if is_reasoning:
-                excluded_params = current_params.get('excluded_parameters', [])
+            excluded_params = excluded_parameters(current_params)
 
             # Filter out excluded parameters from self.parameters
             valid_params = [p for p in self.parameters if p not in excluded_params]
@@ -148,57 +158,28 @@ class OpenAIProvider(APIProvider):
             if api_model:
                 api_parms['model'] = api_model
 
-            # Handle reasoning model specific logic
-            if is_reasoning:
-                # Initialize or get extra_body
-                extra_body = api_parms.get('extra_body', {})
-                if isinstance(extra_body, str):
-                    # If extra_body is a string, attempt to evaluate it as a dict
-                    try:
-                        extra_body = eval(extra_body)
-                    except (SyntaxError, ValueError, NameError) as e:
-                        print(f"Warning: Could not evaluate extra_body string: {e}")
-                        extra_body = {}
-
-                # Handle max_tokens vs max_completion_tokens
-                max_completion_tokens = current_params.get('max_completion_tokens')
-                max_tokens = current_params.get('max_tokens')
-
-                if max_completion_tokens is not None:
-                    extra_body['max_completion_tokens'] = max_completion_tokens
-                    # Remove max_tokens if it exists in api_parms
-                    api_parms.pop('max_tokens', None)
-                elif max_tokens is not None:
-                    extra_body['max_completion_tokens'] = max_tokens
-                    # Remove max_tokens from api_parms since we're using it as max_completion_tokens
-                    api_parms.pop('max_tokens', None)
-
-                # Handle reasoning_effort
-                reasoning_effort = current_params.get('reasoning_effort')
-                if reasoning_effort is not None:
-                    # Normalize to lowercase
-                    extra_body['reasoning_effort'] = reasoning_effort.lower()
-
-                # Handle verbosity (low|medium|high) for reasoning-capable models
-                verbosity = current_params.get('verbosity')
-                if verbosity is not None:
-                    # Normalize to lowercase and pass through mechanically
-                    try:
-                        extra_body['verbosity'] = str(verbosity).lower()
-                    except Exception:
-                        # Be lenient: if it can't be lowercased cleanly, just pass as-is
-                        extra_body['verbosity'] = verbosity
-
-                # Update api_parms with modified extra_body
-                if extra_body:
-                    api_parms['extra_body'] = extra_body
+            # Native parameters work without the legacy reasoning flag. Keep its
+            # max_tokens alias for existing model configs and third-party APIs.
+            if 'max_completion_tokens' in api_parms:
+                api_parms.pop('max_tokens', None)
+            elif is_reasoning and 'max_tokens' in api_parms:
+                if 'max_completion_tokens' not in excluded_params:
+                    api_parms['max_completion_tokens'] = api_parms.pop('max_tokens')
+            for key in ('reasoning_effort', 'verbosity'):
+                if isinstance(api_parms.get(key), str):
+                    api_parms[key] = api_parms[key].lower()
+            if 'extra_body' in api_parms:
+                api_parms['extra_body'] = extra_body(api_parms['extra_body'])
+                for key in excluded_params:
+                    api_parms['extra_body'].pop(key, None)
 
             if 'stream' in api_parms and api_parms['stream'] is True:
                 # Only include stream_options when the backend supports it
-                if self.session.get_params().get('stream_options', True):
-                    api_parms['stream_options'] = {
-                        'include_usage': True,
-                    }
+                options = current_params.get('stream_options', True)
+                if options and 'stream_options' not in excluded_params:
+                    api_parms['stream_options'] = (
+                        deepcopy(options) if isinstance(options, dict) else {'include_usage': True}
+                    )
 
             # Attach official tool specs when enabled
             try:
@@ -213,25 +194,26 @@ class OpenAIProvider(APIProvider):
                 pass
 
             api_parms['messages'] = messages
+            for key in excluded_params:
+                api_parms.pop(key, None)
             self.last_api_param = api_parms
 
             # Make the API call and store the full response
-            response = self.client.chat.completions.create(**api_parms)
+            create = self.client.chat.completions.create
+            response = create(**sdk_params(create, api_parms))
             self._last_response = response
             try:
                 choices = getattr(response, 'choices', None)
                 if choices:
-                    self._last_finish_reason = getattr(choices[0], 'finish_reason', None)
+                    self._last_finish_reason = field(self._choice_zero(response), 'finish_reason')
                 else:
                     self._last_finish_reason = None
             except Exception:
                 self._last_finish_reason = None
-            # Capture reasoning_content from the message (thinking models)
+            # TensorFold/older servers use reasoning_content; newer vLLM uses reasoning.
             try:
-                msg = getattr(response.choices[0], 'message', None) if getattr(response, 'choices', None) else None
-                r = getattr(msg, 'reasoning_content', None) if msg else None
-                if r:
-                    self._last_reasoning = r
+                msg = field(self._choice_zero(response), 'message')
+                self._capture_reasoning(msg)
             except Exception:
                 pass
 
@@ -239,10 +221,12 @@ class OpenAIProvider(APIProvider):
                 return response
             else:
                 self._update_usage_stats(response)
-                return response.choices[0].message.content
+                msg = field(self._choice_zero(response), 'message')
+                return field(msg, 'content') or field(msg, 'refusal') or ''
 
         except Exception as e:
             self._last_response = None
+            self._last_finish_reason = 'error'
             error_msg = "An error occurred:\n"
             if isinstance(e, openai.APIConnectionError):
                 error_msg += "The server could not be reached\n"
@@ -298,156 +282,113 @@ class OpenAIProvider(APIProvider):
                     else:
                         error_msg += f"{key}: {value}\n"
 
-            print(error_msg)
+            try:
+                self.session.ui.emit('error', {'message': error_msg})
+            except Exception:
+                pass
             return error_msg
 
         finally:
             self.running_usage['total_time'] += time() - start_time
 
+    def _capture_reasoning(self, message):
+        """Capture a server's reasoning field and remember it for replay."""
+        preferred = self.session.get_params().get('reasoning_field')
+        names = [preferred] if preferred else []
+        names += [name for name in ('reasoning_content', 'reasoning') if name not in names]
+        for name in names:
+            value = field(message, name)
+            if isinstance(value, str) and value:
+                self._reasoning_field = name
+                self._last_reasoning = (self._last_reasoning or '') + value
+                break
+
+    @staticmethod
+    def _choice_zero(response):
+        return next((choice for choice in field(response, 'choices', []) or []
+                     if field(choice, 'index', 0) == 0), None)
+
+    def get_assistant_metadata(self):
+        """Keep the backend's reasoning field name with its transcript turn."""
+        if self._reasoning_field:
+            return {'reasoning_field': self._reasoning_field}
+        return {}
+
+    def _reasoning_for_turn(self, turn):
+        content = turn.get('reasoning_content') or turn.get('reasoning')
+        if not content:
+            return {}
+        name = (self.session.get_params().get('reasoning_field')
+                or turn.get('reasoning_field') or 'reasoning_content')
+        return {name: content}
+
     def stream_chat(self):
-        """
-        Use generator chaining to keep the response provider-agnostic
-        :return:
-        """
+        """Stream choice zero and expose calls only after a terminal finish."""
         response = self.chat()
         start_time = time()
-
         if isinstance(response, str):
-            yield response
+            if response:
+                yield response
             return
-
         if response is None:
             return
-
-        # Track tool_call deltas (Chat Completions streaming)
-        tool_calls_map = {}  # index -> {id, name, arguments(str)}
-
+        tool_calls_map = {}
+        completed = False
         try:
             for chunk in response:
-                # Handle content/tool_call chunks
-                if chunk.choices and len(chunk.choices) > 0:
-                    choice = chunk.choices[0]
-                    fr = getattr(choice, 'finish_reason', None)
-                    if fr is not None:
-                        self._last_finish_reason = fr
-                    delta = getattr(choice, 'delta', None)
-                    if delta is not None:
-                        # Text content delta
-                        if getattr(delta, 'content', None):
-                            yield delta.content
-                        # Reasoning deltas (thinking models)
-                        rdelta = getattr(delta, 'reasoning_content', None)
-                        if rdelta:
-                            if self._last_reasoning is None:
-                                self._last_reasoning = ''
-                            self._last_reasoning += rdelta
-                        # Tool call deltas
-                        tool_calls = getattr(delta, 'tool_calls', None)
-                        if tool_calls:
-                            try:
-                                for tc in tool_calls:
-                                    idx = getattr(tc, 'index', None)
-                                    fn = getattr(tc, 'function', None)
-                                    name = getattr(fn, 'name', None) if fn else None
-                                    args_chunk = getattr(fn, 'arguments', None) if fn else None
-                                    # Initialize record
-                                    rec = tool_calls_map.get(idx) or {'id': getattr(tc, 'id', None), 'name': None, 'arguments': ''}
-                                    if name:
-                                        rec['name'] = name
-                                    if args_chunk:
-                                        try:
-                                            rec['arguments'] = (rec.get('arguments') or '') + str(args_chunk)
-                                        except Exception:
-                                            pass
-                                    tool_calls_map[idx] = rec
-                            except Exception:
-                                pass
-
-                # Handle final usage stats in last chunk
-                if chunk.usage:
-                    self.turn_usage = chunk.usage
-                    self.running_usage['total_in'] += chunk.usage.prompt_tokens
-                    self.running_usage['total_out'] += chunk.usage.completion_tokens
-
-                    # Handle cached tokens
-                    if hasattr(chunk.usage, 'prompt_tokens_details'):
-                        prompt_details = chunk.usage.prompt_tokens_details
-                        # Support dict or object attributes
-                        cached = None
-                        if isinstance(prompt_details, dict):
-                            cached = prompt_details.get('cached_tokens')
-                        elif hasattr(prompt_details, 'cached_tokens'):
-                            cached = prompt_details.cached_tokens
-                        if cached is not None:
-                            if 'cached_tokens' not in self.running_usage:
-                                self.running_usage['cached_tokens'] = 0
-                            self.running_usage['cached_tokens'] += cached
-
-                    # Handle reasoning-specific metrics from completion_tokens_details
-                    if hasattr(chunk.usage, 'completion_tokens_details'):
-                        details = getattr(chunk.usage, 'completion_tokens_details')
-                        # Accept dict or object with attributes
-                        if isinstance(details, dict):
-                            rt = details.get('reasoning_tokens', 0)
-                            ap = details.get('accepted_prediction_tokens', 0)
-                            rp = details.get('rejected_prediction_tokens', 0)
-                        else:
-                            rt = getattr(details, 'reasoning_tokens', 0)
-                            ap = getattr(details, 'accepted_prediction_tokens', 0)
-                            rp = getattr(details, 'rejected_prediction_tokens', 0)
-
-                        if rt:
-                            self.running_usage['reasoning_tokens'] = self.running_usage.get('reasoning_tokens', 0) + rt
-                        if ap:
-                            self.running_usage['accepted_prediction_tokens'] = self.running_usage.get('accepted_prediction_tokens', 0) + ap
-                        if rp:
-                            self.running_usage['rejected_prediction_tokens'] = self.running_usage.get('rejected_prediction_tokens', 0) + rp
-
-        except Exception as e:
-            error_msg = "Stream interrupted:\n"
-            if hasattr(e, 'status_code'):
-                error_msg += f"Status code: {e.status_code}\n"
-            if hasattr(e, 'response'):
-                error_msg += f"Response: {e.response}\n"
-            error_msg += f"Error details: {str(e)}"
-            yield error_msg
-
+                choices = field(chunk, 'choices', []) or []
+                choice = next((c for c in choices if field(c, 'index', 0) == 0), None)
+                if choice is not None:
+                    finish = field(choice, 'finish_reason')
+                    if finish is not None:
+                        self._last_finish_reason = finish
+                        completed = finish in ('stop', 'tool_calls')
+                    delta = field(choice, 'delta')
+                    self._capture_reasoning(delta)
+                    text = field(delta, 'content') or field(delta, 'refusal')
+                    if text:
+                        yield text
+                    for call in field(delta, 'tool_calls', []) or []:
+                        index = field(call, 'index', 0) or 0
+                        fn = field(call, 'function')
+                        record = tool_calls_map.setdefault(index, {'id': None, 'name': None, 'arguments': ''})
+                        if field(call, 'id'):
+                            record['id'] = field(call, 'id')
+                        if field(fn, 'name'):
+                            name = field(fn, 'name')
+                            prior_name = record['name'] or ''
+                            if not prior_name or name.startswith(prior_name):
+                                record['name'] = name
+                            elif name != prior_name:
+                                record['name'] += name
+                        if field(fn, 'arguments'):
+                            record['arguments'] += field(fn, 'arguments')
+                self._record_usage(field(chunk, 'usage'))
+            if self._last_finish_reason is None:
+                self._last_finish_reason = 'error'
+                yield 'Stream interrupted: no terminal finish reason received'
+        except Exception as exc:
+            completed = False
+            self._last_finish_reason = 'error'
+            yield f'Stream interrupted: {exc}'
         finally:
+            close = getattr(response, 'close', None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
             self.running_usage['total_time'] += time() - start_time
-            # Finalize tool calls collected during streaming
-            try:
-                out = []
-                import json
-                for _, rec in sorted(tool_calls_map.items(), key=lambda kv: (kv[0] if kv[0] is not None else 0)):
-                    args_obj = {}
-                    args_str = rec.get('arguments') or ''
-                    parsed = False
-                    if args_str:
-                        try:
-                            args_obj = json.loads(args_str)
-                            # Valid JSON but not an object (list/scalar/null) is
-                            # invalid for tool arguments: reject it too.
-                            parsed = isinstance(args_obj, dict)
-                            if not parsed:
-                                args_obj = {}
-                        except Exception:
-                            # Invalid arguments (malformed or cut off): do not
-                            # silently convert to {} and execute with no arguments.
-                            args_obj = {}
-                    # An arguments string that fails to parse to an object (or a call
-                    # that produced no arguments string at all after deltas were seen)
-                    # is invalid. A parsed empty object ('{}') is legitimate.
-                    truncated_call = (bool(args_str) and not parsed) or (not args_str and rec.get('name'))
-                    out.append({
-                        'id': rec.get('id'),
-                        'name': rec.get('name'),
-                        'arguments': args_obj,
-                        # Arguments did not parse: likely cut off mid-write
-                        'truncated': truncated_call,
-                    })
-                self._last_stream_tool_calls = out
-            except Exception:
-                self._last_stream_tool_calls = None
+            out = []
+            for index in sorted(tool_calls_map):
+                record = tool_calls_map[index]
+                arguments, invalid = parse_tool_arguments(record['arguments'])
+                out.append({
+                    'id': record['id'], 'name': record['name'],
+                    'arguments': arguments,
+                    'truncated': invalid or not completed or not record['id'] or not record['name'],
+                })
+            self._last_stream_tool_calls = out
 
     def assemble_message(self) -> list:
         """
@@ -471,10 +412,9 @@ class OpenAIProvider(APIProvider):
             for idx, turn in enumerate(chat.get()):
                 # Assistant tool calls: include 'tool_calls' array on assistant message
                 if turn.get('role') == 'assistant' and 'tool_calls' in turn:
-                    import json
                     tool_calls_out = []
                     for tc in (turn.get('tool_calls') or []):
-                        fn_name = tc.get('name')
+                        fn_name = tc.get('api_name') or tc.get('name')
                         args = tc.get('arguments')
                         # Chat Completions expects arguments as a JSON-encoded string
                         if not isinstance(args, str):
@@ -490,10 +430,10 @@ class OpenAIProvider(APIProvider):
                                 'arguments': args,
                             }
                         })
-                    msg_out = {'role': 'assistant', 'content': None, 'tool_calls': tool_calls_out}
+                    msg_out = {'role': 'assistant', 'content': turn.get('message') or None,
+                               'tool_calls': tool_calls_out}
                     # Retransmit stored reasoning so the model keeps its chain of thought
-                    if turn.get('reasoning_content'):
-                        msg_out['reasoning_content'] = turn.get('reasoning_content')
+                    msg_out.update(self._reasoning_for_turn(turn))
                     message.append(msg_out)
                     continue
 
@@ -528,8 +468,8 @@ class OpenAIProvider(APIProvider):
                     if turn_content.strip() == '':
                         turn_content = ' '  # Replace empty content with a space
                     msg_out = {'role': turn['role'], 'content': turn_content}
-                    if turn.get('role') == 'assistant' and turn.get('reasoning_content'):
-                        msg_out['reasoning_content'] = turn.get('reasoning_content')
+                    if turn.get('role') == 'assistant':
+                        msg_out.update(self._reasoning_for_turn(turn))
                     message.append(msg_out)
                 else:
                     # Modern format with content array
@@ -571,8 +511,8 @@ class OpenAIProvider(APIProvider):
                                 content.insert(0, {'type': 'text', 'text': text_context})
 
                     msg_out = {'role': turn['role'], 'content': content}
-                    if turn.get('role') == 'assistant' and turn.get('reasoning_content'):
-                        msg_out['reasoning_content'] = turn.get('reasoning_content')
+                    if turn.get('role') == 'assistant':
+                        msg_out.update(self._reasoning_for_turn(turn))
                     message.append(msg_out)
 
         return message
@@ -598,59 +538,49 @@ class OpenAIProvider(APIProvider):
         Shape: [{"id": str, "name": str, "arguments": dict}]
         """
         # Prefer tool calls collected from streaming
+        if getattr(self, '_tool_calls_read', False):
+            return []
+        self._tool_calls_read = True
         if self._last_stream_tool_calls:
-            return list(self._last_stream_tool_calls)
+            calls = self._last_stream_tool_calls
+            self._last_stream_tool_calls = None
+            return [self._normalize_call(call) for call in calls]
         resp = self._last_response
         out = []
         try:
             if not resp or not getattr(resp, 'choices', None):
                 return out
-            choice0 = resp.choices[0]
+            choice0 = self._choice_zero(resp)
             msg = getattr(choice0, 'message', None)
             tool_calls = getattr(msg, 'tool_calls', None) if msg else None
             if not tool_calls:
                 return out
-            import json
             for tc in tool_calls:
                 fn = getattr(tc, 'function', None)
                 name = getattr(fn, 'name', None) if fn else None
                 args = getattr(fn, 'arguments', None) if fn else None
-                # Validate: arguments must parse to a JSON object. Anything else
-                # (unparseable string, list, scalar, null) is a malformed or
-                # truncated call and must be rejected, not executed with {}.
-                truncated_call = False
-                if isinstance(args, str) and args:
-                    try:
-                        args_obj = json.loads(args)
-                        truncated_call = not isinstance(args_obj, dict)
-                        if truncated_call:
-                            args_obj = {}
-                    except Exception:
-                        args_obj = {}
-                        truncated_call = True
-                elif isinstance(args, dict):
-                    args_obj = args
-                else:
-                    # Missing/None arguments: reject, matching the streaming path.
-                    # Legitimate empty arguments arrive as '{}' or an explicit {}.
-                    args_obj = {}
-                    truncated_call = True
-                # Map API-safe tool names back to canonical names when available
-                try:
-                    mapping = self.session.get_user_data('__tool_api_to_cmd__') or {}
-                    if isinstance(mapping, dict) and isinstance(name, str) and name in mapping:
-                        name = mapping.get(name, name)
-                except Exception:
-                    pass
-                out.append({
+                args_obj, truncated_call = parse_tool_arguments(args)
+                out.append(self._normalize_call({
                     'id': getattr(tc, 'id', None),
                     'name': name,
                     'arguments': args_obj,
-                    'truncated': truncated_call,
-                })
+                    'truncated': (truncated_call or not name or not getattr(tc, 'id', None)
+                                  or self._last_finish_reason in ('length', 'content_filter')),
+                }))
         except Exception:
             return []
         return out
+
+    def _normalize_call(self, call):
+        """Separate the dispatch name from the API-safe name needed for replay."""
+        call = dict(call)
+        call['api_name'] = call['name']
+        try:
+            mapping = self.session.get_user_data('__tool_api_to_cmd__') or {}
+            call['name'] = mapping.get(call['name'], call['name'])
+        except (AttributeError, TypeError):
+            pass
+        return call
 
     # Provider-native tool spec construction
     def get_tools_for_request(self) -> list:
@@ -677,153 +607,19 @@ class OpenAIProvider(APIProvider):
             return []
 
     def _update_usage_stats(self, response):
-        """Update usage tracking with both standard and reasoning-specific metrics"""
-        if response.usage:
-            self.turn_usage = response.usage
-            self.running_usage['total_in'] += response.usage.prompt_tokens
-            self.running_usage['total_out'] += response.usage.completion_tokens
-
-            # Handle cached tokens from prompt_tokens_details (support dict or object)
-            if hasattr(response.usage, 'prompt_tokens_details'):
-                prompt_details = getattr(response.usage, 'prompt_tokens_details')
-                cached = None
-                if isinstance(prompt_details, dict):
-                    cached = prompt_details.get('cached_tokens')
-                elif hasattr(prompt_details, 'cached_tokens'):
-                    cached = prompt_details.cached_tokens
-                if cached is not None:
-                    if 'cached_tokens' not in self.running_usage:
-                        self.running_usage['cached_tokens'] = 0
-                    self.running_usage['cached_tokens'] += cached
-
-            # Handle reasoning-specific metrics (support dict or object)
-            if hasattr(response.usage, 'completion_tokens_details'):
-                details = getattr(response.usage, 'completion_tokens_details')
-
-                if isinstance(details, dict):
-                    rt = details.get('reasoning_tokens', 0)
-                    ap = details.get('accepted_prediction_tokens', 0)
-                    rp = details.get('rejected_prediction_tokens', 0)
-                else:
-                    rt = getattr(details, 'reasoning_tokens', 0)
-                    ap = getattr(details, 'accepted_prediction_tokens', 0)
-                    rp = getattr(details, 'rejected_prediction_tokens', 0)
-
-                # Initialize if missing, then accumulate
-                if 'reasoning_tokens' not in self.running_usage:
-                    self.running_usage['reasoning_tokens'] = 0
-                if 'accepted_prediction_tokens' not in self.running_usage:
-                    self.running_usage['accepted_prediction_tokens'] = 0
-                if 'rejected_prediction_tokens' not in self.running_usage:
-                    self.running_usage['rejected_prediction_tokens'] = 0
-
-                self.running_usage['reasoning_tokens'] += rt
-                self.running_usage['accepted_prediction_tokens'] += ap
-                self.running_usage['rejected_prediction_tokens'] += rp
-
-    def get_usage(self):
-        """Get usage statistics including both standard and reasoning metrics"""
-        stats = {
-            'total_in': self.running_usage['total_in'],
-            'total_out': self.running_usage['total_out'],
-            'total_tokens': self.running_usage['total_in'] + self.running_usage['total_out'],
-            'total_time': self.running_usage['total_time']
-        }
-
-        # Include cached tokens if available
-        if 'cached_tokens' in self.running_usage:
-            stats['total_cached'] = self.running_usage['cached_tokens']
-
-        # Include reasoning metrics if they exist in running_usage
-        reasoning_metrics = [
-            ('total_reasoning', 'reasoning_tokens'),
-            ('total_accepted_predictions', 'accepted_prediction_tokens'),
-            ('total_rejected_predictions', 'rejected_prediction_tokens')
-        ]
-
-        for stat_name, metric_name in reasoning_metrics:
-            if metric_name in self.running_usage:
-                stats[stat_name] = self.running_usage[metric_name]
-
-        if self.turn_usage:
-            stats.update({
-                'turn_in': self.turn_usage.prompt_tokens,
-                'turn_out': self.turn_usage.completion_tokens,
-                'turn_total': self.turn_usage.total_tokens
-            })
-
-            # Handle per-turn cached tokens (support dict or object)
-            if hasattr(self.turn_usage, 'prompt_tokens_details'):
-                prompt_details = getattr(self.turn_usage, 'prompt_tokens_details')
-                cached = None
-                if isinstance(prompt_details, dict):
-                    cached = prompt_details.get('cached_tokens')
-                elif hasattr(prompt_details, 'cached_tokens'):
-                    cached = prompt_details.cached_tokens
-                if cached is not None:
-                    stats['turn_cached'] = cached
-
-            # Include per-turn reasoning metrics if available (support dict or object)
-            if hasattr(self.turn_usage, 'completion_tokens_details'):
-                details = getattr(self.turn_usage, 'completion_tokens_details')
-
-                if isinstance(details, dict):
-                    turn_metrics = [
-                        ('turn_reasoning', 'reasoning_tokens'),
-                        ('turn_accepted_predictions', 'accepted_prediction_tokens'),
-                        ('turn_rejected_predictions', 'rejected_prediction_tokens')
-                    ]
-                    for stat_name, metric_name in turn_metrics:
-                        if metric_name in details:
-                            stats[stat_name] = details[metric_name]
-                else:
-                    rt = getattr(details, 'reasoning_tokens', None)
-                    ap = getattr(details, 'accepted_prediction_tokens', None)
-                    rp = getattr(details, 'rejected_prediction_tokens', None)
-                    if rt is not None:
-                        stats['turn_reasoning'] = rt
-                    if ap is not None:
-                        stats['turn_accepted_predictions'] = ap
-                    if rp is not None:
-                        stats['turn_rejected_predictions'] = rp
-
-        return stats
+        """Record SDK usage, including nullable detail fields."""
+        self._record_usage(field(response, 'usage'))
 
     def reset_usage(self):
-        """Reset all usage metrics including reasoning-specific ones"""
-        self.turn_usage = None
-        self.running_usage = {
-            'total_in': 0,
-            'total_out': 0,
-            'total_time': 0.0,
-            'cached_tokens': 0,
-            'reasoning_tokens': 0,
-            'accepted_prediction_tokens': 0,
-            'rejected_prediction_tokens': 0
-        }
+        """Clear accounting and any unconsumed response state."""
+        super().reset_usage()
+        self._last_response = None
+        self._last_finish_reason = None
+        self._last_reasoning = None
+        self._reasoning_field = None
+        self._last_stream_tool_calls = None
+        self._tool_calls_read = False
 
-    def get_cost(self) -> dict:
-        """Calculate cost for OpenAI API usage"""
-        usage = self.get_usage()
-        if not usage:
-            return None
-
-        try:
-            price_unit = float(self.session.get_params().get('price_unit', 1000000))
-            price_in = float(self.session.get_params().get('price_in', 0))
-            price_out = float(self.session.get_params().get('price_out', 0))
-
-            input_cost = (usage['total_in'] / price_unit) * price_in
-            # Optionally bill reasoning tokens as output tokens (default True)
-            bill_reasoning = bool(self.session.get_params().get('bill_reasoning_as_output', True))
-            total_reasoning = usage.get('total_reasoning', 0)
-            billable_out = usage['total_out'] + (total_reasoning if bill_reasoning else 0)
-            output_cost = (billable_out / price_unit) * price_out
-
-            return {
-                'input_cost': round(input_cost, 6),
-                'output_cost': round(output_cost, 6),
-                'total_cost': round(input_cost + output_cost, 6)
-            }
-        except (ValueError, TypeError):
-            return None
+    def cleanup(self):
+        """Close the SDK client when a session ends or rebuilds its provider."""
+        self.client.close()
