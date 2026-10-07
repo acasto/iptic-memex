@@ -1,4 +1,3 @@
-import traceback
 from time import time
 from base_classes import APIProvider
 from llama_cpp import Llama
@@ -210,13 +209,6 @@ class LlamaCppProvider(APIProvider):
                     self.running_usage['total_out'] += self.turn_usage['completion_tokens']
                 return response['choices'][0]['message']['content']
 
-        except Exception as e:
-            print("An exception occurred in llama-cpp provider:")
-            traceback.print_exc()
-            if self.last_api_param is not None:
-                print("Last API call parameters:")
-                for key, value in self.last_api_param.items():
-                    print(f"\t{key}: {value}")
         finally:
             self.running_usage['total_time'] += time() - start_time
 

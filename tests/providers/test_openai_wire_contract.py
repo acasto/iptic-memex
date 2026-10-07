@@ -115,6 +115,8 @@ def make_provider(monkeypatch, provider_class, session, replies):
         reply = next(iterator)
         if isinstance(reply, Exception):
             raise reply
+        if isinstance(reply, httpx.Response):
+            return reply
         if isinstance(reply, str):
             return httpx.Response(200, headers={'content-type': 'text/event-stream'}, text=reply)
         return httpx.Response(200, json=reply)
@@ -670,3 +672,112 @@ def test_older_sdk_signatures_still_forward_new_wire_fields(monkeypatch, provide
         assert requests[0]['text']['verbosity'] == 'low'
         assert requests[0]['store'] is False
         assert requests[0]['prompt_cache_key'] == 'cache-key'
+
+
+def cache_write_reply(provider_class, stream=False, headers=None, writes=300):
+    """Return a realistic cache usage response, including HTTP accounting headers."""
+    details = {'cached_tokens': 400, 'cache_write_tokens': writes}
+    if provider_class is OpenAIProvider:
+        usage = {'prompt_tokens': 1000, 'completion_tokens': 10, 'total_tokens': 1010,
+                 'prompt_tokens_details': details}
+        reply = (chat_sse([chat_chunk({'content': 'Done'}, finish_reason='stop'),
+                          chat_chunk(choices=[], usage=usage)])
+                 if stream else chat_response(usage=usage))
+    else:
+        usage = {'input_tokens': 1000, 'output_tokens': 10, 'total_tokens': 1010,
+                 'input_tokens_details': details}
+        final = response([message()], usage=usage)
+        reply = sse([{'type': 'response.completed', 'response': final}]) if stream else final
+    if stream:
+        return httpx.Response(200, headers={'content-type': 'text/event-stream', **(headers or {})},
+                              text=reply)
+    return httpx.Response(200, headers=headers or {}, json=reply)
+
+
+@pytest.mark.parametrize('provider_class', [OpenAIProvider, OpenAIResponsesProvider])
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('headers,expected_tiers,input_cost', [
+    ({'Msh-Usage-Cache-Write-Tokens-5m': '100',
+      'Msh-Usage-Cache-Write-Tokens-1h': '200'}, (100, 200), 0.00262),
+    ({'Msh-Usage-Cache-Write-Tokens-5m': '300'}, (300, 0), 0.00222),
+    ({'Msh-Usage-Cache-Write-Tokens-1h': '300'}, (0, 300), 0.00282),
+    ({}, (0, 0), 0.00252),
+    ({'Msh-Usage-Cache-Write-Tokens-5m': '100'}, (100, 0), 0.00242),
+    ({'Msh-Usage-Cache-Write-Tokens-5m': 'invalid',
+      'Msh-Usage-Cache-Write-Tokens-1h': '-20'}, (0, 0), 0.00252),
+])
+def test_cache_write_tiers_use_actual_headers_without_double_counting(
+        monkeypatch, provider_class, stream, headers, expected_tiers, input_cost):
+    session = Session({'stream': stream, 'price_in': 3, 'price_cache_in': 0.3,
+                       'price_out': 12, 'price_cache_write': 5,
+                       'price_cache_write_5m': 4, 'price_cache_write_1h': 6,
+                       'extra_body': {'prompt_cache_options': {'mode': 'implicit', 'ttl': '1h'}}})
+    reply = cache_write_reply(provider_class, stream, headers)
+    provider, requests = make_provider(monkeypatch, provider_class, session, [reply])
+    text = ''.join(provider.stream_chat()) if stream else provider.chat()
+    assert text == 'Done'
+    stats = provider.get_usage()
+    assert stats['turn_in'] == 1000 and stats['turn_total'] == 1010
+    assert stats['turn_cached'] == 400 and stats['turn_cache_writes'] == 300
+    assert (stats['turn_cache_writes_5m'], stats['turn_cache_writes_1h']) == expected_tiers
+    assert provider.get_cost() == {'input_cost': input_cost, 'output_cost': 0.00012,
+                                   'total_cost': round(input_cost + 0.00012, 6)}
+    assert requests[0]['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '1h'}
+    # Restoring/rebuilding must preserve the original request's rates and subsets.
+    session.params.update(price_in=100, price_cache_write_1h=100)
+    provider.reset_usage()
+    provider.set_usage(stats)
+    assert provider.get_usage()['total_cache_writes'] == 300
+    assert provider.get_usage()['total_cache_writes_1h'] == expected_tiers[1]
+    assert provider.get_cost()['input_cost'] == input_cost
+
+
+@pytest.mark.parametrize('provider_class', [OpenAIProvider, OpenAIResponsesProvider])
+def test_cache_write_headers_do_not_leak_into_the_next_request(monkeypatch, provider_class):
+    session = Session({'price_in': 3, 'price_cache_in': 0.3, 'price_cache_write_1h': 6})
+    provider, _ = make_provider(monkeypatch, provider_class, session, [
+        cache_write_reply(provider_class, headers={'Msh-Usage-Cache-Write-Tokens-1h': '300'}),
+        cache_write_reply(provider_class, writes=0), httpx.ConnectError('Offline failure'),
+    ])
+    assert provider.chat() == 'Done'
+    session.params.update(price_in=4, price_cache_in=0.4, price_cache_write_1h=12)
+    assert provider.chat() == 'Done'
+    assert provider.get_usage()['turn_cache_writes_1h'] == 0
+    assert provider.get_usage()['total_cache_writes_1h'] == 300
+    assert provider.get_cost()['input_cost'] == 0.00538
+    provider.chat()
+    assert 'turn_cache_writes_1h' not in provider.get_usage()
+    assert provider.get_usage()['total_cache_writes_1h'] == 300
+
+
+@pytest.mark.parametrize('provider_class', [OpenAIProvider, OpenAIResponsesProvider])
+def test_cache_write_missing_usage_count_can_use_headers(monkeypatch, provider_class):
+    session = Session({'price_in': 3, 'price_cache_in': 0.3, 'price_cache_write_1h': 6})
+    provider, _ = make_provider(monkeypatch, provider_class, session, [cache_write_reply(
+        provider_class, headers={'Msh-Usage-Cache-Write-Tokens-1h': '300'}, writes=None)])
+    assert provider.chat() == 'Done'
+    assert provider.get_usage()['turn_cache_writes'] == 300
+    assert provider.get_cost()['input_cost'] == 0.00282
+
+
+@pytest.mark.parametrize('provider_class', [OpenAIProvider, OpenAIResponsesProvider])
+def test_cache_write_unconfigured_rates_preserve_input_pricing(monkeypatch, provider_class):
+    session = Session({'price_in': 3, 'price_cache_in': 0.3})
+    provider, _ = make_provider(monkeypatch, provider_class, session, [cache_write_reply(
+        provider_class, headers={'Msh-Usage-Cache-Write-Tokens-1h': '300'})])
+    assert provider.chat() == 'Done'
+    assert provider.get_cost()['input_cost'] == 0.00192
+
+
+def test_moonshot_alias_loads_the_shared_provider_without_subclass():
+    from configparser import ConfigParser
+    from pathlib import Path
+    from component_registry import ComponentRegistry
+
+    root = Path(__file__).resolve().parents[2]
+    config = ConfigParser(interpolation=None)
+    config.read(root / 'config.ini')
+    registry = ComponentRegistry(SimpleNamespace(base_config=config))
+    cls = registry.load_provider_class('Moonshot')
+    assert cls is not None and cls.__name__ == 'OpenAIProvider'
+    assert not (root / 'providers' / 'moonshot_provider.py').exists()

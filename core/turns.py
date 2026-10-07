@@ -26,6 +26,8 @@ class TurnOptions:
     # is expected to have shown pre-prompt updates already.
     suppress_context_print: bool = False
     agent_status_tags: Optional[bool] = None
+    stdin_as_message: bool = False
+    execute_tools: bool = True
 
 
 @dataclass
@@ -40,6 +42,9 @@ class TurnResult:
     # True when the final response hit the token budget (finish_reason 'length')
     # instead of completing, e.g. reasoning consumed the whole budget.
     truncated: bool = False
+    status: str = 'completed'
+    error: Optional[str] = None
+    stop_reason: Optional[str] = None
 
 
 def _new_trace_id() -> str:
@@ -76,6 +81,7 @@ class TurnRunner:
         stopped_on_sentinel = False
         any_tools = False
         any_truncated = False
+        outcome = {'status': 'completed', 'error': None, 'stop_reason': None}
 
         # Reset per-turn cancellation flag
         try:
@@ -117,6 +123,13 @@ class TurnRunner:
         initial_auto = bool(self.session.get_flag("auto_submit"))
         user_meta = self._begin_turn_meta(role="user", kind="auto_submit" if initial_auto else "user")
         contexts = self._process_contexts(auto_submit=initial_auto, suppress_print=opts.suppress_context_print)
+        if opts.stdin_as_message and not initial_auto:
+            for index, context in enumerate(contexts):
+                meta = context.get('context').get() if context.get('context') else {}
+                if meta.get('name') == 'stdin':
+                    input_text = meta.get('content', '')
+                    contexts = contexts[:index] + contexts[index + 1:]
+                    break
         if initial_auto:
             self.session.set_flag("auto_submit", False)
         self._add_user_message("" if initial_auto else (input_text or ""), contexts, user_meta)
@@ -173,6 +186,9 @@ class TurnRunner:
             if self._detect_truncated():
                 any_truncated = True
                 self._warn_truncated()
+            outcome = self._assistant_outcome(raw)
+            if outcome['status'] in ('failed', 'cancelled'):
+                break
             # If the turn was cancelled mid-stream, stop without executing tools
             try:
                 if self.session.get_flag('turn_cancelled'):
@@ -184,11 +200,19 @@ class TurnRunner:
                     break
             except Exception:
                 pass
-            if display and self._contains_sentinel(display, opts.sentinels):
+            if (outcome['status'] == 'completed' and display
+                    and self._contains_sentinel(display, opts.sentinels)):
                 stopped_on_sentinel = True
+                outcome['stop_reason'] = 'sentinel'
                 break
-            ran = self._execute_tools(sanitized or display or raw or "")
+            ran = (self._execute_tools(sanitized or display or raw or "")
+                   if opts.execute_tools else False)
             any_tools = any_tools or ran
+            tool_outcome = self._assistant_outcome(raw)
+            if tool_outcome['status'] in ('failed', 'cancelled'):
+                outcome = tool_outcome
+            if outcome['status'] != 'completed':
+                break
             if allow_auto_submit and self.session.get_flag("auto_submit"):
                 meta2 = self._begin_turn_meta(role="user", kind="auto_submit")
                 contexts2 = self._process_contexts(auto_submit=True, suppress_print=opts.suppress_context_print)
@@ -227,6 +251,7 @@ class TurnRunner:
             stopped_on_sentinel=stopped_on_sentinel,
             ran_tools=any_tools,
             truncated=any_truncated,
+            **outcome,
         )
 
     def run_agent_loop(
@@ -235,6 +260,7 @@ class TurnRunner:
         *,
         prepare_prompt: Optional[Callable[[Any, int, int, bool], None]] = None,
         options: Optional[TurnOptions] = None,
+        message: Optional[str] = None,
     ) -> TurnResult:
         opts = options or TurnOptions()
         params = self.session.get_params() or {}
@@ -248,6 +274,7 @@ class TurnRunner:
         stopped_on_sentinel = False
         any_tools = False
         any_truncated = False
+        outcome = {'status': 'completed', 'error': None, 'stop_reason': 'steps'}
 
         # Reset per-run cancellation flag
         try:
@@ -315,7 +342,7 @@ class TurnRunner:
             try:
                 for idx, c in enumerate(contexts or []):
                     meta = c.get("context").get() if isinstance(c, dict) and c.get("context") else None
-                    if meta and meta.get("name") == "stdin":
+                    if message is None and meta and meta.get("name") == "stdin":
                         stdin_content = meta.get("content")
                         stdin_idx = idx
                         break
@@ -333,7 +360,8 @@ class TurnRunner:
                 except Exception:
                     pass
 
-            self._add_user_message(stdin_content or "", contexts, user_meta)
+            task_text = message if i == 0 and message is not None else stdin_content or ""
+            self._add_user_message(task_text, contexts, user_meta)
             self._clear_temp_contexts()
 
             if opts.verbose_dump:
@@ -356,6 +384,9 @@ class TurnRunner:
             if self._detect_truncated():
                 any_truncated = True
                 self._warn_truncated()
+            outcome = self._assistant_outcome(raw)
+            if outcome['status'] in ('failed', 'cancelled'):
+                break
 
             text_for_stop = display or sanitized or raw or ""
             # If cancelled mid-stream, stop early and do not execute tools
@@ -369,15 +400,24 @@ class TurnRunner:
                     break
             except Exception:
                 pass
-            if text_for_stop and self._contains_sentinel(text_for_stop, opts.sentinels):
+            if (outcome['status'] == 'completed' and text_for_stop
+                    and self._contains_sentinel(text_for_stop, opts.sentinels)):
                 stopped_on_sentinel = True
+                outcome['stop_reason'] = 'sentinel'
                 break
 
             ran = self._execute_tools(sanitized or display or raw or "")
             any_tools = any_tools or ran
+            tool_outcome = self._assistant_outcome(raw)
+            if tool_outcome['status'] in ('failed', 'cancelled'):
+                outcome = tool_outcome
+            if outcome['status'] != 'completed':
+                break
 
             if (not final_turn) and opts.early_stop_no_tools and (not ran):
+                outcome['stop_reason'] = 'no_tools'
                 break
+            outcome['stop_reason'] = 'steps' if ran else 'no_tools'
 
         if last_display and output_mode == "final":
             last_display = self._strip_sentinels(last_display, opts.sentinels)
@@ -395,6 +435,7 @@ class TurnRunner:
             stopped_on_sentinel=stopped_on_sentinel,
             ran_tools=any_tools,
             truncated=any_truncated,
+            **outcome,
         )
 
     # ---- Helpers -------------------------------------------------------
@@ -569,8 +610,10 @@ class TurnRunner:
             pass
 
     def _assistant_turn(self, *, stream: bool, output_mode: Optional[str]) -> Tuple[str, str, str]:
+        self._last_call_error = None
         provider = self.session.get_provider()
         if not provider:
+            self._last_call_error = 'No provider available'
             return "", "", ""
         # Log provider start
         meta = None
@@ -589,15 +632,17 @@ class TurnRunner:
             out_action = self.session.get_action("assistant_output")
             try:
                 stream_iter = provider.stream_chat()
-            except Exception:
+            except (Exception, KeyboardInterrupt) as exc:
+                self._record_call_error(exc)
                 stream_iter = None
 
             raw = ""
             if out_action and stream_iter is not None:
                 try:
                     raw = out_action.run(stream_iter, spinner_message="") or ""
-                except Exception:
-                    raw = ""
+                except (Exception, KeyboardInterrupt) as exc:
+                    self._record_call_error(exc)
+                    raw = (getattr(out_action, "get_raw_output", lambda: "")() or "")
                 try:
                     display = (getattr(out_action, "get_display_output", None) or (lambda: None))() or raw
                 except Exception:
@@ -608,7 +653,8 @@ class TurnRunner:
                     sanitized = raw
                 try:
                     payload = dict(meta or {})
-                    payload.update({'result': 'ok', 'bytes': len(raw or '')})
+                    payload.update({'result': 'error' if self._last_call_error else 'ok',
+                                    'bytes': len(raw or '')})
                     self.session.utils.logger.provider_done(payload, component='core.turns')
                 except Exception:
                     pass
@@ -618,11 +664,12 @@ class TurnRunner:
                     self.utils.output.write(chunk, end="", flush=True)
                     raw += chunk
                 self.utils.output.write("")
-            except Exception:
-                pass
+            except (Exception, KeyboardInterrupt) as exc:
+                self._record_call_error(exc)
             try:
                 payload = dict(meta or {})
-                payload.update({'result': 'ok', 'bytes': len(raw or '')})
+                payload.update({'result': 'error' if self._last_call_error else 'ok',
+                                    'bytes': len(raw or '')})
                 self.session.utils.logger.provider_done(payload, component='core.turns')
             except Exception:
                 pass
@@ -638,7 +685,8 @@ class TurnRunner:
                 pass
             _st = time.time()
             raw_text = provider.chat()
-        except Exception as e:
+        except (Exception, KeyboardInterrupt) as e:
+            self._record_call_error(e)
             raw_text = f"[error] {e}"
         finally:
             try:
@@ -656,7 +704,8 @@ class TurnRunner:
             duration_ms = None
         try:
             payload = dict(meta or {})
-            payload.update({'result': 'ok', 'bytes': len(raw_text or '')})
+            payload.update({'result': 'error' if self._last_call_error else 'ok',
+                            'bytes': len(raw_text or '')})
             if duration_ms is not None:
                 payload['duration_ms'] = duration_ms
             self.session.utils.logger.provider_done(payload, component='core.turns')
@@ -671,6 +720,37 @@ class TurnRunner:
             display_text = raw_text
             sanitized_text = raw_text
         return str(raw_text), str(display_text), str(sanitized_text)
+
+    def _record_call_error(self, exc: BaseException) -> None:
+        self._last_call_error = str(exc) or type(exc).__name__
+        if isinstance(exc, KeyboardInterrupt):
+            self.session.set_flag('turn_cancelled', True)
+
+    def _assistant_outcome(self, text: Optional[str]) -> dict:
+        """Classify execution using provider metadata, never error-like prose."""
+        try:
+            cancelled = self.session.get_flag('turn_cancelled')
+        except (AttributeError, TypeError):
+            cancelled = False
+        try:
+            token = self.session.get_cancellation_token()
+            cancelled = cancelled or (token and token.is_cancelled())
+        except (AttributeError, TypeError):
+            pass
+        provider = self.session.get_provider()
+        reason = None
+        if provider and hasattr(provider, 'get_finish_reason'):
+            reason = provider.get_finish_reason()
+        error = getattr(self, '_last_call_error', None)
+        if cancelled or reason == 'cancelled':
+            return {'status': 'cancelled', 'error': 'Run cancelled', 'stop_reason': 'cancelled'}
+        if error or reason in ('error', 'failed', 'content_filter', 'refusal', 'incomplete'):
+            return {'status': 'failed', 'error': error or text or f'Provider stopped: {reason}',
+                    'stop_reason': 'error' if error else reason}
+        if reason in ('length', 'max_tokens', 'pause_turn'):
+            return {'status': 'incomplete', 'error': f'Provider stopped: {reason}',
+                    'stop_reason': reason}
+        return {'status': 'completed', 'error': None, 'stop_reason': reason}
 
     def _record_assistant(self, raw_text: str) -> None:
         try:
@@ -1493,16 +1573,19 @@ class TurnRunner:
 
     def _dump_messages(self, *, header: str, include_prompt: bool, omit_last_assistant: bool) -> None:
         try:
-            self.utils.output.write(f"\n==== {header} ====")
+            import sys
+            diagnostic = getattr(self.utils.output, 'diagnostic',
+                                 lambda text: print(text, file=sys.stderr))
+            diagnostic(f"\n==== {header} ====")
             provider = self.session.get_provider()
             if provider and hasattr(provider, 'get_messages'):
                 msgs = provider.get_messages()
             else:
                 msgs = []
             if not msgs:
-                self.utils.output.write("(no provider-visible messages)")
+                diagnostic("(no provider-visible messages)")
                 return
             import json
-            self.utils.output.write(json.dumps(msgs, indent=2, ensure_ascii=False))
+            diagnostic(json.dumps(msgs, indent=2, ensure_ascii=False))
         except Exception:
             pass

@@ -41,23 +41,31 @@ def _normalize_trace(trace: Any) -> Dict[str, Any]:
 @dataclass
 class ModeResult:
     last_text: Optional[str]
-    raw: Optional[str]
+    raw: Optional[Any]
     turns: int
     cost: Optional[Dict[str, Any]]
     usage: Optional[Dict[str, Any]]
     events: List[Dict[str, Any]]
     # True when the run's final response hit the token budget (finish_reason 'length')
     truncated: bool = False
+    status: str = 'completed'
+    error: Optional[str] = None
+    stop_reason: Optional[str] = None
+
+
+def _outcome(result) -> dict:
+    """Carry runner outcomes through internal and external mode adapters."""
+    return {name: getattr(result, name, default) for name, default in (
+        ('status', 'completed'), ('error', None), ('stop_reason', None),
+    )}
 
 
 def _attach_contexts(session, contexts: Optional[Iterable[Tuple[str, Any]]]) -> None:
     if not contexts:
         return
     for kind, value in contexts:
-        try:
-            session.add_context(kind, value)
-        except Exception:
-            continue
+        if session.add_context(kind, value) is None:
+            raise ValueError(f"Could not load {kind} context: {value}")
 
 
 def _agent_status_tags_enabled(session, overrides: Optional[Dict[str, Any]] = None) -> bool:
@@ -94,12 +102,15 @@ def _build_subsession(
 
 def run_completion(
     *,
-    builder,
+    builder=None,
     overrides: Optional[Dict[str, Any]] = None,
     contexts: Optional[Iterable[Tuple[str, Any]]] = None,
     message: str = '',
     capture: str = 'text',  # 'text' | 'raw'
     trace: Optional[Dict[str, Any]] = None,
+    session=None,
+    stream: bool = False,
+    stdin_as_message: bool = False,
 ) -> ModeResult:
     """Run a one-shot completion internally using TurnRunner.
 
@@ -108,7 +119,7 @@ def run_completion(
     - Runs a single non-stream assistant turn and returns last_text
     - If capture='raw' and provider exposes get_full_response, include raw
     """
-    sess = _build_subsession(builder, overrides=overrides)
+    sess = session if session is not None else _build_subsession(builder, overrides=overrides)
     trace_ctx = _normalize_trace(trace)
     if trace_ctx:
         try:
@@ -166,7 +177,10 @@ def run_completion(
             events = list(getattr(sess.ui, 'events', []) or [])
         except Exception:
             events = []
-        return ModeResult(last_text='Input exceeds configured limit', raw=None, turns=0, cost=None, usage=None, events=events)
+        return ModeResult(last_text='Input exceeds configured limit', raw=None, turns=0,
+                          cost=None, usage=None, events=events, status='failed',
+                          error='Input exceeds configured limit',
+                          stop_reason='large_input_limit_exceeded')
 
     runner = TurnRunner(sess)
     # If we were given a trace_id/parent_span_id, bind a span for this run so it
@@ -178,9 +192,13 @@ def run_completion(
     if lg and trace_ctx and trace_ctx.get("trace_id"):
         parent_span_id = trace_ctx.get("parent_span_id")
         with lg.span("internal_completion", trace_id=trace_ctx.get("trace_id"), parent_span_id=parent_span_id):
-            res = runner.run_user_turn(message or "", options=TurnOptions(stream=False, suppress_context_print=True))
+            res = runner.run_user_turn(message or "", options=TurnOptions(
+                stream=stream, suppress_context_print=True, allow_auto_submit=False,
+                stdin_as_message=stdin_as_message, execute_tools=False))
     else:
-        res = runner.run_user_turn(message or "", options=TurnOptions(stream=False, suppress_context_print=True))
+        res = runner.run_user_turn(message or "", options=TurnOptions(
+            stream=stream, suppress_context_print=True, allow_auto_submit=False,
+            stdin_as_message=stdin_as_message, execute_tools=False))
 
     raw = None
     if capture == 'raw':
@@ -198,7 +216,9 @@ def run_completion(
         prov = sess.get_provider()
         if prov and hasattr(prov, 'get_cost'):
             cost = prov.get_cost()
-        if prov and hasattr(prov, 'running_usage'):
+        if prov and hasattr(prov, 'get_usage'):
+            usage = prov.get_usage()
+        elif prov and hasattr(prov, 'running_usage'):
             usage = getattr(prov, 'running_usage')
     except Exception:
         pass
@@ -209,12 +229,14 @@ def run_completion(
     except Exception:
         events = []
 
-    return ModeResult(last_text=res.last_text, raw=raw, turns=res.turns_executed, cost=cost, usage=usage, events=events, truncated=getattr(res, 'truncated', False))
+    return ModeResult(last_text=res.last_text, raw=raw, turns=res.turns_executed, cost=cost,
+                      usage=usage, events=events, truncated=getattr(res, 'truncated', False),
+                      **_outcome(res))
 
 
 def run_agent(
     *,
-    builder,
+    builder=None,
     steps: int,
     overrides: Optional[Dict[str, Any]] = None,
     contexts: Optional[Iterable[Tuple[str, Any]]] = None,
@@ -224,12 +246,13 @@ def run_agent(
     chat_seed: Optional[List[dict]] = None,
     disable_hooks: bool = False,
     trace: Optional[Dict[str, Any]] = None,
+    session=None,
+    message: Optional[str] = None,
+    writes_policy: Optional[str] = None,
+    status_tags: Optional[bool] = None,
 ) -> ModeResult:
-    """Run an internal Agent loop using TurnRunner.
-
-    Mirrors modes.agent_mode behavior but avoids stdout and returns results.
-    """
-    sess = _build_subsession(builder, overrides=overrides)
+    """Run the shared agent pipeline on a new headless or supplied UI session."""
+    sess = session if session is not None else _build_subsession(builder, overrides=overrides)
     trace_ctx = _normalize_trace(trace)
     _attach_contexts(sess, contexts)
     if disable_hooks:
@@ -276,7 +299,8 @@ def run_agent(
     # Seed agent mode semantics similar to AgentMode
     try:
         # Write policy via [AGENT] or overrides; default deny
-        policy = (sess.get_option('AGENT', 'writes_policy', fallback='deny'))
+        policy = (writes_policy or (overrides or {}).get('agent_writes')
+                  or sess.get_option('AGENT', 'writes_policy', fallback='deny'))
         sess.enter_agent_mode(policy)
         if output:
             sess.set_option('agent_output_mode', output)
@@ -290,13 +314,13 @@ def run_agent(
     except Exception:
         pass
 
-    # Central non-interactive input gate (contexts only for agent)
+    # Central non-interactive input gate (contexts + task text)
     try:
         proc = sess.get_action('process_contexts')
         ctxs = proc.get_contexts(sess) if proc else []
     except Exception:
         ctxs = []
-    total_tokens = compute_context_tokens(sess, ctxs)
+    total_tokens = compute_context_tokens(sess, ctxs) + count_text_tokens(sess, message)
     gate = check_noninteractive_gate(sess, total_tokens)
     if not gate.get('ok', True):
         limit = gate.get('limit')
@@ -324,7 +348,10 @@ def run_agent(
             events = list(getattr(sess.ui, 'events', []) or [])
         except Exception:
             events = []
-        return ModeResult(last_text='Input exceeds configured limit', raw=None, turns=0, cost=None, usage=None, events=events)
+        return ModeResult(last_text='Input exceeds configured limit', raw=None, turns=0,
+                          cost=None, usage=None, events=events, status='failed',
+                          error='Input exceeds configured limit',
+                          stop_reason='large_input_limit_exceeded')
 
     # Apply snapshot-provided trace context (external runner) or inherited outer trace (internal runner).
     if trace_ctx:
@@ -367,6 +394,8 @@ def run_agent(
         except Exception:
             pass
 
+    loop_kwargs = {'message': message} if message is not None else {}
+    use_tags = status_tags if status_tags is not None else _agent_status_tags_enabled(sess, overrides)
     try:
         lg = sess.utils.logger
     except Exception:
@@ -381,8 +410,9 @@ def run_agent(
                     agent_output_mode=(output or sess.get_option('AGENT', 'output', fallback='final') or 'final'),
                     early_stop_no_tools=True,
                     verbose_dump=verbose_dump,
-                    agent_status_tags=_agent_status_tags_enabled(sess, overrides),
+                    agent_status_tags=use_tags,
                 ),
+                **loop_kwargs,
             )
     else:
         res = runner.run_agent_loop(
@@ -392,8 +422,9 @@ def run_agent(
                 agent_output_mode=(output or sess.get_option('AGENT', 'output', fallback='final') or 'final'),
                 early_stop_no_tools=True,
                 verbose_dump=verbose_dump,
-                agent_status_tags=_agent_status_tags_enabled(sess, overrides),
+                agent_status_tags=use_tags,
             ),
+            **loop_kwargs,
         )
 
     # Build result (Agent returns last_text in 'final' mode; 'full' already streamed to NullUI events)
@@ -403,7 +434,9 @@ def run_agent(
         prov = sess.get_provider()
         if prov and hasattr(prov, 'get_cost'):
             cost = prov.get_cost()
-        if prov and hasattr(prov, 'running_usage'):
+        if prov and hasattr(prov, 'get_usage'):
+            usage = prov.get_usage()
+        elif prov and hasattr(prov, 'running_usage'):
             usage = getattr(prov, 'running_usage')
     except Exception:
         pass
@@ -412,4 +445,6 @@ def run_agent(
         events = list(getattr(sess.ui, 'events', []) or [])
     except Exception:
         events = []
-    return ModeResult(last_text=res.last_text, raw=None, turns=res.turns_executed, cost=cost, usage=usage, events=events, truncated=getattr(res, 'truncated', False))
+    return ModeResult(last_text=res.last_text, raw=None, turns=res.turns_executed, cost=cost,
+                      usage=usage, events=events, truncated=getattr(res, 'truncated', False),
+                      **_outcome(res))

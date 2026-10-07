@@ -451,7 +451,8 @@ class OutputHandler:
             prefix: Optional[str] = None,
             end: str = '\n',
             flush: bool = False,
-            spacing: Optional[Union[int, List[int]]] = None
+            spacing: Optional[Union[int, List[int]]] = None,
+            file: Optional[TextIO] = None,
     ) -> None:
         """
         Main method to output messages. Respects the configured output level.
@@ -473,6 +474,7 @@ class OutputHandler:
             return
 
         msg_str = str(message)
+        stream = file if file is not None else self._stream
         if prefix:
             msg_str = f"{prefix}: {msg_str}"
 
@@ -488,21 +490,26 @@ class OutputHandler:
 
             # Print blank lines before
             for _ in range(before_spacing):
-                print('', file=self._stream)
+                print('', file=stream)
 
         # Print the message
-        print(msg_str, end=end, file=self._stream, flush=flush)
+        print(msg_str, end=end, file=stream, flush=flush)
 
         # Handle spacing after message (define after_spacing first)
         if spacing is not None:
             after_spacing = spacing if isinstance(spacing, int) else spacing[1]
             # Print blank lines after
             for _ in range(after_spacing):
-                print('', file=self._stream, flush=flush)
+                print('', file=stream, flush=flush)
+
+    def diagnostic(self, message: Any, **kwargs) -> None:
+        """Write diagnostic output separately from assistant results."""
+        kwargs.setdefault('file', sys.stderr)
+        self.write(message, **kwargs)
 
     def debug(self, message: Any, **kwargs) -> None:
         """Log a DEBUG message."""
-        self.write(message, level=OutputLevel.DEBUG, **kwargs)
+        self.diagnostic(message, level=OutputLevel.DEBUG, **kwargs)
 
     def info(self, message: Any, **kwargs) -> None:
         """Log an INFO message."""
@@ -510,15 +517,15 @@ class OutputHandler:
 
     def warning(self, message: Any, **kwargs) -> None:
         """Log a WARNING message."""
-        self.write(message, level=OutputLevel.WARNING, **kwargs)
+        self.diagnostic(message, level=OutputLevel.WARNING, **kwargs)
 
     def error(self, message: Any, **kwargs) -> None:
         """Log an ERROR message."""
-        self.write(message, level=OutputLevel.ERROR, **kwargs)
+        self.diagnostic(message, level=OutputLevel.ERROR, **kwargs)
 
     def critical(self, message: Any, **kwargs) -> None:
         """Log a CRITICAL message."""
-        self.write(message, level=OutputLevel.CRITICAL, **kwargs)
+        self.diagnostic(message, level=OutputLevel.CRITICAL, **kwargs)
 
     def status(self, message: Any, fg: str = 'cyan', **kwargs) -> None:
         """

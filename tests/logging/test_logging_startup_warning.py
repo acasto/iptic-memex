@@ -54,5 +54,7 @@ def test_warn_when_logging_enabled_but_inactive(tmp_path, capsys, monkeypatch):
     # Build a session with an invalid model so no provider is created
     _ = sb.build(mode='chat', model='invalid_model_for_test')
 
-    out = capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    out = captured.err
     assert 'Logging is enabled but the log file could not be opened' in out or 'failed to initialize' in out

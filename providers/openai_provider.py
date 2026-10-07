@@ -8,7 +8,7 @@ from actions.process_contexts_action import ProcessContextsAction
 from typing import List, Optional
 from copy import deepcopy
 from providers.openai_common import (
-    OpenAIUsage, excluded_parameters, extra_body, field, parse_tool_arguments, sdk_params,
+    OpenAIUsage, excluded_parameters, extra_body, field, parse_tool_arguments,
 )
 
 
@@ -124,6 +124,7 @@ class OpenAIProvider(OpenAIUsage, APIProvider):
         self._last_response = None
         self._reasoning_field = None
         self.turn_usage = None
+        self._cache_write_headers = {}
         self.last_api_param = None
         self._tool_calls_read = False
         try:
@@ -199,8 +200,7 @@ class OpenAIProvider(OpenAIUsage, APIProvider):
             self.last_api_param = api_parms
 
             # Make the API call and store the full response
-            create = self.client.chat.completions.create
-            response = create(**sdk_params(create, api_parms))
+            response = self._create_response(self.client.chat.completions, api_parms)
             self._last_response = response
             try:
                 choices = getattr(response, 'choices', None)

@@ -1,6 +1,5 @@
 import time
 import os
-import traceback
 from base_classes import APIProvider
 from actions.process_contexts_action import ProcessContextsAction
 
@@ -167,14 +166,6 @@ class MlxProvider(APIProvider):
 
                 return response_text
 
-        except Exception as e:
-            print(f"An exception occurred in MLX provider: {e}")
-            traceback.print_exc()
-            if self.last_api_param is not None:
-                print("Last API call parameters:")
-                for key, value in self.last_api_param.items():
-                    print(f"\t{key}: {value}")
-            return f"Error: {str(e)}"
         finally:
             self.running_usage['total_time'] += time.time() - start_time
 
@@ -231,8 +222,6 @@ class MlxProvider(APIProvider):
             self.running_usage['total_in'] += prompt_tokens
             self.running_usage['total_out'] += completion_tokens
 
-        except Exception as e:
-            yield f"Streaming error: {str(e)}"
         finally:
             self.running_usage['total_time'] += time.time() - start_time
 

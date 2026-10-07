@@ -9,7 +9,7 @@ from openai import OpenAI
 from base_classes import APIProvider, InteractionNeeded
 from providers.openai_common import (
     OpenAIUsage, as_dict, excluded_parameters, extra_body, field,
-    parse_tool_arguments, sdk_params, strict_schema,
+    parse_tool_arguments, strict_schema,
 )
 from actions.process_contexts_action import ProcessContextsAction
 
@@ -393,6 +393,7 @@ class OpenAIResponsesProvider(OpenAIUsage, APIProvider):
         """Create a native Responses request and retain its terminal output."""
         start = time()
         self.turn_usage = None
+        self._cache_write_headers = {}
         self._last_tool_calls = None
         self._last_output_items = []
         self._last_status = None
@@ -424,8 +425,7 @@ class OpenAIResponsesProvider(OpenAIUsage, APIProvider):
                 'stream': bool(api.get('stream')), 'store': api.get('store'),
                 'chain_minimize': will_chain,
             })
-            create = self._client.responses.create
-            response = create(**sdk_params(create, api))
+            response = self._create_response(self._client.responses, api)
             if approvals:
                 self._pending_mcp_approvals = []
             if api.get('stream'):

@@ -48,7 +48,7 @@ class CapturingAgentMode:
         self.session = session
         CapturingAgentMode.last_kwargs = kwargs
 
-    def start(self):
+    def start(self, *, emit_output=True):
         pass
 
 

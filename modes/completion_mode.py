@@ -1,92 +1,41 @@
 from base_classes import InteractionMode
+from core.mode_runner import run_completion
 
 
 class CompletionMode(InteractionMode):
-    """
-    Completion mode interaction handler
-    This interaction runs a completion based on the file content provided via the command line
-    For example: echo "Say: Hello, World!" | python main.py -f -
-    """
+    """Run a one-shot completion through the shared turn pipeline."""
 
-    def __init__(self, session):
+    def __init__(self, session, message: str | None = None):
         self.session = session
-        # Disable official tools for one-shot completion to save tokens
+        self.message = message
         try:
-            self.session.set_option('tool_mode', 'none')
+            session.set_option('tool_mode', 'none')
         except Exception:
             pass
-        self.session.set_flag('completion_mode', True)
+        session.set_flag('completion_mode', True)
+        action = session.get_action('process_contexts')
+        contexts = action.get_contexts(session) if action else []
+        has_stdin = any(ctx['context'].get().get('name') == 'stdin' for ctx in contexts)
+        if has_stdin and message is None and 'prompt' not in session.config.overrides:
+            session.remove_context_type('prompt')
+        if message is None and not contexts:
+            self.message = 'Please process the provided content.'
 
-        # Get all contexts using the process_contexts action
-        process_contexts_action = self.session.get_action('process_contexts')
-        contexts = process_contexts_action.get_contexts(self.session) if process_contexts_action else []
-
-        # Look for stdin context
-        stdin_context = next((c for c in contexts if c['context'].get()['name'] == 'stdin'), None)
-
-        # Only remove prompt if stdin is present and prompt wasn't explicitly set by user
-        if stdin_context and 'prompt' not in self.session.config.overrides:
-            self.session.remove_context_type('prompt')
-            # Remove stdin from contexts so it doesn't appear as file context
-            contexts.remove(stdin_context)
-
-        # Add chat context
-        self.session.add_context('chat')
-        self.chat = self.session.get_context('chat')
-
-        # Add the message with appropriate content
-        if stdin_context:
-            # stdin content becomes the user message
-            self.chat.add(stdin_context['context'].get()['content'], 'user', contexts)
-        elif contexts:
-            # Files only: empty message with file contexts
-            self.chat.add("", 'user', contexts)
-        else:
-            # No contexts at all
-            self.chat.add("Please process the provided content.", 'user', [])
-
-    def start(self):
-        """Start the completion mode interaction."""
-        import time
-
-        # Get fresh params each time
+    def start(self, *, emit_output: bool = True):
+        """Return an explicit outcome; optionally render the completion for CLI."""
         params = self.session.get_params()
-        
-        provider = self.session.get_provider()
-        if not provider:
-            self.session.utils.output.error("No provider available")
-            return
-
-        if params.get('raw_completion'):
-            # Raw mode: always non-streaming, emit raw JSON
-            # Set stream to False in session for this completion
-            self.session.set_option('stream', False)
-            provider.chat()
-            if hasattr(provider, 'get_full_response'):
-                self.session.utils.output.write(provider.get_full_response(), end='')
-        else:
-            # Normal completion: non-stream by default for completion mode.
-            # Stream only if user explicitly passed -s/--stream via CLI overrides.
-            try:
-                overrides = getattr(self.session, 'config').overrides or {}
-            except Exception:
-                overrides = {}
-            stream = bool(overrides.get('stream', False))
-
-            # Apply the request-time stream flag for the provider call
-            self.session.set_option('stream', stream)
-
-            if stream:
-                if hasattr(provider, 'stream_chat'):
-                    response = provider.stream_chat()
-                    if response:
-                        for chunk in response:
-                            self.session.utils.output.write(chunk, end='', flush=True)
-                            if 'stream_delay' in params:
-                                time.sleep(float(params['stream_delay']))
-                    self.session.utils.output.write('')
-            else:
-                if hasattr(provider, 'chat'):
-                    response = provider.chat()
-                    if response:
-                        self.session.utils.output.write(response)
+        raw = bool(params.get('raw_completion'))
+        overrides = self.session.config.overrides or {}
+        stream = bool(overrides.get('stream', False)) and not raw
+        result = run_completion(
+            session=self.session,
+            message=self.message or '',
+            stream=stream,
+            stdin_as_message=self.message is None,
+            capture='raw' if raw else 'text',
+        )
+        if emit_output and not stream:
+            text = result.raw if raw else result.last_text
+            if text is not None:
+                self.session.utils.output.write(text)
+        return result

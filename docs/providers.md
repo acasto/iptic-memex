@@ -111,13 +111,49 @@ Approvals are resolved on the next request and recorded for stateless replay.
 CLI and TUI can prompt directly or through their broker; a UI without a broker
 and a headless run report an explicit error instead of silently approving.
 
-Usage accounting includes cached and reasoning token subsets. Reasoning tokens
-are already included in output tokens and are charged once. `price_cache_in`
-defaults to `price_in`; set it for discounted cached input. The existing
+Usage accounting includes cached, cache-write, and reasoning token subsets.
+Reasoning tokens are already included in output tokens and are charged once.
+`price_cache_read` (or the existing `price_cache_in`) defaults to `price_in`;
+set it for discounted cached input. `price_cache_write` also defaults to
+`price_in`; `price_cache_write_5m` and `price_cache_write_1h` override that rate
+when the actual write tier is known. All rates use the model's `price_unit`.
+Cache reads and writes are subsets of input tokens, so write charges replace
+ordinary input charges for those tokens rather than adding them twice.
+
+For compatible APIs such as Kimi, both providers read `cache_write_tokens` from
+the input usage details and use the `Msh-Usage-Cache-Write-Tokens-5m` / `1h`
+response headers to identify the actual tiers. Usage exposes `turn_cache_writes`,
+`total_cache_writes`, and their `_5m` / `_1h` subsets. If headers are unavailable,
+writes use the generic `price_cache_write` rate; Memex does not infer a tier
+from the requested TTL because an existing prefix can retain its original TTL.
+See the [Kimi cache accounting contract](https://platform.kimi.ai/docs/guide/context-caching).
+
+The existing
 `bill_reasoning_as_output` option is accepted for compatibility but no longer
 adds or subtracts reasoning tokens. Costs accumulate at each request's configured
 prices, so changing models does not reprice earlier calls; totals survive provider rebuilds between
 these two providers.
+
+## Moonshot / Kimi
+
+Moonshot uses the shared OpenAI-compatible provider; its former subclass has
+been removed. Keep the provider name through an alias:
+
+```ini
+[Moonshot]
+alias = OpenAI
+base_url = https://api.moonshot.ai/v1
+use_old_system_role = True
+```
+
+Models can continue to reference `provider = Moonshot`. Reasoning content is
+preserved by the shared provider, including assistant tool-call messages.
+Configure model-specific thinking controls and cache options with `extra_body`,
+for example `{"prompt_cache_options": {"mode": "implicit", "ttl": "1h"}}`.
+Set cache-write rates explicitly when they differ from ordinary input rates;
+Memex does not assume a provider-specific multiplier. Use `excluded_parameters`
+for sampling or reasoning settings that the selected model does not accept.
+See the [Kimi model parameter reference](https://platform.kimi.ai/docs/api/models-overview).
 
 ## Anthropic
 

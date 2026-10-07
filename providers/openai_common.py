@@ -1,5 +1,6 @@
 """Shared normalization and accounting for the two OpenAI wire protocols."""
 
+import inspect
 from copy import deepcopy
 from providers.api_utils import (
     as_dict, excluded_parameters, extra_body, field, parse_tool_arguments, sdk_params,
@@ -55,37 +56,97 @@ class OpenAIUsage:
 
     def _init_usage(self):
         self.turn_usage = None
+        self._cache_write_headers = {}
         self.running_usage = {'total_in': 0, 'total_out': 0, 'total_time': 0.0}
         self._cost_totals = {'input_cost': 0.0, 'output_cost': 0.0}
 
     @staticmethod
-    def _usage_values(usage):
+    def _usage_values(usage, headers=None):
         input_details = field(usage, 'input_tokens_details')
         if input_details is None:
             input_details = field(usage, 'prompt_tokens_details')
         output_details = field(usage, 'output_tokens_details')
         if output_details is None:
             output_details = field(usage, 'completion_tokens_details')
-        return {
+        values = {
             'total_in': field(usage, 'input_tokens', field(usage, 'prompt_tokens', 0)) or 0,
             'total_out': field(usage, 'output_tokens', field(usage, 'completion_tokens', 0)) or 0,
-            'cached_tokens': field(input_details, 'cached_tokens', 0) or 0,
+            'cached_tokens': field(input_details, 'cached_tokens',
+                                   field(usage, 'cached_tokens', 0)) or 0,
+            'cache_write_tokens': field(input_details, 'cache_write_tokens', 0) or 0,
             'reasoning_tokens': field(output_details, 'reasoning_tokens', 0) or 0,
             'accepted_prediction_tokens': field(output_details, 'accepted_prediction_tokens', 0) or 0,
             'rejected_prediction_tokens': field(output_details, 'rejected_prediction_tokens', 0) or 0,
         }
+        # Kimi reports the actual write tier in headers. Request TTL is not
+        # reliable: an existing cache prefix retains the TTL of its first write.
+        for ttl in ('5m', '1h'):
+            value = (headers or {}).get(f'msh-usage-cache-write-tokens-{ttl}')
+            try:
+                count = max(0, int(value))
+            except (ValueError, TypeError):
+                count = 0
+            values[f'cache_write_tokens_{ttl}'] = count
+        split = values['cache_write_tokens_5m'] + values['cache_write_tokens_1h']
+        if field(input_details, 'cache_write_tokens') is None:
+            values['cache_write_tokens'] = split
+        # Unclassified writes use the generic rate rather than guessing a TTL.
+        remaining = max(0, values['cache_write_tokens'])
+        for ttl in ('5m', '1h'):
+            key = f'cache_write_tokens_{ttl}'
+            values[key] = min(remaining, values[key])
+            remaining -= values[key]
+        return values
+
+    def _create_response(self, resource, params):
+        """Retain accounting headers while returning the usual SDK response."""
+        self._cache_write_headers = {}
+        create = resource.create
+        kwargs = sdk_params(create, params)
+        raw_create = getattr(getattr(resource, 'with_raw_response', None), 'create', None)
+        # Lightweight clients and compatibility shims may not support the SDK's
+        # raw-response header. Their normal create path remains supported.
+        try:
+            supports_headers = 'extra_headers' in inspect.signature(create).parameters
+        except (ValueError, TypeError):
+            supports_headers = False
+        if not callable(raw_create) or not supports_headers:
+            response = create(**kwargs)
+            headers = field(field(response, 'response'), 'headers', {}) or {}
+            self._cache_write_headers = {str(k).lower(): v for k, v in headers.items()}
+            return response
+        raw = raw_create(**kwargs)
+        self._cache_write_headers = {str(k).lower(): v for k, v in raw.headers.items()}
+        try:
+            return raw.parse()
+        except BaseException:
+            if params.get('stream'):
+                raw.http_response.close()
+            raise
+        finally:
+            if not params.get('stream'):
+                raw.http_response.close()
 
     @staticmethod
     def _price(values, params):
         unit = float(params.get('price_unit', 1000000))
         price_in = float(params.get('price_in', 0))
-        price_cached = float(params.get('price_cache_in', price_in))
+        price_cached = float(params.get('price_cache_read', params.get('price_cache_in', price_in)))
+        price_write = float(params.get('price_cache_write', price_in))
+        price_write_5m = float(params.get('price_cache_write_5m', price_write))
+        price_write_1h = float(params.get('price_cache_write_1h', price_write))
         price_out = float(params.get('price_out', 0))
-        cached = min(values['total_in'], values.get('cached_tokens', 0))
+        cached = min(values['total_in'], max(0, values.get('cached_tokens', 0)))
+        writes = min(values['total_in'] - cached, max(0, values.get('cache_write_tokens', 0)))
+        writes_5m = min(writes, values.get('cache_write_tokens_5m', 0))
+        writes_1h = min(writes - writes_5m, values.get('cache_write_tokens_1h', 0))
+        write_cost = ((writes - writes_5m - writes_1h) * price_write
+                      + writes_5m * price_write_5m + writes_1h * price_write_1h)
         # Both APIs already include reasoning in output/completion_tokens.
         output = values['total_out']
         return {
-            'input_cost': ((values['total_in'] - cached) * price_in + cached * price_cached) / unit,
+            'input_cost': ((values['total_in'] - cached - writes) * price_in
+                           + cached * price_cached + write_cost) / unit,
             'output_cost': output * price_out / unit,
         }
 
@@ -93,7 +154,7 @@ class OpenAIUsage:
         if usage is None:
             return
         self.turn_usage = usage
-        values = self._usage_values(usage)
+        values = self._usage_values(usage, self._cache_write_headers)
         if not hasattr(self, '_cost_totals'):
             self._cost_totals = {'input_cost': 0.0, 'output_cost': 0.0}
         for key, value in values.items():
@@ -114,6 +175,9 @@ class OpenAIUsage:
         stats['total_tokens'] = stats['total_in'] + stats['total_out']
         metrics = {
             'cached': 'cached_tokens', 'reasoning': 'reasoning_tokens',
+            'cache_writes': 'cache_write_tokens',
+            'cache_writes_5m': 'cache_write_tokens_5m',
+            'cache_writes_1h': 'cache_write_tokens_1h',
             'accepted_predictions': 'accepted_prediction_tokens',
             'rejected_predictions': 'rejected_prediction_tokens',
         }
@@ -121,7 +185,7 @@ class OpenAIUsage:
             if key in self.running_usage:
                 stats[f'total_{name}'] = self.running_usage[key]
         if self.turn_usage is not None:
-            values = self._usage_values(self.turn_usage)
+            values = self._usage_values(self.turn_usage, self._cache_write_headers)
             stats.update(turn_in=values['total_in'], turn_out=values['total_out'],
                          turn_total=values['total_in'] + values['total_out'])
             for name, key in metrics.items():
@@ -142,6 +206,9 @@ class OpenAIUsage:
             self.running_usage[key] = stats.get(key, 0)
         for name, key in (
             ('cached', 'cached_tokens'), ('reasoning', 'reasoning_tokens'),
+            ('cache_writes', 'cache_write_tokens'),
+            ('cache_writes_5m', 'cache_write_tokens_5m'),
+            ('cache_writes_1h', 'cache_write_tokens_1h'),
             ('accepted_predictions', 'accepted_prediction_tokens'),
             ('rejected_predictions', 'rejected_prediction_tokens'),
         ):

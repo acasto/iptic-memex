@@ -57,6 +57,8 @@ class Session:
         self.config = type("C", (), {"overrides": {}})()
 
     def set_flag(self, k, v): pass
+    def get_flag(self, k): return False
+    def get_option(self, section, key, fallback=None): return fallback
     def get_action(self, name): return self._actions.get(name)
     def add_context(self, name, value=None):
         if name == 'chat':
