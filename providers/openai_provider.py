@@ -1,3 +1,4 @@
+import ast
 import os
 from time import time
 import openai
@@ -153,11 +154,11 @@ class OpenAIProvider(APIProvider):
                 # Initialize or get extra_body
                 extra_body = api_parms.get('extra_body', {})
                 if isinstance(extra_body, str):
-                    # If extra_body is a string, attempt to evaluate it as a dict
+                    # If extra_body is a string, parse it as a literal dict (safe)
                     try:
-                        extra_body = eval(extra_body)
-                    except (SyntaxError, ValueError, NameError) as e:
-                        print(f"Warning: Could not evaluate extra_body string: {e}")
+                        extra_body = ast.literal_eval(extra_body)
+                    except (SyntaxError, ValueError) as e:
+                        print(f"Warning: Could not parse extra_body string: {e}")
                         extra_body = {}
 
                 # Handle max_tokens vs max_completion_tokens
