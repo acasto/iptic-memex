@@ -1,7 +1,9 @@
 # Initial workspace investigation
 
-These are exploratory local measurements, not a model ranking or a benchmark.
-GLM-5.3-Flash-EXL3 served through the `glm-5.3` alias was used throughout.
+These are exploratory measurements, not a model ranking or a benchmark.
+Investigations used GLM-5.3-Flash-EXL3 through the local `glm-5.3` alias.
+Synthesis was compared with `gpt-6.1` (configured model name `gpt-6.1-sol`)
+through OpenAI's Responses API after explicit approval to send the saved evidence.
 
 ## Original explanation run
 
@@ -22,27 +24,50 @@ Run: `20261028T020835854026-31fd6812d85b`, before the optimization changes.
 ## Same-evidence synthesis experiment
 
 The original notes/outcomes were reconstructed into one frozen evidence message.
-Both calls used that identical message (SHA-256 prefix `e6f081e6b6533c5c`) and an
+All four calls used that identical message (SHA-256 prefix `e6f081e6b6533c5c`) and an
 explicit 8,192-token output allowance. No workers were rerun for these comparisons.
 The old system prompt came from commit `03f1368`; the revised one is
 `prompts/workspace/synthesize.md`. No model-specific addenda were introduced.
 
-| Synthesis prompt | Model-call time | Input tokens | Output tokens | Answer words |
-| --- | ---: | ---: | ---: | ---: |
-| Original | 20.5 s | 4,487 | 1,134 | 645 |
-| Revised | 16.8 s | 4,607 | 961 | 587 |
+| Model | Synthesis prompt | Model-call time | Input tokens | Output tokens | Answer words |
+| --- | --- | ---: | ---: | ---: | ---: |
+| GLM 5.3 Flash | Original | 20.5 s | 4,487 | 1,134 | 645 |
+| GLM 5.3 Flash | Revised | 16.8 s | 4,607 | 961 | 587 |
+| GPT-6.1 | Original | 9.0 s | 4,449 | 600 | 353 |
+| GPT-6.1 | Revised | 10.7 s | 4,567 | 586 | 391 |
 
-The revised answer was somewhat shorter, but retained an unnecessary testing
-disclaimer and substantial configuration detail. One sample per prompt cannot
-establish a quality or speed improvement. The reconstructed input also differs
-from the historical synthesis request, so these are not exact reproductions of
-the original answer. This is insufficient evidence for further shared-prompt
-restrictions or a model-specific prompt patch.
+GLM's revised answer was somewhat shorter, but retained an unnecessary testing
+disclaimer and substantial configuration detail. GPT-6.1's answers better matched
+the broad explanatory question with either prompt: purpose, workflow, usage, and
+the practical limits. Its revised answer ended with a relevant limitation about
+unproven quality benefits rather than auditing which implementation files a worker
+had not read. Both models remained broadly consistent with the historical notes.
+
+The system prompt checksums match across models for each prompt version
+(`11f66d09c3d3f9a6` original, `87fd0c468fecc3f4` revised). GPT used its configured
+medium reasoning effort. Provider-specific defaults and inference settings were
+not normalized, and the older GLM records do not freeze all generation settings.
+Token counts are provider-reported. Calls ran at different times; the two GPT calls
+ran concurrently. One sample per cell cannot establish a general quality or speed
+advantage, and the revised prompt did not uniformly shorten responses.
+
+The reconstructed input differs from the historical synthesis request, so these
+are not exact reproductions of the original answer. The results support testing
+GLM workers with optional GPT-6.1 synthesis, while keeping the shared engine and
+prompts model-neutral. They do not establish how GPT-6.1 would investigate or
+collaborate as a worker, or justify further shared-prompt restrictions.
 
 Replay runs, in table order:
 
 - `20261028T023713556276-6b0ad42a3c88`
 - `20261028T023801160163-bbcd1e33a3c4`
+- `20261028T025502887454-82dd0d49571a`
+- `20261028T025503201768-0c0a2e44973c`
+
+The first two GPT requests failed because CLI `-l` supplied `max_tokens` as a
+string, which Responses rejected for `max_output_tokens`. CLI parsing now produces
+a positive integer before any session is created; regression tests cover normal
+completion, agent and workspace entry points. Successful rows above are the retries.
 
 ## Updated engine smoke test
 
@@ -62,8 +87,7 @@ quality, useful publication, and collaboration must be measured separately.
 
 ## Next comparisons
 
-Replay the frozen evidence with a second model, holding the evidence and prompt
-constant. This isolates synthesis behavior. Then compare full investigations on
+Repeat the synthesis comparisons on additional questions. Then compare full investigations on
 the same small set of questions, including a single-worker baseline; replay alone
 cannot tell us whether multiple workers improve investigation quality. Measure
 correctness and useful evidence as well as time, turn counts and cache-aware usage.
