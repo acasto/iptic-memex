@@ -26,6 +26,17 @@ Notes:
 - `--agent-output` controls output mode (final/full/none).
 - Shared agent flags such as `--steps` and `--agent-output` are top-level options; place them before `agent`.
 
+## Experimental workspace mode
+Independent agents contribute to persistent shared findings, followed by a fresh
+answer synthesis. Monitor saved state from another terminal without starting models.
+
+```bash
+python main.py workspace run "Where is default model selection implemented?"
+python main.py workspace status --watch
+```
+
+See [workspace.md](workspace.md) for configuration, tool policies, and limitations.
+
 ## TUI mode
 Terminal UI with stepwise interactions backed by the same TurnRunner.
 
@@ -42,5 +53,5 @@ python main.py web
 
 ## Default model selection
 - Interactive modes (chat/tui/web): `[DEFAULT].default_model` unless you specify `-m/--model` or `/set model`.
-- Non-interactive (completion, internal runs, agent): `[AGENT].default_model` when no model is provided.
+- Non-interactive (completion, internal runs, agent, workspace): `[AGENT].default_model` when no model is provided.
 - Explicit model always wins.

@@ -4,6 +4,9 @@ import os
 import sys
 from pathlib import Path
 import types
+import subprocess
+
+import pytest
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
 if ROOT not in sys.path:
@@ -90,3 +93,53 @@ def test_agent_can_opt_out_and_use_persistent(tmp_path: Path):
     cmdline = docker.create_docker_command('echo hello')
     # When not forcing ephemeral and env is persistent, expect docker exec form
     assert cmdline[0:2] == ['docker', 'exec']
+
+
+@pytest.mark.parametrize('interrupted', [False, True])
+def test_timeout_or_interrupt_removes_daemon_side_ephemeral_command(tmp_path, monkeypatch, interrupted):
+    import actions.assistant_docker_tool_action as module
+
+    session = DummySession(str(tmp_path), tools_env='webdev', agent_ephemeral=True)
+    tool = AssistantDockerToolAction(session)
+    commands = []
+
+    class Process:
+        returncode = None
+        calls = 0
+
+        def poll(self):
+            return self.returncode
+
+        def communicate(self, timeout=None):
+            self.calls += 1
+            if self.calls == 1:
+                if interrupted:
+                    # The Docker client can exit before daemon-side work is removed.
+                    self.returncode = -15
+                    raise KeyboardInterrupt()
+                raise subprocess.TimeoutExpired('docker', timeout)
+            return '', ''
+
+        def kill(self):
+            self.returncode = -9
+
+    process = Process()
+
+    def popen(command, **_kwargs):
+        commands.append(command)
+        return process
+
+    def stop(command, **_kwargs):
+        commands.append(command)
+        process.returncode = 137
+
+    monkeypatch.setattr(module.subprocess, 'Popen', popen)
+    monkeypatch.setattr(module.subprocess, 'run', stop)
+    if interrupted:
+        with pytest.raises(KeyboardInterrupt):
+            tool.execute_command('sleep 100')
+    else:
+        assert tool.execute_command('sleep 100')[0] is False
+    name = commands[0][commands[0].index('--name') + 1]
+    assert commands[1] == ['docker', 'rm', '-f', name]
+    assert process.poll() is not None

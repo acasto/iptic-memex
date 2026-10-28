@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from core.turns import TurnRunner, TurnOptions
 from core.input_limits import compute_context_tokens, count_text_tokens, check_noninteractive_gate
@@ -250,6 +250,7 @@ def run_agent(
     message: Optional[str] = None,
     writes_policy: Optional[str] = None,
     status_tags: Optional[bool] = None,
+    on_event: Optional[Callable[[str, dict], None]] = None,
 ) -> ModeResult:
     """Run the shared agent pipeline on a new headless or supplied UI session."""
     sess = session if session is not None else _build_subsession(builder, overrides=overrides)
@@ -411,6 +412,7 @@ def run_agent(
                     early_stop_no_tools=True,
                     verbose_dump=verbose_dump,
                     agent_status_tags=use_tags,
+                    on_event=on_event,
                 ),
                 **loop_kwargs,
             )
@@ -423,6 +425,7 @@ def run_agent(
                 early_stop_no_tools=True,
                 verbose_dump=verbose_dump,
                 agent_status_tags=use_tags,
+                on_event=on_event,
             ),
             **loop_kwargs,
         )

@@ -28,6 +28,8 @@ class TurnOptions:
     agent_status_tags: Optional[bool] = None
     stdin_as_message: bool = False
     execute_tools: bool = True
+    # Optional headless observer. No UI or persistence dependency in the runner.
+    on_event: Optional[Callable[[str, dict], None]] = None
 
 
 @dataclass
@@ -63,10 +65,16 @@ class TurnRunner:
     def __init__(self, session) -> None:
         self.session = session
         self.utils = session.utils
+        self._on_event = None
+
+    def _agent_event(self, event: str, **data) -> None:
+        if self._on_event:
+            self._on_event(event, data)
 
     # ---- Public API ----------------------------------------------------
     def run_user_turn(self, input_text: str, *, options: Optional[TurnOptions] = None) -> TurnResult:
         opts = options or TurnOptions()
+        self._on_event = None
         params = self.session.get_params() or {}
         stream = bool(opts.stream if opts.stream is not None else params.get("stream", False))
         allow_auto_submit = (
@@ -263,6 +271,7 @@ class TurnRunner:
         message: Optional[str] = None,
     ) -> TurnResult:
         opts = options or TurnOptions()
+        self._on_event = opts.on_event
         params = self.session.get_params() or {}
         output_mode = (opts.agent_output_mode or params.get("agent_output_mode") or "final").lower()
         stream = (output_mode == "full")
@@ -326,6 +335,7 @@ class TurnRunner:
 
         for i in range(total_turns):
             final_turn = (i == total_turns - 1)
+            self._agent_event('step_start', step=i + 1, max_steps=total_turns)
 
             if include_status_tags:
                 status_text = f"Turn {i + 1} of {total_turns}"
@@ -380,6 +390,8 @@ class TurnRunner:
             last_sanitized = sanitized
             self._record_assistant(raw)
 
+            self._agent_event('model_done', step=i + 1)
+
             # Detect a budget-truncated response (finish_reason 'length')
             if self._detect_truncated():
                 any_truncated = True
@@ -407,6 +419,7 @@ class TurnRunner:
                 break
 
             ran = self._execute_tools(sanitized or display or raw or "")
+            self._agent_event('step_end', step=i + 1, ran_tools=ran)
             any_tools = any_tools or ran
             tool_outcome = self._assistant_outcome(raw)
             if tool_outcome['status'] in ('failed', 'cancelled'):
@@ -922,6 +935,7 @@ class TurnRunner:
                             break
                         name = (call.get('name') or '').lower()
                         call_id = call.get('id') or call.get('call_id')
+                        self._agent_event('tool_start', tool=name)
                         args = dict(call.get('arguments') or {})
                         content = ''
                         if 'content' in args:
@@ -1413,6 +1427,7 @@ class TurnRunner:
                 except Exception:
                     cmds = []
                 if cmds:
+                    self._agent_event('tool_start', tool='pseudo')
                     # Run pseudo-tools and handle mid-turn InteractionNeeded via the interaction broker
                     try:
                         ac.run(text or '')

@@ -70,6 +70,7 @@ Start here for the rest of the platform details:
 - [Skills](docs/skills.md)
 - [Sandbox and base-dir](docs/sandbox.md)
 - [Agents](docs/agents.md)
+- [Experimental workspace mode](docs/workspace.md)
 - [Providers](docs/providers.md)
 - [Logging](docs/logging.md)
 - [Web and TUI notes](docs/web.md)

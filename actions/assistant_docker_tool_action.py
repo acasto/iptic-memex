@@ -3,6 +3,7 @@ import subprocess
 import shlex
 import os
 import shutil
+import uuid
 from typing import Tuple, Optional, Set, List, Dict
 from utils.tool_args import get_str
 
@@ -347,6 +348,13 @@ class AssistantDockerToolAction(InteractionAction):
             if not docker_cmd:
                 return False, "", "Invalid command"
 
+            # A unique ephemeral name lets cancellation stop the daemon-side command,
+            # not just the local `docker run` client. Persistent environments are retained.
+            command_container = None
+            if not self.is_persistent:
+                command_container = 'memex-cmd-' + uuid.uuid4().hex
+                docker_cmd[3:3] = ['--name', command_container]
+
             process = subprocess.Popen(
                 docker_cmd,
                 stdout=subprocess.PIPE,
@@ -354,16 +362,49 @@ class AssistantDockerToolAction(InteractionAction):
                 text=True
             )
 
+            command_finished = False
+
+            def stop_command():
+                nonlocal command_finished
+                if command_finished:
+                    return
+                command_finished = True
+                if command_container:
+                    try:
+                        subprocess.run(
+                            ['docker', 'rm', '-f', command_container], timeout=3,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        )
+                    except (OSError, subprocess.SubprocessError):
+                        pass
+                if process.poll() is None:
+                    process.kill()
+                try:
+                    process.communicate(timeout=1)
+                except subprocess.TimeoutExpired:
+                    pass
+
+            try:
+                token = self.session.get_cancellation_token()
+                if token:
+                    token.register_cleanup(stop_command)
+            except AttributeError:
+                pass
+
             try:
                 output, error = process.communicate(timeout=self._default_timeout)
+                command_finished = True
                 stdout = (output or '').strip()
                 stderr = (error or '').strip()
                 if process.returncode != 0:
                     return False, stdout, stderr
                 return True, stdout, ''
             except subprocess.TimeoutExpired:
-                process.kill()
+                stop_command()
                 return False, "", f"Command timed out after {self._default_timeout} seconds"
+            except BaseException:
+                stop_command()
+                raise
 
         except (OSError, subprocess.SubprocessError) as e:
             return False, "", str(e)

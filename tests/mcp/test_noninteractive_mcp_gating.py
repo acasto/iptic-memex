@@ -32,6 +32,10 @@ def _enable_demo_mcp(config: ConfigManager) -> None:
 
 
 def _use_mock_model(config: ConfigManager) -> None:
+    # Do not depend on user configuration to activate this test's provider.
+    if not config.base_config.has_section('Mock'):
+        config.base_config.add_section('Mock')
+    config.base_config.set('Mock', 'active', 'true')
     models = config.models
     if not models.has_section('mock'):
         models.add_section('mock')

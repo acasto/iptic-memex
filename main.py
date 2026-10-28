@@ -179,6 +179,7 @@ def cli(ctx, conf, model, prompt, message, stdin_message, temperature, max_token
     config_manager = ConfigManager(conf)
     builder = SessionBuilder(config_manager)
     ctx.obj['CONFIG_MANAGER'] = config_manager
+    ctx.obj['CONFIG_FILE'] = os.path.abspath(os.path.expanduser(conf)) if conf else None
     ctx.obj['BUILDER'] = builder
     
     # Build session options from CLI parameters
@@ -251,7 +252,7 @@ def cli(ctx, conf, model, prompt, message, stdin_message, temperature, max_token
     # Subcommands own execution. Root inputs are forwarded, never run here first.
     if ctx.invoked_subcommand is not None:
         if (file or message is not None or stdin_message) and ctx.invoked_subcommand not in (
-                'agent', 'chat', 'tui', 'web'):
+                'agent', 'chat', 'tui', 'web', 'workspace'):
             raise click.UsageError('Task inputs require a completion or agent command.')
         if (message is not None or stdin_message) and ctx.invoked_subcommand != 'agent':
             raise click.UsageError('--message/--stdin-message is supported by agent and root runs.')
@@ -658,5 +659,10 @@ def _maybe_resume_session(session, *, resume: str | None) -> None:
 
 
 # take care of business
+from modes.workspace_mode import register_workspace_commands
+
+register_workspace_commands(cli, _task_message)
+
+
 if __name__ == "__main__":
     cli(obj={})
