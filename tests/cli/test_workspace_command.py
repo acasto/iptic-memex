@@ -111,7 +111,7 @@ def test_synthesis_replay_uses_explicit_model_prompt_and_standalone_timeout(monk
     assert captured['settings'].synthesis_model is None
     assert captured['settings'].synthesis_prompt == 'Alternate prompt'
     assert captured['settings'].run_timeout_seconds == 20
-    assert int(captured['overrides']['max_tokens']) == 10000
+    assert captured['overrides']['max_tokens'] == 10000
 
 
 def test_token_limits_inherit_models_unless_explicitly_overridden(monkeypatch, tmp_path):

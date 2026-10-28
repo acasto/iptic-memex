@@ -264,6 +264,20 @@ def test_plain_final_output_only_contains_answer(harness):
     assert 'provider diagnostic' in result.stderr
 
 
+@pytest.mark.parametrize('args', [[], ['agent', '--json']])
+def test_cli_token_limit_reaches_provider_as_integer(harness, args):
+    result = harness[0].invoke(main.cli, ['-l', '8192', *args, '--message', 'Task'])
+    assert result.exit_code == 0, result.output
+    assert harness[1][0].params['max_tokens'] == 8192
+
+
+@pytest.mark.parametrize('limit', ['0', '-1', '8192.5', 'invalid'])
+def test_invalid_cli_token_limit_fails_before_session_creation(harness, limit):
+    result = harness[0].invoke(main.cli, ['--max-tokens', limit, '--message', 'Task'])
+    assert result.exit_code == 2
+    assert not harness[1]
+
+
 @pytest.mark.parametrize('args', [['-s', '--message', 'Task'],
                                   ['--agent-output', 'full', 'agent', '--message', 'Task']])
 def test_stream_errors_keep_partial_output_but_exit_nonzero(harness, args):

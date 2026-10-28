@@ -154,7 +154,8 @@ def _run_completion_cli(ctx, *, file=(), message=None):
 @click.option('--message', default=None, help='User task text for a completion or agent run')
 @click.option('--stdin-message', is_flag=True, help='Read user task text from stdin')
 @click.option('-t', '--temperature', default='', help='Temperature to use for completion')
-@click.option('-l', '--max-tokens', default='', help='Maximum number of tokens to use for completion')
+@click.option('-l', '--max-tokens', type=click.IntRange(min=1), default=None,
+              help='Maximum number of tokens to use for completion')
 @click.option('-s', '--stream', default=False, is_flag=True, help='Stream the completion events')
 @click.option('-v', '--verbose', default=False, is_flag=True, help='Show session parameters')
 @click.option('-r', '--raw', default=False, is_flag=True, help='Return raw response in completion mode')
