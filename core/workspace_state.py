@@ -72,7 +72,7 @@ class WorkspaceStore:
         directory = self.run_dir(run_id)
         directory.mkdir(parents=True, exist_ok=False)
         (self.root / 'notes').mkdir(exist_ok=True)
-        record = dict(settings, id=run_id, question=question, created_at=now(),
+        record = dict(settings, record_version=2, id=run_id, question=question, created_at=now(),
                       updated_at=now(), status='running', phase='workers', pid=os.getpid())
         write_json(directory / 'run.json', record)
         atomic_write(directory / 'question.md', question + '\n')
@@ -102,22 +102,36 @@ class WorkspaceStore:
             stream.write(json.dumps(payload, ensure_ascii=False) + '\n')
 
     def publish(self, run_id: str, worker: str, title: str, content: str,
-                references: list[str] | None = None) -> dict:
+                references: list[str] | None = None, *, kind: str = 'finding') -> dict:
         """Publish an immutable Markdown contribution with validated dependencies."""
         if not title.strip() or not content.strip():
             raise ValueError('A contribution needs a title and content')
         if len(title) > 200 or len(content) > 12000:
             raise ValueError('Contribution limit: 200 title characters and 12000 content characters')
+        if kind not in ('finding', 'summary'):
+            raise ValueError('Contribution kind must be finding or summary')
         references = list(dict.fromkeys(references or []))
         for reference in references:
             self.read_note(reference)
+        references = list(dict.fromkeys(references + self.citations(content)))
         note_id = 'note-' + uuid.uuid4().hex
         record = dict(id=note_id, run_id=identifier(run_id), worker=identifier(worker),
-                      title=title.strip(), created_at=now(), references=references)
+                      title=title.strip(), created_at=now(), references=references, kind=kind)
         # Metadata is the publication marker: readers only discover a complete note.
         atomic_write(self.root / 'notes' / f'{note_id}.md', content.strip() + '\n')
         write_json(self.root / 'notes' / f'{note_id}.json', record)
         return record
+
+    def citations(self, content: str) -> list[str]:
+        """Find valid, explicit note IDs in prose; exposure alone is not a citation."""
+        found = []
+        for note_id in dict.fromkeys(re.findall(r'\bnote-[0-9a-f]{32}\b', content)):
+            try:
+                self.read_note(note_id)
+            except (ValueError, OSError):
+                continue
+            found.append(note_id)
+        return found
 
     def read_note(self, note_id: str) -> dict:
         """Read a published note, rejecting missing records and escaping symlinks."""

@@ -57,8 +57,12 @@ class AssistantWorkspaceToolAction(StepwiseAction):
             if operation == 'search':
                 result = store.notes(get_str(args, 'query') or '')
                 result = [dict(note, content=note['content'][:1500]) for note in result]
+                store.event(scope['run_id'], scope['worker'], 'notes_searched',
+                            {'notes': [n['id'] for n in result]})
             elif operation == 'read':
                 result = store.read_note(get_str(args, 'note_id') or '')
+                store.event(scope['run_id'], scope['worker'], 'note_read',
+                            {'note': result['id']})
             elif operation == 'publish':
                 result = store.publish(
                     scope['run_id'], scope['worker'], get_str(args, 'title') or '',

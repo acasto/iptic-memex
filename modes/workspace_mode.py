@@ -9,6 +9,7 @@ import time
 import click
 
 from core.workspace_engine import WorkspaceEngine, WorkspaceSettings
+from core.workspace_report import run_report
 from core.workspace_state import WorkspaceStore, TERMINAL_STATES
 
 
@@ -37,6 +38,45 @@ def _render_status(snapshot: dict) -> str:
     if snapshot.get('error'):
         lines.append(f"Notice: {snapshot['error']}")
     return '\n'.join(lines)
+
+
+def _engine(ctx, store, settings, options):
+    cfg = ctx.obj['CONFIG_MANAGER'].base_config
+    default = cfg.get('AGENT', 'default_model', fallback=None) or cfg.defaults().get('default_model')
+    for model in (settings.model or default, settings.synthesis_model):
+        if model and not ctx.obj['CONFIG_MANAGER'].create_session_config().normalize_model_name(model):
+            raise ValueError(f"Unknown model '{model}'; configure it in models.ini or select -m.")
+    # ConfigParser.get() also inherits DEFAULT.max_tokens, which would turn an
+    # absent workspace override into a forced limit that masks model settings.
+    max_tokens = cfg._sections.get('WORKSPACE', {}).get('max_tokens', '').strip()
+    if max_tokens:
+        options.setdefault('max_tokens', int(max_tokens))
+    options.setdefault('use_mcp', False)
+    return WorkspaceEngine(store, settings, config_file=ctx.obj.get('CONFIG_FILE'),
+                           overrides=options)
+
+
+def _started(store):
+    def notify(record):
+        click.echo(f"Workspace run: {record['id']}\nSaved in: {store.run_dir(record['id'])}",
+                   err=True)
+    return notify
+
+
+def _answer(ctx, result, json_output):
+    click.echo(json.dumps(result, ensure_ascii=False) if json_output else result['answer'])
+    if not json_output and result['status'] != 'completed':
+        click.echo(f"Run status: {result['status']}; inspect workspace status for details.", err=True)
+    if result['status'] == 'cancelled':
+        ctx.exit(130)
+    if result['status'] not in ('completed', 'partial'):
+        ctx.exit(1)
+
+
+def _reject_task_inputs(ctx):
+    if (ctx.obj.get('FILES') or ctx.obj.get('MESSAGE') is not None
+            or ctx.obj.get('STDIN_MESSAGE')):
+        raise click.UsageError('Task inputs require workspace run.')
 
 
 def register_workspace_commands(cli, task_message) -> None:
@@ -89,7 +129,8 @@ def register_workspace_commands(cli, task_message) -> None:
                 steps=steps if steps is not None else int(options.pop('steps',
                                                         setting('max_steps_per_agent', 12))),
                 model=options.get('model'),
-                synthesis_model=synthesis_model or setting('synthesis_model', '') or None,
+                synthesis_model=(synthesis_model or (None if options.get('model') else
+                                                    setting('synthesis_model', '') or None)),
                 run_timeout_seconds=(timeout if timeout is not None
                                      else float(setting('run_timeout_seconds', 300))),
                 synthesis_timeout_seconds=(synthesis_timeout if synthesis_timeout is not None
@@ -99,33 +140,8 @@ def register_workspace_commands(cli, task_message) -> None:
                 synthesis_prompt=setting('synthesis_prompt', 'workspace/synthesize'),
                 synthesis_max_chars=int(setting('synthesis_max_chars', 48000)),
             )
-            default_model = (cfg.get('AGENT', 'default_model', fallback=None)
-                             or cfg.defaults().get('default_model'))
-            for model in (settings.model or default_model, settings.synthesis_model):
-                if model and not ctx.obj['CONFIG_MANAGER'].create_session_config().normalize_model_name(model):
-                    raise ValueError(
-                        f"Unknown model '{model}'; configure it in models.ini or select -m.")
-            options.setdefault('max_tokens', int(setting('max_tokens', 4096)))
-            options.setdefault('use_mcp', False)
-            engine = WorkspaceEngine(store, settings, config_file=ctx.obj.get('CONFIG_FILE'),
-                                     overrides=options)
-
-            def started(record):
-                click.echo(f"Workspace run: {record['id']}\nSaved in: {store.run_dir(record['id'])}",
-                           err=True)
-
-            result = engine.run(task, on_started=started)
-            if json_output:
-                click.echo(json.dumps(result, ensure_ascii=False))
-            else:
-                click.echo(result['answer'])
-                if result['status'] != 'completed':
-                    click.echo(f"Run status: {result['status']}; inspect workspace status for details.",
-                               err=True)
-            if result['status'] == 'cancelled':
-                ctx.exit(130)
-            if result['status'] not in ('completed', 'partial'):
-                ctx.exit(1)
+            engine = _engine(ctx, store, settings, options)
+            _answer(ctx, engine.run(task, on_started=_started(store)), json_output)
         except (ValueError, OSError) as exc:
             raise click.ClickException(str(exc)) from exc
 
@@ -139,9 +155,7 @@ def register_workspace_commands(cli, task_message) -> None:
     def status(ctx, run_id, directory, watch, interval, json_output):
         """Inspect a run (newest by default) without starting models."""
         try:
-            if (ctx.obj.get('FILES') or ctx.obj.get('MESSAGE') is not None
-                    or ctx.obj.get('STDIN_MESSAGE')):
-                raise click.UsageError('Task inputs require workspace run, not status.')
+            _reject_task_inputs(ctx)
             _, store = _paths(ctx, directory)
             last = None
             while True:
@@ -159,5 +173,67 @@ def register_workspace_commands(cli, task_message) -> None:
                 time.sleep(interval)
         except KeyboardInterrupt:
             return
+        except (ValueError, OSError) as exc:
+            raise click.ClickException(str(exc)) from exc
+
+    @workspace.command('synthesize')
+    @click.argument('run_id')
+    @click.option('--directory', type=click.Path(path_type=str))
+    @click.option('--timeout', type=click.FloatRange(min=0, min_open=True), default=None,
+                  help='Time limit for this synthesis alone (seconds).')
+    @click.option('--json', 'json_output', is_flag=True)
+    @click.pass_context
+    def synthesize(ctx, run_id, directory, timeout, json_output):
+        """Answer again from frozen findings in a new run; -m selects the model."""
+        try:
+            _reject_task_inputs(ctx)
+            repo, store = _paths(ctx, directory)
+            cfg = ctx.obj['CONFIG_MANAGER'].base_config
+            options = dict(ctx.obj['OPTIONS'])
+            settings = WorkspaceSettings(
+                repository=str(repo), model=options.get('model'),
+                synthesis_model=(None if options.get('model') else
+                                 cfg.get('WORKSPACE', 'synthesis_model', fallback='') or None),
+                synthesis_prompt=options.pop('prompt', cfg.get(
+                    'WORKSPACE', 'synthesis_prompt', fallback='workspace/synthesize')),
+                synthesis_max_chars=cfg.getint('WORKSPACE', 'synthesis_max_chars', fallback=48000),
+                run_timeout_seconds=(timeout if timeout is not None else cfg.getfloat(
+                    'WORKSPACE', 'synthesis_timeout_seconds', fallback=90)),
+            )
+            engine = _engine(ctx, store, settings, options)
+            _answer(ctx, engine.synthesize(run_id, on_started=_started(store)), json_output)
+        except (ValueError, OSError) as exc:
+            raise click.ClickException(str(exc)) from exc
+
+    @workspace.command('report')
+    @click.argument('run_id', required=False)
+    @click.option('--directory', type=click.Path(path_type=str))
+    @click.option('--json', 'json_output', is_flag=True)
+    @click.pass_context
+    def report(ctx, run_id, directory, json_output):
+        """Read saved timing, usage, tool calls and citation metrics; no model calls."""
+        try:
+            _reject_task_inputs(ctx)
+            _, store = _paths(ctx, directory)
+            result = run_report(store, run_id)
+            if json_output:
+                click.echo(json.dumps(result, ensure_ascii=False))
+                return
+            click.echo(f"Run: {result['run_id']} — {result['status']}")
+            if result['source_run']:
+                click.echo(f"Source run: {result['source_run']}")
+            click.echo(f"Wall time: {result['wall_seconds']} seconds")
+            click.echo(f"Tokens across calls: {json.dumps(result['usage'])}")
+            click.echo(f"Notes: {result['notes']} ({result['findings']} findings); "
+                       f"explicit peer citation links: {result['peer_citation_edges']}")
+            for worker in result['workers']:
+                click.echo(f"  {worker['worker']}: {worker['model'] or 'model unrecorded'}; "
+                           f"turns={worker['turns']}; tools={worker['tool_calls']}; "
+                           f"notes delivered/read={worker['notes_delivered']}/{worker['notes_read']}")
+            if result['synthesis_input_sha256']:
+                click.echo(f"Synthesis evidence: {result['synthesis_notes_included']} notes; "
+                           f"{result['synthesis_notes_deduplicated']} identical texts grouped")
+                click.echo(f"Synthesis input SHA-256: {result['synthesis_input_sha256']}")
+            click.echo('Delivery and citations record activity; they do not establish correctness.')
         except (ValueError, OSError) as exc:
             raise click.ClickException(str(exc)) from exc

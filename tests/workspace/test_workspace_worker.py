@@ -26,6 +26,9 @@ class Session:
     def get_params(self):
         return {'model': 'local-test'}
 
+    def get_context(self, _kind):
+        return SimpleNamespace(get=lambda: {'content': 'Resolved system prompt'})
+
     def enter_agent_mode(self, policy):
         self.policy = policy
 
@@ -87,6 +90,8 @@ def test_new_peer_notes_enter_context_between_steps_and_cleanup_runs(tmp_path, m
     assert result['status'] == 'completed'
     assert session.closed
     assert len(store.notes()) == 2
+    assert store.notes(run_id=task['run_id'])[0]['kind'] == 'summary'
+    assert (store.run_dir(task['run_id']) / 'worker-1' / 'system-prompt.md').exists()
 
 
 def test_synthesis_uses_completion_and_receives_no_worker_chat(tmp_path, monkeypatch):
@@ -112,6 +117,20 @@ def test_exhausted_worker_budget_is_incomplete(tmp_path, monkeypatch):
     monkeypatch.setattr(worker, 'run_agent', lambda **kw: ModeResult(
         'Partial evidence', None, 3, None, None, [], stop_reason='steps'))
     assert execute(task)['status'] == 'incomplete'
+
+
+def test_final_summary_links_own_findings_and_explicit_peer_citations(tmp_path, monkeypatch):
+    store, task = spec(tmp_path)
+    session = Session()
+    worker = setup_builder(monkeypatch, session)
+    own = store.publish(task['run_id'], 'worker-1', 'My evidence', 'Own finding')
+    peer = store.publish(task['run_id'], 'worker-2', 'Peer evidence', 'Peer finding')
+    monkeypatch.setattr(worker, 'run_agent', lambda **kw: ModeResult(
+        f"Answer building on {peer['id']}", None, 1, None, None, []))
+    result = execute(task)
+    final = store.read_note(result['note_id'])
+    assert final['kind'] == 'summary'
+    assert set(final['references']) == {own['id'], peer['id']}
 
 
 def test_provider_error_is_not_published_as_a_finding(tmp_path, monkeypatch):

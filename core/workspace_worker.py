@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import hashlib
 import json
 import os
-from pathlib import Path
 import signal
 import sys
 
@@ -51,7 +51,23 @@ def execute(spec: dict) -> dict:
         session = SessionBuilder(config).build(mode='internal', **options)
         session.ui = NullUI()
         session.set_flag('hooks_disabled', True)
-        store.update_worker(run_id, worker, model=session.get_params().get('model'))
+        def save_prompt():
+            system_prompt = session.get_context('prompt')
+            prompt_text = system_prompt.get().get('content', '') if system_prompt else ''
+            atomic_write(directory / 'system-prompt.md', prompt_text)
+            store.update_worker(run_id, worker,
+                                prompt_sha256=hashlib.sha256(prompt_text.encode()).hexdigest())
+
+        save_prompt()
+        params = session.get_params()
+        store.update_worker(
+            run_id, worker, model=params.get('model'),
+            model_name=params.get('model_name'),
+            max_tokens=params.get('max_tokens'),
+            generation_settings={k: params[k] for k in (
+                'max_tokens', 'max_completion_tokens', 'reasoning_effort', 'temperature',
+                'top_p', 'seed') if params.get(k) is not None},
+        )
         session.set_user_data('__workspace__', {
             'directory': str(store.root), 'run_id': run_id, 'worker': worker,
         })
@@ -104,6 +120,9 @@ def execute(spec: dict) -> dict:
                 writes_policy=spec['writes_policy'], disable_hooks=True, output='final',
                 on_event=report,
             )
+        # Agent Mode appends finish/write-policy guidance when preparing its first
+        # turn. Capture that effective prompt as well as the initial live snapshot.
+        save_prompt()
         record = asdict(result)
         record.pop('raw', None)
         record.pop('events', None)
@@ -117,7 +136,10 @@ def execute(spec: dict) -> dict:
                 excerpt = text if len(text) <= 12000 else (
                     text[:11800] + '\n\n[Shortened contribution; full text is in the saved response.]')
                 note = store.publish(run_id, worker,
-                                     f"{worker}: {record['status']} contribution", excerpt)
+                                     f"{worker}: {record['status']} contribution", excerpt,
+                                     [n['id'] for n in store.notes(run_id=run_id, limit=10000)
+                                      if n['worker'] == worker and n.get('kind') != 'summary'],
+                                     kind='summary')
                 record['note_id'] = note['id']
         store.update_worker(run_id, worker, **record, phase='finished', finished_at=now())
         return record

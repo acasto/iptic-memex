@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
 import sys
 import time
@@ -56,6 +57,8 @@ if behavior == 'slow' and spec['phase'] != 'synthesis':
     time.sleep(30)
 if behavior == 'slow-findings' and spec['phase'] != 'synthesis':
     store.publish(run, worker, 'Evidence before timeout', 'A useful intermediate result')
+    time.sleep(30)
+if behavior == 'slow-synthesis' and spec['phase'] == 'synthesis':
     time.sleep(30)
 if spec['phase'] == 'synthesis':
     assert 'PRIVATE WORKER HISTORY' not in spec['message']
@@ -185,3 +188,90 @@ def test_monitor_detects_dead_engine_without_modifying_saved_state(tmp_path, mon
     monkeypatch.setattr(os, 'kill', missing)
     assert store.snapshot(run['id'])['status'] == 'interrupted'
     assert (store.run_dir(run['id']) / 'run.json').read_text() == before
+
+
+def test_replay_freezes_evidence_and_preserves_source_artifacts(tmp_path):
+    runtime = engine(tmp_path)
+    source = runtime.run('Where is model selection?')
+    directory = runtime.store.run_dir(source['id'])
+    before = {p.relative_to(directory): p.read_bytes() for p in directory.rglob('*') if p.is_file()}
+    first = runtime.synthesize(source['id'])
+    assert first['status'] == 'completed'
+    assert first['source_run'] == source['id']
+    assert [w['worker'] for w in first['workers']] == ['synthesis']
+    runtime.store.publish(source['id'], 'worker-2', 'Late addition', 'Not part of frozen evidence')
+    second = runtime.synthesize(first['id'])
+    assert second['synthesis_input_sha256'] == first['synthesis_input_sha256']
+    assert 'Late addition' not in (runtime.store.run_dir(second['id']) /
+                                   'synthesis-input.json').read_text()
+    assert {p.relative_to(directory): p.read_bytes() for p in directory.rglob('*')
+            if p.is_file()} == before
+
+
+def test_legacy_replay_reconstructs_input_without_modifying_source(tmp_path):
+    runtime = engine(tmp_path)
+    source = runtime.run('Where is model selection?')
+    directory = runtime.store.run_dir(source['id'])
+    (directory / 'synthesis-input.json').unlink()
+    before = (directory / 'run.json').read_bytes()
+    result = runtime.synthesize(source['id'])
+    assert result['status'] == 'completed'
+    assert not (directory / 'synthesis-input.json').exists()
+    assert (directory / 'run.json').read_bytes() == before
+
+
+def test_replay_refuses_active_or_empty_sources_and_changed_snapshots(tmp_path):
+    runtime = engine(tmp_path)
+    run = runtime.store.create_run('Question', {})
+    with pytest.raises(ValueError, match='finish'):
+        runtime.synthesize(run['id'])
+    runtime.store.update_run(run['id'], status='completed')
+    with pytest.raises(ValueError, match='no included findings'):
+        runtime.synthesize(run['id'])
+    source = runtime.run('Where is model selection?')
+    path = runtime.store.run_dir(source['id']) / 'synthesis-input.json'
+    evidence = json.loads(path.read_text())
+    evidence['message'] += 'changed'
+    path.write_text(json.dumps(evidence))
+    before = set((runtime.store.root / 'runs').iterdir())
+    with pytest.raises(ValueError, match='checksum'):
+        runtime.synthesize(source['id'])
+    assert set((runtime.store.root / 'runs').iterdir()) == before
+
+
+def test_replay_timeout_stops_only_its_synthesis_child(tmp_path):
+    runtime = engine(tmp_path)
+    source = runtime.run('Where is model selection?')
+    runtime.overrides['test_behavior'] = 'slow-synthesis'
+    runtime.settings.run_timeout_seconds = 0.2
+    result = runtime.synthesize(source['id'])
+    assert result['status'] == 'failed'
+    assert result['workers'][0]['status'] == 'timed_out'
+    assert all(p.poll() is not None for p, _ in runtime._children.values())
+    assert runtime.store.snapshot(source['id'])['status'] == 'completed'
+
+
+def test_synthesis_preserves_full_notes_and_collapses_only_identical_text(tmp_path):
+    runtime = engine(tmp_path)
+    store = runtime.store
+    run = store.create_run('Question', {})
+    content = 'Evidence: ' + 'x' * 7500
+    one = store.publish(run['id'], 'worker-1', 'Finding', content)
+    two = store.publish(run['id'], 'worker-1', 'Final summary', content, [one['id']], kind='summary')
+    other = store.publish(run['id'], 'worker-2', 'Different code', 'if True:\n    run()')
+    store.publish(run['id'], 'worker-2', 'Different indentation', 'if True:\n        run()')
+    result = runtime.build_synthesis_input(run['id'], 'Question')
+    assert result['notes_total'] == result['notes_included'] == 4
+    assert result['notes_deduplicated'] == 1
+    assert result['message'].count('x' * 7500) == 1
+    assert all(n['id'] in result['message'] for n in (one, two, other))
+    assert '"kind": "summary"' in result['message']
+
+
+def test_prose_citations_are_recorded_and_unknown_ids_are_not_links(tmp_path):
+    store = WorkspaceStore(tmp_path)
+    run = store.create_run('Question', {})
+    first = store.publish(run['id'], 'worker-1', 'Evidence', 'A fact')
+    second = store.publish(run['id'], 'worker-2', 'Review',
+                           f"See {first['id']}; missing note-{'0' * 32}")
+    assert second['references'] == [first['id']]

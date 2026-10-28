@@ -47,7 +47,7 @@ Existing chat defaults are unaffected.
 directory = .memex-workspace
 agents = 2
 max_steps_per_agent = 12
-max_tokens = 4096
+max_tokens =
 writes_policy = deny
 run_timeout_seconds = 300
 synthesis_timeout_seconds = 90
@@ -61,6 +61,14 @@ Relative workspace paths resolve against the investigated repository (the
 configured tool base directory by default). The workspace persists across runs;
 different repositories should generally have different workspace directories.
 The default local directory is excluded from Git.
+
+A blank `max_tokens` inherits the selected model's output limit. Set a workspace
+override or use global `-l/--max-tokens` for a deliberate shared limit. Workers and
+synthesis otherwise retain their respective model settings. Existing model/provider
+`supplemental_prompt` addenda apply through the normal prompt pipeline; use those
+for demonstrated model-specific needs rather than restricting the shared prompts.
+Addenda apply to every session using that model; phrase workspace-only guidance
+conditionally if it should not affect ordinary chat or completion runs.
 
 The synthesis allowance is reserved *within* the total timeout. The default
 worker phase therefore has up to 210 seconds, with the remaining 90 seconds
@@ -92,6 +100,8 @@ container environments.
 python main.py workspace status --watch
 python main.py workspace status --directory /path/to/shared-workspace --watch
 python main.py workspace status RUN_ID --json
+python main.py workspace report RUN_ID
+python main.py workspace report RUN_ID --json
 ```
 
 Status reads saved snapshots without invoking a model or controlling the run.
@@ -99,6 +109,46 @@ The newest run is selected when no ID is provided. Closing the monitor has no
 effect on workers. Stop the foreground run with Ctrl-C; the engine stops workers
 and preserves completed notes. A saved running record whose engine process no
 longer exists is displayed as interrupted, without rewriting that record.
+
+`report` also makes no model calls. It reports wall time, cumulative token usage
+across requests (including cache hits), tool counts, note delivery, workspace-tool
+reads/search results, time to first publication, and explicit peer citation links.
+Delivery means a preview entered context; a citation means an ID was recorded in
+references or prose. Neither establishes verification or useful collaboration.
+Unavailable historical measurements are `null`, not assumed zero.
+
+## Compare synthesis models or prompts
+
+```bash
+python main.py -m glm-5.3 workspace synthesize RUN_ID
+python main.py -m gpt-6.1 workspace synthesize REPLAY_RUN_ID
+python main.py -m glm-5.3 -p /path/to/alternate-synthesis.md workspace synthesize REPLAY_RUN_ID
+```
+
+Each command starts only a fresh synthesis session and saves a **new run** with
+its own answer. The source run, notes and answer remain unchanged. The model
+defaults to `[WORKSPACE].synthesis_model` or the normal non-interactive default;
+explicit `-m` wins. For this command, global `-p` overrides the synthesis prompt.
+`--timeout` limits this synthesis alone (90 seconds by default).
+
+New investigations save the exact evidence message in `synthesis-input.json`,
+with its SHA-256 in `run.json`. Replays reuse that frozen input, even if more
+notes appear later. Old runs without a snapshot reconstruct one in the **new**
+run; replay that new run for subsequent comparisons. Reconstruction is not an
+exact reproduction of the historical model request. A modified snapshot whose
+checksum no longer matches is rejected.
+
+Each session saves its resolved `system-prompt.md` and prompt checksum, selected
+model name, and configured output limit. The prompt includes normal supplemental
+addenda and, for workers, Agent Mode's finish/write-policy instructions. These
+are evidence/prompt snapshots, not a full API-request capture. Provider defaults,
+reasoning effort, sampling, budgets and endpoint load can also affect comparisons.
+To compare model quality, hold evidence and prompt constant; to compare prompts,
+hold model and evidence constant. Synthesis replay does not evaluate worker
+investigation or collaboration quality.
+
+Replaying with an external provider sends the included saved findings through
+that provider's configured API, just as an ordinary Memex completion does.
 
 ## Saved records and contributions
 
@@ -111,11 +161,13 @@ workspace/
     question.md
     run.json             # Settings, phase, limits, outcome
     answer.md
+    synthesis-input.json # Frozen evidence message and checksum, when synthesis starts
     worker-1/
       status.json        # Atomic snapshot
       events.jsonl       # Observable step/tool/publication events
       process.log        # Diagnostic stdout/stderr
       response.md        # Final contribution, if any
+      system-prompt.md   # Resolved prompt, including ordinary addenda
     worker-2/...
     synthesis/...
 ```
@@ -126,16 +178,25 @@ cannot overwrite earlier contributions; corrections publish a new note citing
 the old one. Publication validates referenced IDs. Sources such as code paths
 and URLs belong in the Markdown content.
 
+Tool publications are `finding` records. Automatically published final responses
+are `summary` records linked to their author's findings. Valid note IDs explicitly
+mentioned in prose are also captured as references. Summaries preserve new
+information without being presented as additional independent evidence. Historical
+final summaries are identified from saved worker results during synthesis/reporting.
+
 The workspace tool provides keyword search, reading a note, and publication.
 Search returns a bounded selection, not the entire history. New peer notes are
 also made visible between model steps through Memex's ordinary context pipeline.
 Agents cannot receive an update during an already-running model request.
 
 Synthesis receives bounded current findings and referenced historical notes,
-with inclusion counts recorded in `run.json`. It does not receive private
-reasoning traces. Large notes and final contributions may be shortened in this
-input; full saved responses remain available separately. Relevance selection and
-evidence quality remain experimental.
+with inclusion counts recorded in `run.json`. Identical text is included once
+with all originating IDs, authors and references retained. Other notes remain
+separate; there is no semantic deduplication. Whole notes are selected within
+`synthesis_max_chars`; omission counts are visible to synthesis. Auto-published
+final responses exceeding the note-size limit are shortened, with full text kept
+in `response.md`. Private reasoning traces are not passed along. Relevance
+selection and evidence quality remain experimental.
 
 ## Outcomes and initial limits
 
