@@ -8,6 +8,7 @@ import json
 import os
 import signal
 import sys
+import time
 
 from config_manager import ConfigManager
 from core.mode_runner import run_agent, run_completion
@@ -74,6 +75,14 @@ def execute(spec: dict) -> dict:
         seen = set()
 
         def report(event: str, data: dict):
+            if event == 'step_start' and spec.get('deadline_monotonic') is not None:
+                remaining = max(0, spec['deadline_monotonic'] - time.monotonic())
+                data = dict(data, time_remaining_seconds=round(remaining, 1))
+                session.add_context('agent', {
+                    'name': 'workspace_budget',
+                    'content': f'Worker phase time remaining at start of this turn: {remaining:.1f} '
+                               'seconds. The time limit applies independently of the turn limit.',
+                })
             store.event(run_id, worker, event, data)
             store.update_worker(run_id, worker, phase=event, **data)
             if event != 'step_start':

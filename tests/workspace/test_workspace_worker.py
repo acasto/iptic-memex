@@ -161,3 +161,44 @@ def test_workspace_tool_is_gated_and_checks_contribution_dependencies(tmp_path):
     assert action.run({'operation': 'read', 'note_id': note['id']}).payload['ok']
     assert not action.run({'operation': 'publish', 'title': 'Bad', 'content': 'A claim',
                            'references': 'missing'}).payload['ok']
+
+
+def test_rejected_publication_keeps_diagnostics_without_saving_its_body(tmp_path):
+    import json
+    from actions.assistant_workspace_tool_action import AssistantWorkspaceToolAction
+
+    store, task = spec(tmp_path)
+    session = Session()
+    session.data['__workspace__'] = dict(directory=str(store.root), run_id=task['run_id'],
+                                       worker='worker-1')
+    result = AssistantWorkspaceToolAction(session).run(
+        {'operation': 'publish', 'title': 'Too long'}, 'x' * 12001)
+    assert not result.payload['ok']
+    path = store.run_dir(task['run_id']) / 'worker-1' / 'events.jsonl'
+    failure = json.loads(path.read_text().splitlines()[-1])
+    assert failure['event'] == 'workspace_error'
+    assert failure['content_chars'] == 12001
+    assert '12001' in failure['error']
+    assert 'x' * 100 not in path.read_text()
+    assert not store.notes()
+
+
+def test_worker_sees_remaining_time_independently_of_turn_budget(tmp_path, monkeypatch):
+    import time
+
+    store, task = spec(tmp_path)
+    task['deadline_monotonic'] = time.monotonic() + 30
+    session = Session()
+    worker = setup_builder(monkeypatch, session)
+
+    def investigate(**kwargs):
+        kwargs['on_event']('step_start', {'step': 1, 'max_steps': 25})
+        budget = next(data for _, data in session.context if data['name'] == 'workspace_budget')
+        assert 'seconds' in budget['content']
+        assert 'independently' in budget['content']
+        saved = store.snapshot(task['run_id'])['workers'][0]
+        assert 0 < saved['time_remaining_seconds'] <= 30
+        return ModeResult('Finding', None, 1, None, None, [])
+
+    monkeypatch.setattr(worker, 'run_agent', investigate)
+    assert execute(task)['status'] == 'completed'

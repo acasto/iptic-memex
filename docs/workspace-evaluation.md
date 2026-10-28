@@ -85,6 +85,34 @@ This different question, run during development, is not comparable to the origin
 run as a performance experiment. It does show why successful CLI delivery, answer
 quality, useful publication, and collaboration must be measured separately.
 
+## Follow-up run with 25 steps
+
+Run `20261028T030536746930-5d4d162d1a90` retried a TUI review with 25 worker
+steps, following partial run `20261028T025924872020-65407c61ea19`.
+
+Both workers timed out at the 210-second worker deadline, at turns 17 and 21.
+The 300-second total and 90-second synthesis reserve were unchanged; increasing
+the step count did not extend execution time. Both workers explicitly read the
+earlier TUI finding. One attempted to publish a correction shortly before the
+deadline, but no contribution was saved. The generic tool log called it a success
+because the action returned normally, even though a completed action can carry
+`ok=false`. The exact publication error/body were not retained, and the local
+endpoint had no stored response to retrieve, so its validation cause is unknown.
+
+The engine then found no publications belonging to the retry and skipped synthesis,
+discarding the opportunity to answer partially from the historical note workers
+had selected. Historical evidence was previously included only through references
+from newly published notes.
+
+The fixes make step/time limits visible at startup and in status, expose remaining
+time to workers at turn boundaries, preserve workspace validation diagnostics, and
+log explicit tool failures as errors. Explicitly read historical notes can now
+support a clearly labeled partial answer, with current/historical evidence counts.
+Search hits and automatic previews alone do not select historical evidence. The
+original run records and notes are preserved; recovery selection was checked
+against the failed run without modifying it. Lifecycle, selection and tool-result
+regression tests exercise the changes without model calls.
+
 ## Next comparisons
 
 Repeat the synthesis comparisons on additional questions. Then compare full investigations on

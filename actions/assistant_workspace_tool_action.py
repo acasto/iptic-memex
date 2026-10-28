@@ -37,8 +37,10 @@ class AssistantWorkspaceToolAction(StepwiseAction):
                 'operation': {'type': 'string', 'enum': ['search', 'read', 'publish']},
                 'query': {'type': 'string', 'description': 'Search keywords, or blank for recent notes.'},
                 'note_id': {'type': 'string', 'description': 'Published note identifier to read.'},
-                'title': {'type': 'string', 'description': 'Contribution title, up to 200 characters.'},
+                'title': {'type': 'string', 'maxLength': 200,
+                          'description': 'Contribution title, up to 200 characters.'},
                 'content': {'type': 'string',
+                            'maxLength': 12000,
                             'description': 'Markdown contribution, up to 12000 characters.'},
                 'references': {'type': 'string', 'description': 'CSV of existing notes used or corrected.'},
             }},
@@ -48,12 +50,13 @@ class AssistantWorkspaceToolAction(StepwiseAction):
     def start(self, args=None, content=None):
         """Read or atomically publish a contribution; arbitrary filesystem writes are unavailable."""
         args = args or {}
+        scope, store = None, None
+        operation = get_str(args, 'operation')
         try:
             scope = self.session.get_user_data('__workspace__')
             if not scope:
                 raise ValueError('Workspace tool is only available inside a workspace run')
             store = WorkspaceStore(scope['directory'])
-            operation = get_str(args, 'operation')
             if operation == 'search':
                 result = store.notes(get_str(args, 'query') or '')
                 result = [dict(note, content=note['content'][:1500]) for note in result]
@@ -75,6 +78,15 @@ class AssistantWorkspaceToolAction(StepwiseAction):
             payload = {'ok': True, 'result': result}
         except (ValueError, OSError) as exc:
             payload = {'ok': False, 'error': str(exc)}
+            if store is not None and scope:
+                details = {'operation': operation, 'error': str(exc)}
+                if operation == 'publish':
+                    details.update(title_chars=len(get_str(args, 'title') or ''),
+                                   content_chars=len(get_str(args, 'content') or str(content or '')))
+                try:
+                    store.event(scope['run_id'], scope['worker'], 'workspace_error', details)
+                except OSError:
+                    pass  # Preserve the original failure if recording it is also unavailable.
         self.session.add_context('assistant', {
             'name': 'workspace_result', 'content': json.dumps(payload, ensure_ascii=False),
         })

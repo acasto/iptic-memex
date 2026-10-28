@@ -107,7 +107,8 @@ class WorkspaceStore:
         if not title.strip() or not content.strip():
             raise ValueError('A contribution needs a title and content')
         if len(title) > 200 or len(content) > 12000:
-            raise ValueError('Contribution limit: 200 title characters and 12000 content characters')
+            raise ValueError('Contribution limit: 200 title characters and 12000 content characters '
+                             f'(received {len(title)} and {len(content)})')
         if kind not in ('finding', 'summary'):
             raise ValueError('Contribution kind must be finding or summary')
         references = list(dict.fromkeys(references or []))
@@ -182,3 +183,26 @@ class WorkspaceStore:
             except PermissionError:
                 pass
         return dict(record, workers=workers, directory=str(directory))
+
+    def read_notes(self, run_id: str) -> list[dict]:
+        """Return published notes explicitly read by this run's contributors.
+
+        Preview delivery and search hits alone do not select evidence. Ignore an
+        unfinished event line or a note removed after it was read.
+        """
+        note_ids = {}
+        for path in sorted(self.run_dir(run_id).glob('worker-*/events.jsonl')):
+            for line in path.read_text(encoding='utf-8').splitlines():
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if event.get('event') == 'note_read' and event.get('note'):
+                    note_ids[event['note']] = None
+        notes = []
+        for note_id in note_ids:
+            try:
+                notes.append(self.read_note(note_id))
+            except (ValueError, OSError):
+                continue
+        return notes

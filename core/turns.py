@@ -5,7 +5,7 @@ from typing import Any, Callable, List, Optional, Tuple, Literal
 import time
 import random
 import uuid
-from base_classes import InteractionNeeded
+from base_classes import Completed, InteractionNeeded
 from contexts.chat_context import ChatContext as RealChatContext
 from core.hooks import run_hooks
 
@@ -1042,6 +1042,7 @@ class TurnRunner:
                             before_len = 0
 
                         try:
+                            action_result = None
                             action = self.session.get_action(handler.get('name'))
                             with spinner_cm:
                                 with scope_cm:
@@ -1078,7 +1079,7 @@ class TurnRunner:
                                                     from contextlib import nullcontext
                                                     span_cm = nullcontext()
                                                 with span_cm:
-                                                    action.run(args, content)
+                                                    action_result = action.run(args, content)
                                         else:
                                             try:
                                                 from contextlib import nullcontext
@@ -1092,7 +1093,7 @@ class TurnRunner:
                                                 from contextlib import nullcontext
                                                 span_cm = nullcontext()
                                             with span_cm:
-                                                action.run(args, content)
+                                                action_result = action.run(args, content)
                                     except KeyboardInterrupt:
                                         # Cooperative cancellation: mark token and stop executing queued calls
                                         try:
@@ -1155,7 +1156,7 @@ class TurnRunner:
                                             token = getattr(need, 'state_token', '__unknown__')
                                             while True:
                                                 try:
-                                                    action.resume(token, response)
+                                                    action_result = action.resume(token, response)
                                                     break
                                                 except InteractionNeeded as need2:
                                                     response = prompt_fn(need2)
@@ -1187,7 +1188,7 @@ class TurnRunner:
                                                 from contextlib import nullcontext
                                                 span_cm = nullcontext()
                                             with span_cm:
-                                                action.run(args, content)
+                                                action_result = action.run(args, content)
                                         except KeyboardInterrupt:
                                             try:
                                                 self.session.set_flag('turn_cancelled', True)
@@ -1246,7 +1247,7 @@ class TurnRunner:
                                                 token = getattr(need, 'state_token', '__unknown__')
                                                 while True:
                                                     try:
-                                                        action.resume(token, response)
+                                                        action_result = action.resume(token, response)
                                                         break
                                                     except InteractionNeeded as need2:
                                                         response = prompt_fn(need2)
@@ -1298,7 +1299,12 @@ class TurnRunner:
                                 self.session.set_flag('auto_submit', True)
                             except Exception:
                                 pass
-                            # Log successful tool execution summary
+                            # A completed action may report a recoverable tool failure.
+                            # Keep its tool result for the model, but do not log it as success.
+                            payload = (action_result.payload
+                                       if isinstance(action_result, Completed) else None)
+                            result_error = (isinstance(payload, dict)
+                                            and payload.get('ok') is False)
                             try:
                                 after_ctx2 = list(self.session.get_contexts('assistant') or [])
                                 delta = max(0, len(after_ctx2) - (before_len if 'before_len' in locals() else 0))
@@ -1313,7 +1319,12 @@ class TurnRunner:
                             except Exception:
                                 pass
                             try:
-                                self.session.utils.logger.tool_end(name=name, call_id=call_id, status='success', result_meta={'assistant_additions': delta})
+                                metadata = {'assistant_additions': delta}
+                                if result_error:
+                                    metadata['error'] = payload.get('error') or 'Tool reported failure'
+                                self.session.utils.logger.tool_end(
+                                    name=name, call_id=call_id,
+                                    status='error' if result_error else 'success', result_meta=metadata)
                             except Exception:
                                 pass
                         except Exception as e:

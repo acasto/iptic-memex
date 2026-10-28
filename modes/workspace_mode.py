@@ -28,6 +28,8 @@ def _paths(ctx, directory: str | None, repository: str | None = None):
 def _render_status(snapshot: dict) -> str:
     lines = [f"Run: {snapshot['id']} — {snapshot['status']} ({snapshot['phase']})",
              f"Question: {snapshot['question']}", f"Saved in: {snapshot['directory']}"]
+    if limit := _render_limits(snapshot):
+        lines.append(limit)
     for worker in snapshot['workers']:
         step = f"step {worker['step']}/{worker.get('max_steps', '?')}" if 'step' in worker else ''
         action = worker.get('tool') if worker.get('phase') == 'tool_start' else worker.get('phase')
@@ -38,6 +40,18 @@ def _render_status(snapshot: dict) -> str:
     if snapshot.get('error'):
         lines.append(f"Notice: {snapshot['error']}")
     return '\n'.join(lines)
+
+
+def _render_limits(record: dict) -> str:
+    total = record.get('run_timeout_seconds')
+    if total is None:
+        return ''
+    if record.get('kind') == 'synthesis':
+        return f'Synthesis time limit: {total:g}s'
+    reserved = record.get('synthesis_timeout_seconds', 0)
+    return (f"Limits: {record.get('steps', '?')} steps/worker; worker phase up to "
+            f'{total - reserved:g}s; total {total:g}s '
+            f'(reserves {reserved:g}s for synthesis)')
 
 
 def _engine(ctx, store, settings, options):
@@ -60,6 +74,8 @@ def _started(store):
     def notify(record):
         click.echo(f"Workspace run: {record['id']}\nSaved in: {store.run_dir(record['id'])}",
                    err=True)
+        if limit := _render_limits(record):
+            click.echo(limit, err=True)
     return notify
 
 
@@ -230,9 +246,14 @@ def register_workspace_commands(cli, task_message) -> None:
                 click.echo(f"  {worker['worker']}: {worker['model'] or 'model unrecorded'}; "
                            f"turns={worker['turns']}; tools={worker['tool_calls']}; "
                            f"notes delivered/read={worker['notes_delivered']}/{worker['notes_read']}")
+                for failure in worker['workspace_errors']:
+                    click.echo(f"    workspace {failure['operation']} failed: {failure['error']}")
             if result['synthesis_input_sha256']:
                 click.echo(f"Synthesis evidence: {result['synthesis_notes_included']} notes; "
                            f"{result['synthesis_notes_deduplicated']} identical texts grouped")
+                if result['synthesis_notes_current'] is not None:
+                    click.echo(f"  {result['synthesis_notes_current']} from this investigation; "
+                               f"{result['synthesis_notes_historical']} historical")
                 click.echo(f"Synthesis input SHA-256: {result['synthesis_input_sha256']}")
             click.echo('Delivery and citations record activity; they do not establish correctness.')
         except (ValueError, OSError) as exc:

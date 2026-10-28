@@ -88,6 +88,15 @@ available for synthesis. Workers that finish early leave more time available.
 When overriding `--timeout`, keep `--synthesis-timeout` smaller than it.
 Shutdown may take an additional short cleanup grace period.
 
+Step and time limits are independent. Increasing `--steps` does not extend the
+worker phase. For example, `--steps 25 --timeout 600` allows up to 25 turns per
+worker within a 510-second worker phase, retaining the default 90-second reserve.
+Startup and `workspace status` display both limits. A worker can time out before
+reaching its step limit.
+Workers receive their remaining time at each turn boundary through an ordinary
+context update, alongside the existing turn limit. This reports the execution
+budget without assigning work or requiring a particular investigation strategy.
+
 Tool profiles inherit the normal non-interactive settings and blocklist. The
 `workspace` tool is added to the selected profile and is only exposed inside
 workspace sessions. Blocking it prevents a contributor from running. `--tools
@@ -125,6 +134,9 @@ longer exists is displayed as interrupted, without rewriting that record.
 `report` also makes no model calls. It reports wall time, cumulative token usage
 across requests (including cache hits), tool counts, note delivery, workspace-tool
 reads/search results, time to first publication, and explicit peer citation links.
+Workspace validation errors, including rejected publication sizes, are retained in
+worker event logs and shown by `report`. A returned `ok=false` tool result is
+logged as an error even when its action completed without raising an exception.
 Delivery means a preview entered context; a citation means an ID was recorded in
 references or prose. Neither establishes verification or useful collaboration.
 Unavailable historical measurements are `null`, not assumed zero.
@@ -149,6 +161,11 @@ notes appear later. Old runs without a snapshot reconstruct one in the **new**
 run; replay that new run for subsequent comparisons. Reconstruction is not an
 exact reproduction of the historical model request. A modified snapshot whose
 checksum no longer matches is rejected.
+
+For older failed investigations without a snapshot, reconstruction can recover
+historical notes explicitly read by their workers, even if they published no new
+notes. An answer based only on historical notes is labeled partial. The failed
+source run remains unchanged.
 
 Each session saves its resolved `system-prompt.md` and prompt checksum, selected
 model name, and configured output limit. The prompt includes normal supplemental
@@ -201,7 +218,8 @@ Search returns a bounded selection, not the entire history. New peer notes are
 also made visible between model steps through Memex's ordinary context pipeline.
 Agents cannot receive an update during an already-running model request.
 
-Synthesis receives bounded current findings and referenced historical notes,
+Synthesis receives bounded current findings, historical notes explicitly read
+through the workspace tool by the run's workers, and referenced historical notes,
 with inclusion counts recorded in `run.json`. Identical text is included once
 with all originating IDs, authors and references retained. Other notes remain
 separate; there is no semantic deduplication. Whole notes are selected within
@@ -209,6 +227,12 @@ separate; there is no semantic deduplication. Whole notes are selected within
 final responses exceeding the note-size limit are shortened, with full text kept
 in `response.md`. Private reasoning traces are not passed along. Relevance
 selection and evidence quality remain experimental.
+
+Historical search hits and automatically delivered previews alone do not select
+notes for synthesis. Reusing a previously published note does not establish that
+its claims were revalidated. When no new contributions exist, selected historical
+notes can still support a partial answer with an explicit notice. Run records and
+reports distinguish current from historical evidence.
 
 ## Outcomes and initial limits
 

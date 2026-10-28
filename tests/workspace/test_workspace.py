@@ -62,9 +62,13 @@ if behavior == 'slow-synthesis' and spec['phase'] == 'synthesis':
     time.sleep(30)
 if spec['phase'] == 'synthesis':
     assert 'PRIVATE WORKER HISTORY' not in spec['message']
-    assert 'observed peer checkpoint' in spec['message'] or behavior in ('crash', 'slow-findings')
+    assert 'observed peer checkpoint' in spec['message'] or behavior in ('crash', 'slow-findings', 'reuse')
     atomic_write(store.run_dir(run) / 'synthesis-input.txt', spec['message'])
     store.update_worker(run, worker, status='completed', last_text='A grounded answer', usage={})
+elif behavior == 'reuse':
+    note = store.notes('historical-TUI')[0]
+    store.event(run, worker, 'note_read', {'note': note['id']})
+    store.update_worker(run, worker, status='completed', last_text='')
 elif behavior == 'crash':
     store.publish(run, worker, 'Surviving evidence', 'Useful partial finding')
     store.update_worker(run, worker, status='completed', last_text='Useful partial finding')
@@ -275,3 +279,46 @@ def test_prose_citations_are_recorded_and_unknown_ids_are_not_links(tmp_path):
     second = store.publish(run['id'], 'worker-2', 'Review',
                            f"See {first['id']}; missing note-{'0' * 32}")
     assert second['references'] == [first['id']]
+
+
+def test_historical_read_can_support_partial_answer_without_new_publications(tmp_path):
+    runtime = engine(tmp_path, 'reuse')
+    prior = runtime.store.create_run('Earlier TUI review', {})
+    old = runtime.store.publish(prior['id'], 'worker-1', 'historical-TUI', 'Prior TUI evidence')
+    result = runtime.run('Continue the earlier review')
+    assert result['status'] == 'partial'
+    assert 'Partial result' in result['answer']
+    assert 'earlier notes' in result['answer']
+    assert result['synthesis_notes_current'] == 0
+    assert result['synthesis_notes_historical'] == 1
+    assert not runtime.store.notes(run_id=result['id'])
+    assert old['id'] in (runtime.store.run_dir(result['id']) / 'synthesis-input.txt').read_text()
+    replay = runtime.synthesize(result['id'])
+    assert replay['status'] == 'partial'
+
+
+def test_preview_and_search_hits_do_not_select_unread_historical_evidence(tmp_path):
+    runtime = engine(tmp_path)
+    store = runtime.store
+    prior = store.create_run('Earlier notes', {})
+    selected = store.publish(prior['id'], 'worker-1', 'Relevant', 'Prior TUI evidence')
+    ignored = store.publish(prior['id'], 'worker-2', 'Unrelated', 'Other question')
+    current = store.create_run('Follow up', {})
+    store.event(current['id'], 'worker-1', 'notes_seen', {'notes': [ignored['id']]})
+    store.event(current['id'], 'worker-1', 'notes_searched', {'notes': [ignored['id']]})
+    store.event(current['id'], 'worker-1', 'note_read', {'note': selected['id']})
+    evidence = runtime.build_synthesis_input(current['id'], 'Follow up')
+    assert selected['id'] in evidence['message']
+    assert ignored['id'] not in evidence['message']
+    assert evidence['notes_historical'] == 1
+
+
+def test_failure_answer_reports_worker_deadline_and_progress(tmp_path):
+    runtime = engine(tmp_path, 'slow')
+    runtime.settings.run_timeout_seconds = 0.5
+    runtime.settings.synthesis_timeout_seconds = 0.2
+    result = runtime.run('Question')
+    assert result['status'] == 'failed'
+    assert 'timed_out' in result['answer']
+    assert 'Execution time limit reached' in result['answer']
+    assert all(w['stop_reason'] == 'timeout' for w in result['workers'])

@@ -110,3 +110,30 @@ def test_turnrunner_emits_stub_on_action_exception(monkeypatch):
     assert tool_msgs and tool_msgs[-1].get('tool_call_id') == 't3'
     assert 'Error:' in (tool_msgs[-1].get('message') or '')
 
+
+def test_completed_tool_failure_is_logged_as_error_and_returned_to_model(tmp_path, monkeypatch):
+    import json
+    from core.workspace_state import WorkspaceStore
+
+    store = WorkspaceStore(tmp_path)
+    run = store.create_run('Question', {})
+    sess = _make_session()
+    sess.set_user_data('__workspace__', {
+        'directory': str(tmp_path), 'run_id': run['id'], 'worker': 'worker-1',
+    })
+    sess.set_option('active_tools_agent', 'workspace')
+    sess.set_option('tool_mode', 'official')
+    sess.enter_agent_mode('deny')
+    sess.provider = FakeProvider([{'id': 'rejected-note', 'name': 'workspace', 'arguments': {
+        'operation': 'publish', 'title': 'Oversized note', 'content': 'x' * 12001,
+    }}])
+    logged = []
+    monkeypatch.setattr(sess.utils.logger, 'tool_end', lambda **data: logged.append(data))
+    assert TurnRunner(sess)._execute_tools('') is True
+    assert logged[-1]['status'] == 'error'
+    assert '12001' in logged[-1]['result_meta']['error']
+    messages = sess.get_context('chat').get('all')
+    result = next(m for m in messages if m.get('tool_call_id') == 'rejected-note')
+    assert json.loads(result['message'])['ok'] is False
+    assert not store.notes()
+
