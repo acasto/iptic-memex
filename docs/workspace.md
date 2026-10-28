@@ -35,10 +35,22 @@ The question may instead be supplied with `--message` or `--stdin-message`.
 `--json` returns the run record and answer. File attachments are not supported
 in this initial mode; use `--repository` for source access.
 
-Workers and synthesis inherit `[AGENT].default_model` (`glm-5.3` for this
-experiment). The local alias must exist in your model configuration. Explicit
-`-m` takes precedence. `--synthesis-model` can select a different answer model.
-Existing chat defaults are unaffected.
+Workers inherit `[AGENT].default_model` (`glm-5.3` for this experiment).
+Synthesis uses `[WORKSPACE].synthesis_model`, now configured as `gpt-6.1`.
+Both aliases must exist in your model configuration. A normal run therefore
+uses local GLM workers and sends their published findings to GPT-6.1 for the
+final answer. Existing chat defaults are unaffected.
+
+Model precedence for synthesis, highest first:
+
+1. `workspace run --synthesis-model MODEL`
+2. Global `-m MODEL` (overrides both workers and synthesis)
+3. `[WORKSPACE].synthesis_model`
+4. The worker model, when the synthesis setting is blank
+
+For example, `python main.py -m glm-5.3 workspace run "Question"` keeps the
+entire run local. To change only the worker model while retaining a separate
+answer model, specify both `-m WORKER_MODEL` and `--synthesis-model ANSWER_MODEL`.
 
 ## Configuration
 
@@ -51,7 +63,7 @@ max_tokens =
 writes_policy = deny
 run_timeout_seconds = 300
 synthesis_timeout_seconds = 90
-synthesis_model =
+synthesis_model = gpt-6.1
 worker_prompt = workspace/contribute
 synthesis_prompt = workspace/synthesize
 synthesis_max_chars = 48000
