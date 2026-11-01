@@ -1,4 +1,5 @@
 import os
+from core.provider_turns import provider_turns
 from time import time
 import json
 from copy import deepcopy
@@ -177,7 +178,7 @@ class OpenAIResponsesProvider(OpenAIUsage, APIProvider):
         input_items = []
         params = self.session.get_params()
         model = params.get('model_name', params.get('model'))
-        for turn in turns:
+        for turn in provider_turns(turns):
             role = turn.get('role')
             if role == 'assistant' and 'responses_output' in turn:
                 if (turn.get('responses_model') == model

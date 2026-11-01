@@ -103,7 +103,7 @@ def _build_subsession(
 def run_completion(
     *, builder=None, overrides=None, contexts=None, message='', capture='text',
     trace=None, session=None, stream=False, stdin_as_message=False,
-    on_event=None, cancellation=None,
+    on_event=None, cancellation=None, interactions=None,
 ):
     """Application adapter for completion; no TurnRunner or NullUI execution."""
     from app.completion import run_completion as complete
@@ -115,7 +115,7 @@ def run_completion(
         sess.utils.logger.update_base_context(trace_ctx)
     return complete(session=sess, message=message, contexts=contexts, stream=stream,
                     capture=capture, stdin_as_message=stdin_as_message,
-                    on_event=on_event, cancellation=cancellation)
+                    on_event=on_event, cancellation=cancellation, interactions=interactions)
 
 
 def run_agent(

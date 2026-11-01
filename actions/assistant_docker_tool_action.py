@@ -124,7 +124,7 @@ class AssistantDockerToolAction(InteractionAction):
             )
             # Non-allow write policies need a fresh container so read-only mounts
             # cannot be bypassed by a previously-created persistent container.
-            force_ephemeral = in_agent and (always_ephemeral or self._agent_forces_readonly())
+            force_ephemeral = (in_agent and always_ephemeral) or self._agent_forces_readonly()
         except Exception:
             force_ephemeral = False
         self.docker_env = 'ephemeral' if force_ephemeral else desired_env
@@ -164,12 +164,7 @@ class AssistantDockerToolAction(InteractionAction):
         return default
 
     def _agent_write_policy(self) -> Optional[str]:
-        """Return the active agent write policy if this session is in agent mode."""
-        try:
-            if not self.session.in_agent_mode():
-                return None
-        except Exception:
-            return None
+        """Return the resolved write policy, including non-agent runtime sessions."""
         try:
             policy = self.session.get_agent_write_policy()
         except Exception:

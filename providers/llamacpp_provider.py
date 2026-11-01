@@ -1,3 +1,4 @@
+from core.provider_turns import provider_turns
 from time import time
 from base_classes import APIProvider
 from llama_cpp import Llama
@@ -467,7 +468,7 @@ class LlamaCppProvider(APIProvider):
 
         chat = self.session.get_context('chat')
         if chat is not None:
-            for turn in chat.get():
+            for turn in provider_turns(chat.get()):
                 turn_context = ''
                 if 'context' in turn and turn['context']:
                     turn_context = self.session.get_action('process_contexts').process_contexts_for_assistant(

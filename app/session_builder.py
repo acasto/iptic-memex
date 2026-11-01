@@ -54,6 +54,9 @@ class SessionBuilder:
             pass
 
         session.current_model = eff_options.get('model')
+        if ui_mode == 'chat':
+            from app.runtime_services import install_tool_selection
+            install_tool_selection(session, 'TOOLS')
 
         # Initialize UI first so we can present status/spinners during provider startup
         try:

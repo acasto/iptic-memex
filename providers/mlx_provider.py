@@ -1,5 +1,6 @@
 import time
 import os
+from core.provider_turns import provider_turns
 from base_classes import APIProvider
 from actions.process_contexts_action import ProcessContextsAction
 
@@ -244,7 +245,7 @@ class MlxProvider(APIProvider):
         # Add chat history
         chat = self.session.get_context('chat')
         if chat is not None:
-            for turn in chat.get():
+            for turn in provider_turns(chat.get()):
                 turn_context = ''
                 if 'context' in turn and turn['context']:
                     # Process contexts (text only - MLX doesn't handle images directly)

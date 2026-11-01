@@ -128,6 +128,15 @@ class AssistantFileToolAction(StepwiseAction):
                 self.session.add_context('assistant', {'name': 'file_tool_result', 'content': 'Operation cancelled by user'})
                 return Completed({'ok': True, 'cancelled': True})
             
+            pending = getattr(self, '_pending_edit', None)
+            if pending:
+                self._pending_edit = None
+                filename, original, candidate = pending
+                if self.fs_handler.read_file(filename) != original:
+                    return Completed({'ok': False, 'error': 'File changed after the edit preview; request a fresh edit'})
+                self._handle_write(filename, candidate, force=True)
+                return Completed({'ok': True, 'mode': 'edit', 'file': filename})
+
             # Re-execute the operation with force=True to skip confirmation
             args = getattr(self, '_current_args', {})
             content = getattr(self, '_current_content', '')
@@ -145,45 +154,15 @@ class AssistantFileToolAction(StepwiseAction):
         try:
             # Central preflight confirmation so all UIs behave consistently
             if not force and self._needs_confirmation(mode, filename, args):
-                blocking = True
-                try:
-                    blocking = bool(getattr(self.session.ui, 'capabilities', None) and self.session.ui.capabilities.blocking)
-                except Exception:
-                    blocking = True
                 if mode in {'write', 'append'}:
                     preview = self._build_write_diff_preview(filename, content, append=(mode == 'append'))
-                    if blocking:
-                        try:
-                            self.session.utils.output.write(preview)
-                        except Exception:
-                            pass
-                        ans = False
-                        try:
-                            ans = bool(self.session.ui.ask_bool('Confirm?', default=False))
-                        except Exception:
-                            ans = False
-                        if not ans:
-                            self.session.add_context('assistant', {'name': 'file_tool_result', 'content': 'Operation cancelled by user'})
-                            return Completed({'ok': True, 'cancelled': True})
-                        force = True
-                    else:
-                        prompt = (preview + "\n\nConfirm?") if preview else self._build_confirm_prompt(mode, filename, args)
-                        raise InteractionNeeded('bool', {'prompt': prompt, 'default': False}, state_token='file_operation_confirm')
+                    prompt = (preview + "\n\nConfirm?") if preview else self._build_confirm_prompt(mode, filename, args)
                 else:
-                    # delete/rename/copy generic confirm
-                    if blocking:
-                        ans = False
-                        try:
-                            ans = bool(self.session.ui.ask_bool(self._build_confirm_prompt(mode, filename, args), default=False))
-                        except Exception:
-                            ans = False
-                        if not ans:
-                            self.session.add_context('assistant', {'name': 'file_tool_result', 'content': 'Operation cancelled by user'})
-                            return Completed({'ok': True, 'cancelled': True})
-                        force = True
-                    else:
-                        prompt = self._build_confirm_prompt(mode, filename, args)
-                        raise InteractionNeeded('bool', {'prompt': prompt, 'default': False}, state_token='file_operation_confirm')
+                    prompt = self._build_confirm_prompt(mode, filename, args)
+                if not self.session.ui.ask_bool(prompt, default=False):
+                    self.session.add_context('assistant', {'name': 'file_tool_result', 'content': 'Operation cancelled by user'})
+                    return Completed({'ok': True, 'cancelled': True})
+                force = True
             handlers = {
                 'read': lambda f: self._handle_read(f),
                 'write': lambda f: self._handle_write(f, content, force=force),
@@ -219,17 +198,17 @@ class AssistantFileToolAction(StepwiseAction):
             return Completed({'ok': True, 'mode': mode, 'file': filename})
             
         except InteractionNeeded as need:
-            # Re-raise with our own state token so we can resume properly
-            raise InteractionNeeded(
-                kind=need.kind,
-                spec=need.spec,
-                state_token='file_operation_confirm'
-            )
+            # Keep the request identity when this originated in the runtime's
+            # input service; legacy adapters still use the action state token.
+            need.state_token = 'file_operation_confirm'
+            raise
 
     # ---- Handlers ----------------------------------------------------------
     def _handle_read(self, filename: str) -> None:
         resolved_path = self.fs_handler.resolve_path(filename)
         if resolved_path is None:
+            self.session.add_context('assistant', {'name': 'file_tool_error',
+                                                  'content': f'Could not access file: {filename}'})
             return
 
         kind = self._detect_kind(resolved_path)
@@ -424,6 +403,8 @@ class AssistantFileToolAction(StepwiseAction):
                 except Exception:
                     pass
             msg = 'File written successfully' if success else f'Failed to write file: {filename}'
+            if not success:
+                raise OSError(msg)
             self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
             return
         if policy == 'deny':
@@ -455,6 +436,8 @@ class AssistantFileToolAction(StepwiseAction):
             except Exception:
                 pass
         msg = 'File written successfully' if success else f'Failed to write file: {filename}'
+        if not success:
+            raise OSError(msg)
         self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
 
     def _handle_append(self, filename: str, content: str, force: bool = False) -> None:
@@ -473,6 +456,8 @@ class AssistantFileToolAction(StepwiseAction):
                 except Exception:
                     pass
             msg = 'Content appended successfully' if success else f'Failed to append to file: {filename}'
+            if not success:
+                raise OSError(msg)
             self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
             return
         if policy == 'deny':
@@ -505,6 +490,8 @@ class AssistantFileToolAction(StepwiseAction):
             except Exception:
                 pass
         msg = 'Content appended successfully' if success else f'Failed to append to file: {filename}'
+        if not success:
+            raise OSError(msg)
         self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
 
     def _handle_summary(self, filename: str) -> None:
@@ -542,6 +529,8 @@ class AssistantFileToolAction(StepwiseAction):
             else:
                 success = self.fs_handler.delete_file(filename, force=force)
             msg = 'Delete operation successful' if success else f'Failed to delete: {filename}'
+            if not success:
+                raise OSError(msg)
             self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
             return
         if policy == 'deny':
@@ -557,6 +546,8 @@ class AssistantFileToolAction(StepwiseAction):
         else:
             success = self.fs_handler.delete_file(filename, force=True)
         msg = 'Delete operation successful' if success else f'Failed to delete: {filename}'
+        if not success:
+            raise OSError(msg)
         self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
 
     def _handle_rename(self, old_name: str, new_name: str, force: bool = False) -> None:
@@ -564,6 +555,8 @@ class AssistantFileToolAction(StepwiseAction):
         if policy is None:
             success = self.fs_handler.rename(old_name, new_name, force=force)
             msg = 'Rename operation successful' if success else f'Failed to rename {old_name} to {new_name}'
+            if not success:
+                raise OSError(msg)
             self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
             return
         if policy == 'deny':
@@ -574,6 +567,8 @@ class AssistantFileToolAction(StepwiseAction):
             return
         success = self.fs_handler.rename(old_name, new_name, force=True)
         msg = 'Rename operation successful' if success else f'Failed to rename {old_name} to {new_name}'
+        if not success:
+            raise OSError(msg)
         self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
 
     def _handle_copy(self, filename: str, new_name: str, force: bool = False) -> None:
@@ -581,6 +576,8 @@ class AssistantFileToolAction(StepwiseAction):
         if policy is None:
             success = self.fs_handler.copy(filename, new_name, force=force)
             msg = 'Copy operation successful' if success else f'Failed to copy {filename} to {new_name}'
+            if not success:
+                raise OSError(msg)
             self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
             return
         if policy == 'deny':
@@ -591,6 +588,8 @@ class AssistantFileToolAction(StepwiseAction):
             return
         success = self.fs_handler.copy(filename, new_name, force=True)
         msg = 'Copy operation successful' if success else f'Failed to copy {filename} to {new_name}'
+        if not success:
+            raise OSError(msg)
         self.session.add_context('assistant', {'name': 'file_tool_result', 'content': msg})
 
     def _handle_patch(self, filename: str, patch_content: str, force: bool = False) -> None:
@@ -710,27 +709,17 @@ class AssistantFileToolAction(StepwiseAction):
                 except Exception:
                     diff_text = None
                 preview = diff_text or '(no diff)'
-                blocking = True
-                try:
-                    blocking = bool(getattr(self.session.ui, 'capabilities', None) and self.session.ui.capabilities.blocking)
-                except Exception:
-                    blocking = True
-                if blocking:
-                    try:
-                        self.session.utils.output.write(f"Proposed edit to {filename}:\n\n{preview}")
-                    except Exception:
-                        pass
-                    ans = False
-                    try:
-                        ans = bool(self.session.ui.ask_bool('Confirm apply edits?', default=False))
-                    except Exception:
-                        ans = False
-                    if not ans:
-                        self.session.add_context('assistant', {'name': 'file_tool_result', 'content': 'Operation cancelled by user'})
-                        return
-                    force = True
-                else:
-                    raise InteractionNeeded('bool', {'prompt': f"Proposed edit to {filename}:\n\n{preview}\n\nConfirm apply edits?", 'default': False}, state_token='file_operation_confirm')
+                self._pending_edit = (filename, original_content, edited_content)
+                if not self.session.ui.ask_bool(
+                        f"Proposed edit to {filename}:\n\n{preview}\n\nConfirm apply edits?",
+                        default=False):
+                    self._pending_edit = None
+                    self.session.add_context('assistant', {'name': 'file_tool_result', 'content': 'Operation cancelled by user'})
+                    return
+                self._pending_edit = None
+                if self.fs_handler.read_file(filename) != original_content:
+                    raise ValueError('File changed after the edit preview; request a fresh edit')
+                force = True
             self._handle_write(filename, edited_content, force=force)
             return
         if policy == 'deny':
@@ -872,7 +861,8 @@ class AssistantFileToolAction(StepwiseAction):
 
     def _build_write_diff_preview(self, filename: str, new_content: str, *, append: bool) -> str:
         try:
-            current = self.fs_handler.read_file(filename) or ''
+            path = self.fs_handler.resolve_path(filename)
+            current = (self.fs_handler.read_file(filename) or '') if path and os.path.exists(path) else ''
         except Exception:
             current = ''
         cand = new_content

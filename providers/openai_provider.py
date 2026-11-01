@@ -1,5 +1,6 @@
 import os
 import json
+from core.provider_turns import provider_turns
 from time import time
 import openai
 from openai import OpenAI
@@ -409,7 +410,7 @@ class OpenAIProvider(OpenAIUsage, APIProvider):
             # Check if provider uses simple message format
             use_simple_format = self.session.get_params().get('use_simple_message_format', False)
 
-            for idx, turn in enumerate(chat.get()):
+            for idx, turn in enumerate(provider_turns(chat.get())):
                 # Assistant tool calls: include 'tool_calls' array on assistant message
                 if turn.get('role') == 'assistant' and 'tool_calls' in turn:
                     tool_calls_out = []

@@ -1,4 +1,4 @@
-"""One tool-free execution lifecycle for completion callers.
+"""One execution lifecycle for submitted tasks and their tool exchanges.
 
 No frontend, renderer, hooks, agent loop, or workspace coordination lives here.
 """
@@ -14,12 +14,10 @@ from base_classes import InteractionNeeded
 from core.cancellation import CancellationToken
 from core.input_limits import compute_context_tokens, count_text_tokens
 from core.runtime.contracts import RunEvent, RunOutcome, RunRequest
-from core.runtime.response import ResponseProcessor
-
-
-def _optional(provider, method):
-    fn = getattr(provider, method, None)
-    return fn() if fn else None
+from core.runtime.provider import invoke, optional
+from core.runtime.interaction import InteractionService
+from core.runtime.tools import (action_services, collect_calls, record_result,
+                                run_call, take_contexts)
 
 
 def _record_input(session, request):
@@ -49,21 +47,27 @@ def _record_input(session, request):
         if context is None:
             raise ValueError('Could not create turn prompt context')
         contexts.append({'type': 'assistant', 'context': context})
-    prompt = session.get_context('prompt')
-    tokens = compute_context_tokens(session, contexts) + count_text_tokens(session, message)
-    for turn in chat.get('all'):
-        tokens += count_text_tokens(session, turn.get('message', ''))
-        tokens += compute_context_tokens(session, turn.get('context'))
-    if prompt:
-        tokens += count_text_tokens(session, prompt.get().get('content', ''))
-    if request.input_limit and tokens > request.input_limit:
+    tokens = _input_tokens(session, chat, contexts, message)
+    if request.input_limit and request.input_limit > 0 and tokens > request.input_limit:
         raise InputLimitExceeded(tokens, request.input_limit)
-    chat.add(message, 'user', contexts)
+    chat.add(message, 'user', contexts, extra={'meta': meta})
     # Ownership moves to the chat turn, retaining original context objects.
     for kind in list(getattr(session, 'context', {})):
         if kind not in ('chat', 'prompt'):
             session.remove_context_type(kind)
     return chat
+
+
+def _input_tokens(session, chat, contexts=(), message=''):
+    prompt = session.get_context('prompt')
+    tokens = compute_context_tokens(session, contexts) + count_text_tokens(session, message)
+    for turn in chat.get('all'):
+        tokens += count_text_tokens(session, turn.get('message', ''))
+        if turn.get('role') != 'tool':
+            tokens += compute_context_tokens(session, turn.get('context'))
+    if prompt:
+        tokens += count_text_tokens(session, prompt.get().get('content', ''))
+    return tokens
 
 
 class InputLimitExceeded(ValueError):
@@ -72,13 +76,15 @@ class InputLimitExceeded(ValueError):
         self.tokens, self.limit = tokens, limit
 
 
-def execute(session, request: RunRequest, *, on_event=None, cancellation=None) -> RunOutcome:
-    """Execute one provider call, emitting ordered events and returning its outcome.
+def execute(session, request: RunRequest, *, on_event=None, cancellation=None,
+            interactions=None, before_call=None, after_run=None) -> RunOutcome:
+    """Own a submitted task through bounded provider/tool exchanges.
 
-    Cancellation is cooperative. Callers may run this blocking function on their
-    own worker thread and cancel the supplied token. Concurrent runs on one
-    session are rejected; independent sessions do not share a lock.
+    Separate sessions can run concurrently. Responses to input can arrive on
+    another thread through InteractionService; no frontend drives continuation.
     """
+    if request.max_calls < 1:
+        raise ValueError('max_calls must be positive')
     lock = getattr(session, '_execution_lock', None)
     if lock is None:
         lock = session._execution_lock = Lock()
@@ -86,6 +92,7 @@ def execute(session, request: RunRequest, *, on_event=None, cancellation=None) -
         raise RuntimeError('Session already has an active run')
     token = cancellation if cancellation is not None else CancellationToken()
     result = RunOutcome(run_id=uuid4().hex)
+    session._active_run_id = result.run_id
     observer = on_event
     sequence = 0
 
@@ -106,153 +113,157 @@ def execute(session, request: RunRequest, *, on_event=None, cancellation=None) -
                 observer = None
                 emit('warning', {'code': 'observer_failed', 'message': str(exc) or type(exc).__name__})
 
-    processor = None
-    provider = None
-    stream = None
-    chat = None
-    old_stream = None
-    changed_stream = False
-    overrides = getattr(getattr(session, 'config', None), 'overrides', None)
-    stream_overridden = isinstance(overrides, dict) and 'stream' in overrides
-    original_stream_override = overrides.get('stream') if stream_overridden else None
-    channel = getattr(session, 'runtime_events', None)
-    stack = ExitStack()
+    def fail(status, reason, error):
+        result.status, result.stop_reason, result.error = status, reason, error
 
     def metric(method):
         try:
-            return _optional(provider, method)
+            return optional(provider, method)
         except Exception as exc:
             emit('warning', {'code': 'metric_unavailable', 'method': method,
                              'message': str(exc) or type(exc).__name__})
             return None
 
+    service = interactions or InteractionService()
+    provider = None
+    channel = getattr(session, 'runtime_events', None)
+    overrides = getattr(getattr(session, 'config', None), 'overrides', None)
+    stream_overridden = isinstance(overrides, dict) and 'stream' in overrides
+    original_override = overrides.get('stream') if stream_overridden else None
+    old_stream = None
+    changed_stream = False
+    stack = ExitStack()
     try:
         emit('run_started', {})
         if channel:
             stack.enter_context(channel.bind(emit))
+        service.bind(emit, token)
+        stack.callback(service.unbind)
+        stack.enter_context(action_services(session, service))
         session.set_flag('turn_cancelled', False)
         setter = getattr(session, 'set_user_data', None)
         if setter:
             setter('__turn_cancel__', token)
         if token.is_cancelled():
-            result.status, result.stop_reason = 'cancelled', 'cancelled'
-            result.error = token.reason() or 'Run cancelled'
+            fail('cancelled', 'cancelled', token.reason() or 'Run cancelled')
         else:
             effective_tools = getattr(session, 'get_effective_tool_mode', None)
-            if effective_tools and effective_tools() != 'none':
+            if not request.execute_tools and effective_tools and effective_tools() != 'none':
                 raise ValueError('Tool-free execution requires tools to be disabled')
             for kind, value in request.contexts:
                 if session.add_context(kind, value) is None:
                     raise ValueError(f'Could not load {kind} context: {value}')
             chat = _record_input(session, request)
             emit('context', {'action': 'prepared'})
-            if token.is_cancelled():
-                raise InterruptedError('Run cancelled')
             provider = session.get_provider()
             if provider is None:
                 raise RuntimeError('No provider available')
-            processor = ResponseProcessor(session, emit)
             old_stream = session.get_params().get('stream')
             session.set_option('stream', request.stream)
             changed_stream = True
-            emit('provider_started', {'call_id': result.run_id + ':1', 'stream': request.stream})
-            if token.is_cancelled():
-                raise InterruptedError('Run cancelled')
-            result.turns = 1
-            if request.stream:
-                stream = iter(provider.stream_chat())
-                while not token.is_cancelled() and not session.get_flag('turn_cancelled'):
-                    chunk = next(stream, None)
-                    if chunk is None:
-                        break
-                    if token.is_cancelled() or session.get_flag('turn_cancelled'):
-                        break
-                    if not isinstance(chunk, str):
-                        raise TypeError('Provider stream must yield text')
-                    visible = processor.feed(chunk)
-                    if visible:
-                        emit('assistant_delta', {'text': visible})
-            else:
-                text = provider.chat()
-                if text is not None and not isinstance(text, str):
-                    raise TypeError('Provider completion must return text')
-                processor.feed(text or '')
-            reason = _optional(provider, 'get_finish_reason')
-            cancelled = token.is_cancelled() or session.get_flag('turn_cancelled')
-            result.stop_reason = reason
-            if cancelled or reason == 'cancelled':
-                result.status, result.stop_reason = 'cancelled', 'cancelled'
-                result.error = token.reason() or 'Run cancelled'
-            elif reason in ('length', 'max_tokens', 'pause_turn'):
-                result.status = 'incomplete'
-                result.truncated = reason in ('length', 'max_tokens')
-                result.error = f'Provider stopped: {reason}'
-            elif reason in ('error', 'failed', 'content_filter', 'refusal', 'incomplete'):
-                result.status = 'failed'
-                result.error = processor.raw or f'Provider stopped: {reason}'
-            elif reason in ('tool_calls', 'tool_use'):
-                result.status, result.stop_reason = 'incomplete', 'unexpected_tool_call'
-                result.error = 'Provider requested tools during a tool-free run'
+            for index in range(request.max_calls):
+                if token.is_cancelled():
+                    fail('cancelled', 'cancelled', token.reason() or 'Run cancelled')
+                    break
+                if before_call:
+                    before_call(session, index + 1)
+                tokens = _input_tokens(session, chat)
+                if request.input_limit and request.input_limit > 0 and tokens > request.input_limit:
+                    raise InputLimitExceeded(tokens, request.input_limit)
+                if token.is_cancelled():
+                    fail('cancelled', 'cancelled', token.reason() or 'Run cancelled')
+                    break
+                call_id = f'{result.run_id}:{index + 1}'
+                result.turns += 1
+                call_result = invoke(session, request, token, emit, call_id)
+                processor = call_result.processor
+                result.last_text, result.sanitized = processor.display, processor.sanitized
+                fail(call_result.status, call_result.reason, call_result.error)
+                result.truncated = result.truncated or call_result.truncated
+                calls, native, registry = (collect_calls(session, provider, processor.sanitized)
+                                            if request.execute_tools else ([], [], None))
+                extra = dict(optional(provider, 'get_assistant_metadata') or {})
+                reasoning = optional(provider, 'get_current_reasoning')
+                if reasoning:
+                    extra['reasoning_content'] = reasoning
+                if native:
+                    extra['tool_calls'] = native
+                chat.add(processor.raw, 'assistant', extra=extra)
+                emit('assistant_message', {'call_id': call_id, 'text': result.last_text,
+                                           'intermediate': bool(calls)})
+                if not calls and call_result.reason in ('tool_calls', 'tool_use'):
+                    fail('incomplete', 'unexpected_tool_call', 'Provider requested tools during a tool-free run')
+                if not calls:
+                    break
+                for call in calls:
+                    if result.status != 'completed' or token.is_cancelled():
+                        record_result(chat, call, {'ok': False, 'skipped': True,
+                                                   'error': result.error or 'Run cancelled'})
+                        continue
+                    try:
+                        result.tool_calls += 1
+                        payload, contexts = run_call(session, call, registry, service, emit)
+                    except InteractionNeeded:
+                        fail('needs_input', 'needs_input', 'Run requires input')
+                        payload, contexts = {'ok': False, 'needs_input': True}, take_contexts(session)
+                    except (KeyboardInterrupt, InterruptedError):
+                        token.cancel('Run cancelled')
+                        fail('cancelled', 'cancelled', 'Run cancelled')
+                        payload, contexts = {'ok': False, 'cancelled': True}, take_contexts(session)
+                    result.tool_failures += int(payload.get('ok') is False)
+                    record_result(chat, call, payload, contexts)
+                if token.is_cancelled():
+                    fail('cancelled', 'cancelled', token.reason() or 'Run cancelled')
+                if result.status != 'completed':
+                    break
+                if index + 1 == request.max_calls:
+                    fail('incomplete', 'call_limit', 'Provider call limit reached before tool follow-up')
     except InputLimitExceeded as exc:
-        result.status, result.stop_reason, result.error = 'failed', 'large_input_limit_exceeded', str(exc)
+        fail('failed', 'large_input_limit_exceeded', str(exc))
         emit('error', {'code': result.stop_reason, 'tokens': exc.tokens, 'limit': exc.limit,
                        'message': result.error})
     except InteractionNeeded as exc:
-        result.status, result.stop_reason = 'needs_input', 'needs_input'
-        result.error = 'Run requires input'
-        emit('interaction_requested', {'kind': exc.kind, 'spec': exc.spec})
+        fail('needs_input', 'needs_input', 'Run requires input')
+        request_id = getattr(exc, 'runtime_request_id', exc.state_token)
+        if not any(event.type == 'interaction_requested' and event.data.get('id') == request_id
+                   for event in result.events):
+            emit('interaction_requested', {'id': request_id, 'kind': exc.kind, 'spec': exc.spec})
     except (KeyboardInterrupt, Exception) as exc:
         cancelled = isinstance(exc, KeyboardInterrupt) or token.is_cancelled()
-        result.status = 'cancelled' if cancelled else 'failed'
-        result.stop_reason = 'cancelled' if cancelled else 'error'
-        result.error = 'Run cancelled' if cancelled else str(exc) or type(exc).__name__
+        fail('cancelled' if cancelled else 'failed', 'cancelled' if cancelled else 'error',
+             'Run cancelled' if cancelled else str(exc) or type(exc).__name__)
         if cancelled:
             token.cancel(result.error)
         emit('error', {'message': result.error, 'code': result.stop_reason})
     finally:
         try:
-            if stream is not None and hasattr(stream, 'close'):
-                try:
-                    stream.close()
-                except Exception as exc:
-                    emit('warning', {'code': 'stream_close_failed', 'message': str(exc)})
-            if changed_stream:
-                session.set_option('stream', old_stream)
-                if isinstance(overrides, dict):
-                    if stream_overridden:
-                        overrides['stream'] = original_stream_override
-                    else:
-                        overrides.pop('stream', None)
-            if processor is not None:
-                result.last_text, result.sanitized = processor.display, processor.sanitized
-                tail = processor.finish()
-                if tail and request.stream:
-                    emit('assistant_delta', {'text': tail})
-                result.last_text, result.sanitized = processor.display, processor.sanitized
-                if chat is not None and result.turns:
-                    extra = _optional(provider, 'get_assistant_metadata') or {}
-                    reasoning = _optional(provider, 'get_current_reasoning')
-                    if reasoning:
-                        extra = dict(extra, reasoning_content=reasoning)
-                    chat.add(processor.raw, 'assistant', extra=extra)
-                emit('assistant_message', {'text': result.last_text})
+            if after_run:
+                after_run(session, result)
             if provider is not None:
-                result.usage = metric('get_usage')
-                result.cost = metric('get_cost')
+                result.usage, result.cost = metric('get_usage'), metric('get_cost')
                 if request.capture_raw:
-                    result.raw = _optional(provider, 'get_full_response')
-                emit('provider_finished', {'call_id': result.run_id + ':1',
-                                           'status': result.status, 'stop_reason': result.stop_reason})
+                    result.raw = optional(provider, 'get_full_response')
                 emit('usage', {'usage': result.usage, 'cost': result.cost})
-        except Exception as exc:
-            result.status, result.stop_reason = 'failed', 'finalization_error'
-            result.error = str(exc) or type(exc).__name__
+        except (KeyboardInterrupt, Exception) as exc:
+            if isinstance(exc, KeyboardInterrupt) or token.is_cancelled():
+                token.cancel('Run cancelled')
+                fail('cancelled', 'cancelled', 'Run cancelled')
+            else:
+                fail('failed', 'finalization_error', str(exc) or type(exc).__name__)
             emit('error', {'message': result.error, 'code': result.stop_reason})
         finally:
             try:
+                if changed_stream:
+                    session.set_option('stream', old_stream)
+                    if isinstance(overrides, dict):
+                        if stream_overridden:
+                            overrides['stream'] = original_override
+                        else:
+                            overrides.pop('stream', None)
                 emit('run_finished', {'status': result.status, 'stop_reason': result.stop_reason,
                                       'error': result.error, 'truncated': result.truncated})
             finally:
                 stack.close()
+                session._active_run_id = None
                 lock.release()
     return result

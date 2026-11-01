@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+from core.provider_turns import provider_turns
 from copy import deepcopy
 from collections.abc import Iterator
 from time import monotonic
@@ -418,7 +419,7 @@ class GoogleProvider(GoogleUsage, APIProvider):
         if self._get_system_prompt():
             messages.append({'role': 'model', 'parts': [{'text': self._get_system_prompt()}]})
         chat = self.session.get_context('chat')
-        for turn in chat.get() if chat else []:
+        for turn in provider_turns(chat.get() if chat else []):
             parts, contexts = [], []
             for context in turn.get('context') or []:
                 if context['type'] == 'image':

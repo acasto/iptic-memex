@@ -18,7 +18,7 @@ class CompletionMode(InteractionMode):
         if message is None and not contexts:
             self.message = 'Please process the provided content.'
 
-    def start(self, *, emit_output: bool = True, on_event=None, cancellation=None):
+    def start(self, *, emit_output: bool = True, on_event=None, cancellation=None, interactions=None):
         """Return an explicit outcome; optionally render the completion for CLI."""
         params = self.session.get_params()
         raw = bool(params.get('raw_completion'))
@@ -38,6 +38,7 @@ class CompletionMode(InteractionMode):
             capture='raw' if raw else 'text',
             on_event=on_event,
             cancellation=cancellation,
+            interactions=interactions,
         )
         if emit_output and not stream:
             text = result.raw if raw else result.last_text

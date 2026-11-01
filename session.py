@@ -190,6 +190,8 @@ class Session:
         Preserves conversation state.
         Returns True if provider needs to be recreated.
         """
+        if getattr(self, '_active_run_id', None):
+            raise RuntimeError('Cannot change model during an active run')
         # Validate and normalize model to a section/display name
         normalized = self.config.normalize_model_name(model)
         if not normalized:
@@ -405,7 +407,9 @@ class Session:
         return bool(self.user_data.get('agent_mode'))
 
     def get_agent_write_policy(self) -> Optional[WritePolicy]:
-        """Return current agent write policy when in Agent Mode, else None."""
+        """Return an explicit runtime write policy or the legacy agent policy."""
+        if hasattr(self, 'write_policy'):
+            return self._normalize_write_policy(self.write_policy) if self.write_policy is not None else None
         if not self.in_agent_mode():
             return None
         agent = cast(Optional[Session._AgentState], self.user_data.get('agent'))

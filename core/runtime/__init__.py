@@ -1,6 +1,7 @@
-"""UI-independent execution contract and tool-free completion runtime."""
+"""UI-independent requests, tool execution, input services, and outcomes."""
 
-from core.runtime.contracts import RunEvent, RunOutcome, RunRequest
+from core.runtime.contracts import InteractionRequest, RunEvent, RunOutcome, RunRequest
 from core.runtime.execution import execute
+from core.runtime.interaction import InteractionService
 
-__all__ = ['RunEvent', 'RunOutcome', 'RunRequest', 'execute']
+__all__ = ['InteractionRequest', 'InteractionService', 'RunEvent', 'RunOutcome', 'RunRequest', 'execute']

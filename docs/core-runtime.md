@@ -1,21 +1,23 @@
-# Core refactor: first completion slice
+# Core runtime: completion and CLI chat
 
-Tool-free completion now uses requests, ordered events, and explicit outcomes.
-CLI rendering and application/session assembly sit outside execution. Chat and
-agents still use TurnRunner pending migration; workspace retains its current
-worker algorithm and subprocess supervision.
+Completion and CLI chat share requests, ordered events, explicit outcomes, and
+one provider/tool execution lifecycle. Application/session assembly, workflow
+services, and terminal rendering sit outside execution. Bounded agents and the
+Web/TUI frontends still use TurnRunner pending migration; workspace retains its
+current worker algorithm and subprocess supervision.
 
 ## Supported behavior
 
 | Path | Behavior |
 | --- | --- |
-| CLI completion | One provider call, no client tools, text/raw output, optional streaming |
+| CLI completion | One provider call by default; explicit `--tools` enables bounded tool exchanges |
 | Inputs | Explicit message, stdin task, text/image attachments, explicit system prompt |
 | Models | Explicit selection wins; otherwise `[AGENT].default_model`, then normal config fallback |
 | Prompts | Explicit prompt and normal supplemental addenda; no implicit interactive prompt |
 | Headless completion | Same runtime/outcome, optional event observer, no UI substitution or stdout capture |
 | Failures | Input gate, provider finish reasons, partial output, cooperative cancellation |
-| Chat and bounded agents | Existing TurnRunner path; migrate in the next slices |
+| CLI chat | Same runtime, tool executor, and interaction service as completion |
+| Bounded agents | Existing TurnRunner path; migrate in the next slice |
 | Workspace | Existing worker/notes workflow; synthesis completion uses the new runtime |
 
 ```bash
@@ -24,10 +26,21 @@ echo "Explain this concept" | python main.py -f -
 python main.py --message "Summarize the attachment" -f notes.txt
 python main.py -s --message "Explain this concept"
 python main.py -r --message "Explain this concept"
+python main.py --tools file --message "Read README.md and explain the project"
+python main.py --tools file chat
 ```
 
-Completion remains tool-free. A submitted task supporting bounded tool exchanges
-belongs to the next slice. Use the existing agent command when tools are needed.
+Completion stays tool-free unless a tools list is explicitly supplied. Tool-enabled
+completion uses the noninteractive tool profile and `[AGENT].writes_policy`
+(default deny). `--agent-writes allow` explicitly permits writes; otherwise local
+command execution cannot bypass a deny/dry-run policy and must use Docker's
+read-only backend. Chat retains interactive confirmations unless an explicit
+write policy is supplied. Models with tools disabled remain tool-free.
+
+One submitted task can contain several provider calls. The application currently
+maps `[TOOLS].auto_submit_max_turns` (default 6) to the call ceiling. Hitting it
+preserves completed tool results and returns incomplete/call_limit. The runtime
+does not read auto_submit flags or invent empty user turns for follow-up.
 
 ## Ownership
 
@@ -35,12 +48,15 @@ belongs to the next slice. Use the existing agent command when tools are needed.
   normal Session with no CLI/Web/TUI adapter.
 - `app/completion.py` resolves tool policy, context inputs, and the input limit
   into a RunRequest. Optional services are not inferred inside execution.
+- `app/chat.py` resolves chat policy and keeps its hook lifecycle in explicit
+  before-call/after-run services. Observer callbacks do not perform workflow work.
 - `core/runtime/` owns provider execution, transcript/context transfer, filtering,
   cancellation checks, event ordering, and RunOutcome.
 - `ui/completion_renderer.py` renders events without calling providers or changing
   execution. Final-only consumers can ignore deltas.
 - `app/session_output.py` translates existing provider/loader diagnostic helpers
-  into events. It neither captures stdout nor acts as a UI.
+  into events during execution. Chat's terminal helpers remain usable between
+  runs. This adapter neither captures stdout nor acts as a UI.
 
 The replaced completion execution body in `core/mode_runner.py` is deleted; its
 entry point delegates to application completion for existing internal callers.
@@ -58,7 +74,7 @@ updates, not extra transcript entries.
 
 RunOutcome carries text, optional raw payload, call count (`turns` at the existing
 adapter boundary), usage/cost, retained events, status, stop reason, error, and
-truncation. Deltas reach observers but are not duplicated in the retained event
+truncation, plus tool call/failure counts. Deltas reach observers but are not duplicated in the retained event
 list. Native replay metadata stays in the transcript; hidden reasoning and raw
 response objects do not enter ordinary events.
 
@@ -66,6 +82,20 @@ Outcomes distinguish completed, incomplete, failed, cancelled, and needs_input.
 Provider exceptions/metadata determine failure, rather than error-like prose.
 Partial text survives stream failure or cancellation. An optional observer
 failure is recorded and detaches that observer. Missing usage/cost stays unknown.
+
+Official and pseudo tools normalize into one action executor. Actions run once;
+an exception is not retried automatically. Explicit stepwise requests resume the
+same action instance. Completed payloads with `ok=false`, named error contexts,
+and exceptions are recorded as tool failures. A model can recover and still
+deliver an answer; inspect tool_failures/tool_finished to distinguish that from
+an investigation with no failed operations.
+
+Every native tool-call ID receives a result, including skipped/cancelled calls
+and calls that need input. Native transcript metadata is retained. File/image
+contexts belong to their tool results rather than leaking into repeated user
+turns. Provider adapters encode tool-created images through their existing user
+media encoders after the complete tool-result batch, without changing stored
+history or inserting base64 into tool result text.
 
 ## Headless use
 
@@ -88,10 +118,34 @@ result = run_completion(
 )
 ```
 
+For tools, construct the session with `active_tools_agent="file,cmd"`. Completion
+then selects the noninteractive profile and write policy. For chat tasks, use
+`app.chat.configure_chat` and `run_chat_turn`; optional workflow services remain
+in that application adapter.
+
 This is a blocking API. A caller may use its own worker thread and cancel the
 token from another thread. Overlapping runs on one session are rejected before
 request contexts are attached. Independent sessions can execute concurrently.
 No background queue or durable continuation is implied.
+
+## Interaction
+
+Pass an `InteractionService(handler)` to a run for synchronous structured input.
+The handler receives an InteractionRequest with ID, kind, and constraints; CLI
+chat uses a terminal handler. Alternatively use `InteractionService(wait=True)`
+and respond from another thread with `service.respond(id, value)`. Invalid,
+duplicate, and stale responses are rejected. Cancellation wakes waiting input.
+
+Without a handler or waiter, an input request ends with needs_input. Its action
+is not replayed later. File confirmations include the proposed diff, and an edit
+resumes its saved candidate rather than generating a different candidate after
+approval. The service's resolution events include IDs rather than response values;
+an action may still include relevant input in its explicit tool result.
+
+Existing actions' ask_*/emit calls pass through one action-service bridge during
+execution; the runtime never inspects UI capability/blocking flags. New actions
+can address `session.interactions` directly. Legacy frontend adapters remain
+outside this contract until migrated.
 
 Cancellation is cooperative around invocation and between stream items. It
 cannot forcibly interrupt a backend blocked in native/network code. Workspace
@@ -107,10 +161,10 @@ or backups, or session autosave. Explicit prompt templates/addenda still resolve
 normally, including templates that read memory. Service lifecycle integration
 will return as explicit application/workflow services.
 
-Interactive response/resume, tools, continued agent work, an asynchronous run
-handle, hard deadlines, and research scheduling are outside this slice. An
-unexpected interaction ends with needs_input; execution does not replay earlier
-side effects to resume it. Web/TUI have not been migrated or rebuilt.
+Continued agent work, an asynchronous run handle, durable resume, hard deadlines,
+and research scheduling remain outside this slice. Chat keeps its existing
+memory/MCP/autosave startup and application-owned hooks. Web/TUI have not been
+migrated or rebuilt; their old continuation paths remain until migration.
 
 ## Validation
 

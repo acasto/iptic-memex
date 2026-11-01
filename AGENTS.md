@@ -3,7 +3,7 @@
 ## Project Structure & Modules
 - Root Python package: entrypoint `main.py`; core modules in the repo root (`session.py`, `component_registry.py`, `config_manager.py`, `base_classes.py`).
 - Core runtime: `core/` (shared building blocks)
-  - `runtime/` (UI-independent completion requests, events, outcomes, execution, filtering)
+  - `runtime/` (UI-independent task/tool execution, input service, events, outcomes, filtering)
   - `turns.py` (TurnRunner, TurnOptions, TurnResult)
   - `mode_runner.py` (headless internal runs for completion/agent)
   - `provider_factory.py` (capability-aware provider instantiation)
@@ -15,8 +15,8 @@
 - Feature folders: `providers/` (LLM backends), `contexts/` (context sources/loaders), `prompts/` (templates), `modes/` (CLI modes), `tui/` (terminal UI), `utils/` (helpers), `scripts/` (small CLI wrappers), `examples/`, `sessions/`.
 - Configuration: project `config.ini`, `models.ini`; user-level config in `~/.config/iptic-memex/` (symlink `user-config` points there).
 - Application assembly: `app/session_builder.py`; completion policy/services in
-  `app/completion.py`. Completion uses `core/runtime`; chat/agents retain TurnRunner
-  pending migration. See `docs/core-runtime.md` for current boundaries.
+  `app/completion.py` and `app/chat.py`. Completion and CLI chat use `core/runtime`;
+  agents/Web/TUI retain TurnRunner pending migration. See `docs/core-runtime.md`.
 
 ## Build, Run, and Dev
 - Python 3.11+. Use a virtual env.
@@ -34,12 +34,17 @@
 - Explicit model always wins. Application assembly resolves these defaults via
   `app.session_builder.SessionBuilder`; completion is assembled in `app/completion.py`.
 
-### Completion refactor boundary
-- Completion does not use TurnRunner, NullUI, or stdout capture. Interfaces render
+### Task runtime boundary
+- Completion and CLI chat do not use TurnRunner, NullUI, or stdout capture. Interfaces render
   RunEvents and use RunOutcome for final status/content.
-- Completion is tool-free and does not implicitly start hooks, MCP autoload,
+- Completion is tool-free by default; explicit `--tools` enables bounded exchanges.
+  It does not implicitly start hooks, MCP autoload,
   memory preparation/backups, or autosave. Prompt templates/addenda still apply.
 - Do not add UI names, display policy, or workspace coordination to `core/runtime`.
+- Official/pseudo tools share one executor. Preserve native call IDs, complete
+  skipped calls with explicit results, and never retry side effects automatically.
+- Input goes through InteractionService; CLI handlers and live responders use the
+  same request constraints. Chat hooks are application services, not event observers.
 
 ## Coding Style & Naming
 - Follow PEP 8; 4-space indentation; keep lines ~100 chars.
@@ -632,7 +637,7 @@ max_completion_tokens = 4096
 
 - Overview:
   - `core/turns.py` provides a mode‑agnostic engine that coordinates user turns, assistant turns, tool execution, auto‑submit follow‑ups, and sentinel handling.
-  - Used by: `ChatMode`, `AgentMode`, Web endpoints (`/api/chat`, `/api/stream`), and internal agent runs via `core/mode_runner.py`. Tool-free completion now uses `core/runtime`.
+  - Used by: `AgentMode`, Web endpoints (`/api/chat`, `/api/stream`), and internal agent runs via `core/mode_runner.py`. Completion and CLI chat use `core/runtime`.
 
 - API:
   - `run_user_turn(input_text, options) -> TurnResult` for single‑turn flows with optional auto‑submit continuations (Chat/Web).

@@ -1,5 +1,8 @@
 from base_classes import InteractionMode
-from core.turns import TurnRunner, TurnOptions
+from app.chat import configure_chat, run_chat_turn
+from core.runtime.interaction import InteractionService
+from ui.interaction_handler import CLIInteractionHandler
+from ui.completion_renderer import CompletionRenderer
 from utils.output_utils import format_cli_label
 
 
@@ -10,9 +13,12 @@ class ChatMode(InteractionMode):
         
         # Don't cache params - get them fresh each time
         self.utils = self.session.utils
-        self.turn_runner = TurnRunner(self.session)
+        configure_chat(self.session)
+        self.output = getattr(self.utils.output, 'idle_output', None) or self.utils.output
+        self.interactions = InteractionService(CLIInteractionHandler(self.utils.input, self.output))
 
-        self.session.add_context('chat')
+        if self.session.get_context('chat') is None:
+            self.session.add_context('chat')
         self.chat = self.session.get_context('chat')
         self.process_contexts = self.session.get_action('process_contexts')
         self._budget_warning_shown = False
@@ -81,24 +87,12 @@ class ChatMode(InteractionMode):
             # Check budget before processing contexts
             self.check_budget()
 
-            # Pre-prompt updates: show context summaries/details and recent statuses
-            # Skip when auto-submit is set; the runner will handle that path.
-            if not self.session.get_flag('auto_submit'):
-                try:
-                    # Print context summaries/details once per prompt via the action
-                    pc = self.process_contexts or self.session.get_action('process_contexts')
-                    if pc and hasattr(pc, 'process_contexts_for_user'):
-                        pc.process_contexts_for_user(auto_submit=False)
-                except Exception:
-                    pass
+            # Presentation belongs to the CLI; execution attaches contexts silently.
+            if self.process_contexts:
+                self.process_contexts.process_contexts_for_user(auto_submit=False)
 
             try:
-                # Skip user input if auto_submit is set
-                if self.session.get_flag('auto_submit'):
-                    # Do not clear the flag here; TurnRunner handles and resets it.
-                    user_input = ""
-                else:
-                    user_input = self.get_user_input()
+                user_input = self.get_user_input()
 
                 self.utils.output.write()
 
@@ -117,7 +111,7 @@ class ChatMode(InteractionMode):
                 except (KeyboardInterrupt, EOFError):
                     raise
 
-            # Produce assistant response using the unified TurnRunner
+            # Execution owns tool follow-ups; the CLI only renders events/results.
             params = self.params
             stream = bool(params.get('stream'))
 
@@ -131,10 +125,11 @@ class ChatMode(InteractionMode):
             if stream:
                 self.utils.output.write(f"{response_label} ", end='', flush=True)
 
-            result = self.turn_runner.run_user_turn(
-                user_input,
-                options=TurnOptions(stream=stream, suppress_context_print=True)
-            )
+            renderer = CompletionRenderer(self.output.write, self.output.warning)
+            result = run_chat_turn(self.session, user_input, on_event=renderer,
+                                   interactions=self.interactions)
+            if result.status != 'completed':
+                self.output.warning(result.error or f'Run {result.status}')
 
             if not stream:
                 # Non-stream: print label and the filtered display text

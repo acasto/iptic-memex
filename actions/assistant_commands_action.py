@@ -45,46 +45,52 @@ class AssistantCommandsAction(InteractionAction):
             except Exception:
                 return []
 
-        # Resolve allow/block lists with interactive vs non-interactive split
-        # Interactive (chat/web/tui): use [TOOLS] allow/deny unchanged
-        # Non-interactive (agent/completion): allow = CLI --tools (active_tools_agent) → [AGENT].active_tools → [TOOLS].active_tools
-        # and always subtract [AGENT].blocked_tools (hard block)
-        non_interactive = False
-        try:
-            non_interactive = bool(getattr(self.session, 'in_agent_mode', lambda: False)() or self.session.get_flag('completion_mode', False))
-        except Exception:
+        resolve = getattr(self.session, 'resolve_tool_selection', None)
+        if resolve:
+            selected, denied = resolve()
+            active, inactive, blocked = list(selected or ()), list(denied), []
             non_interactive = False
+        else:
+            # Resolve allow/block lists with interactive vs non-interactive split
+            # Interactive (chat/web/tui): use [TOOLS] allow/deny unchanged
+            # Non-interactive (agent/completion): allow = CLI --tools (active_tools_agent) → [AGENT].active_tools → [TOOLS].active_tools
+            # and always subtract [AGENT].blocked_tools (hard block)
+            non_interactive = False
+            try:
+                non_interactive = bool(getattr(self.session, 'in_agent_mode', lambda: False)() or self.session.get_flag('completion_mode', False))
+            except Exception:
+                non_interactive = False
 
-        active = _parse_list(self.session.get_option('TOOLS', 'active_tools', fallback=None))
-        inactive = _parse_list(self.session.get_option('TOOLS', 'inactive_tools', fallback=None))
-        blocked: list[str] = []
+            active = _parse_list(self.session.get_option('TOOLS', 'active_tools', fallback=None))
+            inactive = _parse_list(self.session.get_option('TOOLS', 'inactive_tools', fallback=None))
+            blocked: list[str] = []
 
-        if non_interactive:
-            # CLI override uses a distinct key so it doesn't affect interactive runs
-            override_raw = self.session.get_option('AGENT', 'active_tools_agent', fallback=None)
-            override_none = False
-            if isinstance(override_raw, str) and override_raw.strip().lower() == '__none__':
-                override_none = True
-                a_allow: list[str] = []
-            else:
-                a_allow = _parse_list(override_raw)
-
-            if override_none:
-                active = []  # Force no tools
-            elif a_allow:
-                active = a_allow
-            else:
-                a_active = _parse_list(self.session.get_option('AGENT', 'active_tools', fallback=None))
-                if a_active:
-                    active = a_active
+            if non_interactive:
+                # CLI override uses a distinct key so it doesn't affect interactive runs
+                override_raw = self.session.get_option('AGENT', 'active_tools_agent', fallback=None)
+                override_none = False
+                if isinstance(override_raw, str) and override_raw.strip().lower() == '__none__':
+                    override_none = True
+                    a_allow: list[str] = []
                 else:
-                    # Fallback to interactive defaults if agent defaults unset
-                    active = _parse_list(self.session.get_option('TOOLS', 'active_tools', fallback=None))
+                    a_allow = _parse_list(override_raw)
 
-            # Hard blocklist for non-interactive
-            blocked = _parse_list(self.session.get_option('AGENT', 'blocked_tools', fallback=None))
-            # Non-interactive path ignores [TOOLS].inactive_tools; use [AGENT].blocked_tools instead
-            inactive = []
+                if override_none:
+                    active = []  # Force no tools
+                elif a_allow:
+                    active = a_allow
+                else:
+                    a_active = _parse_list(self.session.get_option('AGENT', 'active_tools', fallback=None))
+                    if a_active:
+                        active = a_active
+                    else:
+                        # Fallback to interactive defaults if agent defaults unset
+                        active = _parse_list(self.session.get_option('TOOLS', 'active_tools', fallback=None))
+
+                # Hard blocklist for non-interactive
+                blocked = _parse_list(self.session.get_option('AGENT', 'blocked_tools', fallback=None))
+                # Non-interactive path ignores [TOOLS].inactive_tools; use [AGENT].blocked_tools instead
+                inactive = []
 
         # Discover all available assistant tool action classes
         try:
@@ -200,6 +206,12 @@ class AssistantCommandsAction(InteractionAction):
         except Exception:
             pass
 
+        resolve = getattr(self.session, 'resolve_tool_selection', None)
+        if resolve:
+            active, blocked = resolve()
+            dynamic = self.session.get_user_data('__dynamic_tools__') or {}
+            tools = {name: spec for name, spec in tools.items()
+                     if name not in blocked and (active is None or name in active or name in dynamic)}
         return tools
 
     # ---- Canonical tool specs for providers ----

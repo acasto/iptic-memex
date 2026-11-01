@@ -167,7 +167,7 @@ def _run_completion_cli(ctx, *, file=(), message=None):
 @click.option('--agent-writes', type=click.Choice(['deny', 'dry-run', 'allow']), default=None, help='Agent write policy for file tools')
 @click.option('--no-agent-status-tags', is_flag=True, default=False, help='Disable per-turn <status> tag injection')
 @click.option('--agent-output', type=click.Choice(['final', 'full', 'none']), default=None, help='Agent output mode: final (default), full, or none')
-@click.option('--tools', default=None, help='Agent tools allowlist (CSV). Use "None" to disable all tools.')
+@click.option('--tools', default=None, help='Tools allowlist (CSV); enables tool exchanges in completion. Use "None" to disable.')
 @click.option('--mcp', 'mcp_enable', is_flag=True, default=False, help='Enable MCP for non-interactive runs (Agent/Completion)')
 @click.option('--no-mcp', 'mcp_disable', is_flag=True, default=False, help='Disable MCP for non-interactive runs (Agent/Completion)')
 @click.option('--mcp-servers', default=None, help='Limit MCP servers in non-interactive runs (CSV labels)')

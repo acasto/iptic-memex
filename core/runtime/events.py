@@ -17,6 +17,10 @@ class EventChannel:
         else:
             self._pending.append((kind, dict(data)))
 
+    @property
+    def active(self):
+        return self._emit is not None
+
     @contextmanager
     def bind(self, emit):
         """Send diagnostics to a run, including those from assembly."""

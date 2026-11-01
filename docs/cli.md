@@ -51,6 +51,12 @@ python main.py <subcommand> --help
 
 ## Completion and agent input
 
+Root completion is tool-free by default. Supplying `--tools file,cmd` enables
+bounded tool exchanges through the same runtime as CLI chat. One submitted task
+may require multiple provider calls; `[TOOLS].auto_submit_max_turns` is currently
+the call ceiling. Noninteractive tool/write policies still apply. See
+[core-runtime.md](core-runtime.md) for the execution and input-service contract.
+
 Task text and system prompts are separate:
 
 ```bash

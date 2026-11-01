@@ -29,7 +29,13 @@ class UtilsHandler:
         return self._output
 
     def replace_output(self, output_handler):
+        previous = self._output
         self._output = output_handler
+        for helper in (self._input, self._stream, self._fs, self._storage):
+            if helper is not None and getattr(helper, 'output', None) is previous:
+                helper.output = output_handler
+        if self._logger is not None and self._logger._output is previous:
+            self._logger._output = output_handler
 
     @property
     def input(self):

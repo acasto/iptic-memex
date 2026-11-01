@@ -8,7 +8,7 @@ from typing import Any
 
 @dataclass(frozen=True)
 class RunRequest:
-    """A tool-free submitted task; provider calls differ from user turns."""
+    """A submitted task, including its bounded provider/tool exchanges."""
 
     message: str = ''
     stream: bool = False
@@ -16,6 +16,8 @@ class RunRequest:
     capture_raw: bool = False
     input_limit: int | None = None
     contexts: tuple[tuple[str, Any], ...] = ()
+    execute_tools: bool = False
+    max_calls: int = 1
 
 
 @dataclass(frozen=True)
@@ -50,3 +52,14 @@ class RunOutcome:
     error: str | None = None
     stop_reason: str | None = None
     truncated: bool = False
+    tool_calls: int = 0
+    tool_failures: int = 0
+
+
+@dataclass(frozen=True)
+class InteractionRequest:
+    """Input needed by an action, independent of its frontend or transport."""
+
+    id: str
+    kind: str
+    spec: dict[str, Any]

@@ -403,6 +403,8 @@ def _build_turn_context(session, ctx_items: Iterable[dict]) -> List[dict]:
 
 
 def apply_session_data(session, data: Dict[str, Any], *, fork: bool = False) -> None:
+    if getattr(session, '_active_run_id', None):
+        raise RuntimeError('Cannot load a session during an active run')
     if not isinstance(data, dict):
         return
 

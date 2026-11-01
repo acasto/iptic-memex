@@ -267,15 +267,7 @@ class AssistantFsHandlerAction(InteractionAction):
         """Ask for confirmation via the UI adapter; fallback to CLI input if needed."""
         ui = getattr(self.session, 'ui', None)
         if ui and hasattr(ui, 'ask_bool'):
-            from base_classes import InteractionNeeded
-            try:
-                return bool(ui.ask_bool(prompt, default=default))
-            except InteractionNeeded:
-                # Propagate to Web/TUI so the mode can respond with needs_interaction
-                raise
-            except Exception:
-                # Fall through to CLI input on non-interaction errors
-                pass
+            return bool(ui.ask_bool(prompt, default=default))
         # Fallback to legacy CLI input handler
         return bool(self.session.utils.input.get_bool(prompt, default=default))
 

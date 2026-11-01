@@ -4,6 +4,7 @@ import hashlib
 import inspect
 import json
 import os
+from core.provider_turns import provider_turns
 from copy import deepcopy
 from time import time
 
@@ -182,7 +183,7 @@ class AnthropicProvider(AnthropicUsage, APIProvider):
         chat = self.session.get_context('chat')
         messages = []
         self._replay_container = None
-        for turn in chat.get() if chat else []:
+        for turn in provider_turns(chat.get() if chat else []):
             role = turn.get('role')
             if role == 'tool':
                 block = {'type': 'tool_result',

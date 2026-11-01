@@ -193,6 +193,18 @@ class ChatCommandsAction(InteractionAction):
         return {'kind': 'error', 'message': 'Invalid command handler configuration.'}
 
     def run(self, user_input: str = None) -> bool | None:
+        lock = getattr(self.session, '_execution_lock', None)
+        if lock is not None:
+            if not lock.acquire(blocking=False):
+                self._emit_error('Cannot run commands during an active run')
+                return True
+            try:
+                return self._dispatch(user_input)
+            finally:
+                lock.release()
+        return self._dispatch(user_input)
+
+    def _dispatch(self, user_input: str = None) -> bool | None:
         """Dispatch a slash command. Returns True if handled, None otherwise."""
         parsed = self.match(user_input or '')
         if not parsed:

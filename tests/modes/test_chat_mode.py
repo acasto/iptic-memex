@@ -18,6 +18,9 @@ class FakeOutput:
     def style_text(self, text, **kwargs):
         return text
 
+    def warning(self, message, **kwargs):
+        self.write(message)
+
     def write(self, message: str = "", end: str = "\n", flush: bool = False, **kwargs):
         self.lines.append((message, end))
 
@@ -50,7 +53,7 @@ class FakeUtils:
 class ChatContext:
     def __init__(self):
         self._msgs = []
-    def add(self, content, role, contexts=None):
+    def add(self, content, role, contexts=None, extra=None):
         self._msgs.append({"role": role, "content": content})
     def get(self, kind):
         if kind == "all":
@@ -70,6 +73,9 @@ class Provider:
 
 
 class FakeProcessContexts:
+    def get_contexts(self, session):
+        return []
+
     def process_contexts_for_user(self, auto_submit: bool):
         return []
 
@@ -82,6 +88,8 @@ class FakeChatCommands:
 class Session:
     def __init__(self):
         self.utils = FakeUtils()
+        from types import SimpleNamespace
+        self.config = SimpleNamespace(overrides={})
         self._params = {
             "user_label": "You",
             "user_label_color": None,
@@ -90,6 +98,7 @@ class Session:
             "stream": False,
         }
         self._flags = {}
+        self.user_data = {}
         self._contexts = {}
         self._actions = {"process_contexts": FakeProcessContexts(), "chat_commands": FakeChatCommands()}
 
@@ -97,6 +106,8 @@ class Session:
     def set_option(self, k, v): self._params[k] = v
     def get_option(self, s, k, fallback=None): return fallback
     def get_flag(self, k): return self._flags.get(k)
+    def get_user_data(self, k, default=None): return self.user_data.get(k, default)
+    def set_user_data(self, k, value): self.user_data[k] = value
     def set_flag(self, k, v): self._flags[k] = v
     def get_context(self, name): return self._contexts.get(name)
     def add_context(self, name, value=None):
@@ -109,6 +120,7 @@ class Session:
     def remove_context_type(self, name): self._contexts.pop(name, None)
     def get_action(self, name): return self._actions.get(name)
     def get_provider(self): return Provider()
+    def get_effective_tool_mode(self): return 'none'
     def handle_exit(self, confirm=True): return True
 
 
@@ -120,6 +132,6 @@ def test_chat_mode_single_turn_non_stream_captures_output():
         mode.start()
 
     # Verify the assistant label and reply were printed
-    out = "".join(m + e for (m, e) in sess.utils.output.lines)
+    out = "".join(m + e for (m, e) in mode.output.lines)
     assert "> Assistant:" in out
     assert "assistant reply" in out
