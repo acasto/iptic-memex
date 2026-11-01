@@ -104,7 +104,7 @@ def _run_agent_cli(ctx, *, file=(), message=None, snapshot=None, no_hooks=False,
                 )
         else:
             with redirect_stdout(sys.stderr):
-                session = ctx.obj['BUILDER'].build(mode='completion', **options)
+                session = ctx.obj['BUILDER'].build(mode='agent', **options)
                 ctx.obj['SESSION'] = session
                 if no_hooks:
                     session.set_flag('hooks_disabled', True)
@@ -127,20 +127,23 @@ def _run_agent_cli(ctx, *, file=(), message=None, snapshot=None, no_hooks=False,
 def _run_completion_cli(ctx, *, file=(), message=None):
     from modes.completion_mode import CompletionMode
     from core.mode_runner import _attach_contexts
+    from app.completion import configure_completion
+    from ui.completion_renderer import CompletionRenderer
     options = ctx.obj.get('OPTIONS', {})
     try:
-        with redirect_stdout(sys.stderr):
-            session = ctx.obj['BUILDER'].build(mode='completion', **options)
-            ctx.obj['SESSION'] = session
-            _attach_contexts(session, [
-                ('image' if is_image_file(f) else 'file', f) for f in file
-            ])
-            mode = CompletionMode(session, message=message)
+        session = ctx.obj['BUILDER'].build(mode='completion', **options)
+        ctx.obj['SESSION'] = session
+        configure_completion(session)
+        _attach_contexts(session, [
+            ('image' if is_image_file(f) else 'file', f) for f in file
+        ])
+        mode = CompletionMode(session, message=message)
         stream = bool(options.get('stream')) and not options.get('raw_completion')
-        if stream and hasattr(session.utils.output, '_stream'):
-            session.utils.output._stream = sys.stdout
-        with nullcontext() if stream else redirect_stdout(sys.stderr):
-            result = mode.start(emit_output=False)
+        renderer = CompletionRenderer(
+            lambda text, end='\n': click.echo(text, nl=end != ''),
+            lambda text: click.echo(text, err=True), verbose=bool(ctx.obj.get('VERBOSE')),
+        )
+        result = mode.start(emit_output=False, on_event=renderer)
     except Exception as exc:
         _render_exception(ctx, exc)
     _render_result(ctx, result, raw=bool(options.get('raw_completion')), streamed=stream)

@@ -3,16 +3,20 @@
 ## Project Structure & Modules
 - Root Python package: entrypoint `main.py`; core modules in the repo root (`session.py`, `component_registry.py`, `config_manager.py`, `base_classes.py`).
 - Core runtime: `core/` (shared building blocks)
+  - `runtime/` (UI-independent completion requests, events, outcomes, execution, filtering)
   - `turns.py` (TurnRunner, TurnOptions, TurnResult)
   - `mode_runner.py` (headless internal runs for completion/agent)
   - `provider_factory.py` (capability-aware provider instantiation)
   - `prompt_resolver.py` (prompt chains/files/literals)
-  - `session_builder.py` (session construction; `session.SessionBuilder` re-exports)
+  - `session_builder.py` (temporary import bridge to application assembly)
   - `utils.py` (UtilsHandler used by registry)
   - `null_ui.py` (non-interactive UI for internal runs)
   - `context_transfer.py` (copy contexts/chat across sessions)
 - Feature folders: `providers/` (LLM backends), `contexts/` (context sources/loaders), `prompts/` (templates), `modes/` (CLI modes), `tui/` (terminal UI), `utils/` (helpers), `scripts/` (small CLI wrappers), `examples/`, `sessions/`.
 - Configuration: project `config.ini`, `models.ini`; user-level config in `~/.config/iptic-memex/` (symlink `user-config` points there).
+- Application assembly: `app/session_builder.py`; completion policy/services in
+  `app/completion.py`. Completion uses `core/runtime`; chat/agents retain TurnRunner
+  pending migration. See `docs/core-runtime.md` for current boundaries.
 
 ## Build, Run, and Dev
 - Python 3.11+. Use a virtual env.
@@ -27,7 +31,15 @@
 ### Default Model Selection (Unified Rule)
 - Interactive modes (`chat`, `tui`, `web`) use `[DEFAULT].default_model` unless a model is explicitly provided (CLI `-m/--model` or `/set model`).
 - Non‑interactive modes (`completion`, internal runs via `core.mode_runner`, and Agent Mode) use `[AGENT].default_model` when no explicit model is provided.
-- Explicit model always wins. This logic is centralized in `core/session_builder.SessionBuilder.build(mode=...)` to avoid per‑caller or per‑action duplication.
+- Explicit model always wins. Application assembly resolves these defaults via
+  `app.session_builder.SessionBuilder`; completion is assembled in `app/completion.py`.
+
+### Completion refactor boundary
+- Completion does not use TurnRunner, NullUI, or stdout capture. Interfaces render
+  RunEvents and use RunOutcome for final status/content.
+- Completion is tool-free and does not implicitly start hooks, MCP autoload,
+  memory preparation/backups, or autosave. Prompt templates/addenda still apply.
+- Do not add UI names, display policy, or workspace coordination to `core/runtime`.
 
 ## Coding Style & Naming
 - Follow PEP 8; 4-space indentation; keep lines ~100 chars.
@@ -92,7 +104,7 @@
 
 ### Internal Runs (Helpers)
 - Two helpers on `session.Session` simplify running internal completions/agent loops from actions without subprocesses:
-  - `session.run_internal_completion(message: str, overrides: dict | None = None, contexts: Iterable[Tuple[str, Any]] | None = None, capture: 'text'|'raw' = 'text') -> ModeResult`
+  - `session.run_internal_completion(message: str, overrides: dict | None = None, contexts: Iterable[Tuple[str, Any]] | None = None, capture: 'text'|'raw' = 'text') -> RunOutcome`
   - `session.run_internal_agent(steps: int, overrides: dict | None = None, contexts: Iterable[Tuple[str, Any]] | None = None, output: 'final'|'full'|'none' | None = None, verbose_dump: bool = False) -> ModeResult`
 
 Example usage in an action:
@@ -620,7 +632,7 @@ max_completion_tokens = 4096
 
 - Overview:
   - `core/turns.py` provides a mode‑agnostic engine that coordinates user turns, assistant turns, tool execution, auto‑submit follow‑ups, and sentinel handling.
-  - Used by: `ChatMode`, `AgentMode`, Web endpoints (`/api/chat`, `/api/stream`), and internal runs via `core/mode_runner.py`.
+  - Used by: `ChatMode`, `AgentMode`, Web endpoints (`/api/chat`, `/api/stream`), and internal agent runs via `core/mode_runner.py`. Tool-free completion now uses `core/runtime`.
 
 - API:
   - `run_user_turn(input_text, options) -> TurnResult` for single‑turn flows with optional auto‑submit continuations (Chat/Web).

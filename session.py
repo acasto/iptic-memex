@@ -7,6 +7,7 @@ import shlex
 import subprocess
 import sys
 import uuid
+import threading
 from typing import Dict, List, Any, Optional, Literal, TypedDict, cast, Iterable, Tuple, Callable
 
 from config_manager import SessionConfig
@@ -43,6 +44,7 @@ class Session:
             pass
         self.current_model = None  # Track the current model
         self.ui = None  # UI adapter (CLI/Web/TUI)
+        self._execution_lock = threading.Lock()
 
     # Convenience methods that delegate to registry
     def get_action(self, name: str):
@@ -678,7 +680,7 @@ class Session:
     ):
         """Run a one-shot internal completion using the embedded builder.
 
-        Returns core.mode_runner.ModeResult.
+        Returns core.runtime.RunOutcome.
         """
         if not hasattr(self, '_builder') or getattr(self, '_builder', None) is None:
             raise RuntimeError('Session builder is not available')
@@ -810,9 +812,9 @@ class Session:
 
 
 class SessionBuilder:
-    """Use core.session_builder.SessionBuilder; kept for import compatibility."""
+    """Application session assembly, exposed at the existing entry point."""
     def __init__(self, config_manager):
-        from core.session_builder import SessionBuilder as _SB
+        from app.session_builder import SessionBuilder as _SB
         self._impl = _SB(config_manager)
 
     def build(self, mode: Optional[str] = None, **options) -> Session:

@@ -70,8 +70,15 @@ def test_templates_bound_reads_and_reject_escape(tmp_path):
 
 
 @pytest.mark.parametrize('mode', ['chat', 'tui', 'web'])
-def test_only_interactive_starts_rotate_backups(tmp_path, mode):
+def test_only_interactive_starts_rotate_backups(tmp_path, mode, monkeypatch):
     builder = make_session(tmp_path)
+    # Completion assembly now validates its provider before returning a session.
+    # This test exercises memory policy, using an inert provider for all profiles.
+    from component_registry import ComponentRegistry
+    builder.config_manager.base_config['DEFAULT']['provider'] = 'Fake'
+    builder.config_manager.base_config['Fake'] = {'active': 'true'}
+    monkeypatch.setattr(ComponentRegistry, 'load_provider_class',
+                        lambda self, name: lambda session: object())
     session = builder.build(mode='internal')
     root = memory_files.memory_directory(session)
     entry = root / 'MEMORY.md'

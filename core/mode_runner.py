@@ -101,137 +101,21 @@ def _build_subsession(
 
 
 def run_completion(
-    *,
-    builder=None,
-    overrides: Optional[Dict[str, Any]] = None,
-    contexts: Optional[Iterable[Tuple[str, Any]]] = None,
-    message: str = '',
-    capture: str = 'text',  # 'text' | 'raw'
-    trace: Optional[Dict[str, Any]] = None,
-    session=None,
-    stream: bool = False,
-    stdin_as_message: bool = False,
-) -> ModeResult:
-    """Run a one-shot completion internally using TurnRunner.
-
-    - Builds a subsession from overrides (model/prompt/etc.)
-    - Attaches provided contexts
-    - Runs a single non-stream assistant turn and returns last_text
-    - If capture='raw' and provider exposes get_full_response, include raw
-    """
-    sess = session if session is not None else _build_subsession(builder, overrides=overrides)
+    *, builder=None, overrides=None, contexts=None, message='', capture='text',
+    trace=None, session=None, stream=False, stdin_as_message=False,
+    on_event=None, cancellation=None,
+):
+    """Application adapter for completion; no TurnRunner or NullUI execution."""
+    from app.completion import run_completion as complete
+    sess = session
+    if sess is None:
+        sess = builder.build(mode='completion', **dict(overrides or {}))
     trace_ctx = _normalize_trace(trace)
     if trace_ctx:
-        try:
-            sess.utils.logger.update_base_context(trace_ctx)
-        except Exception:
-            pass
-    # Disable official tools for single-shot internal completion to save tokens
-    try:
-        sess.set_option('tool_mode', 'none')
-    except Exception:
-        pass
-    # Mark as non-interactive completion (no MCP autoload to avoid overhead)
-    try:
-        sess.set_flag('completion_mode', True)
-    except Exception:
-        pass
-    _attach_contexts(sess, contexts)
-
-    # Ensure chat context exists
-    if not sess.get_context('chat'):
-        sess.add_context('chat')
-
-    # Central non-interactive input gate (contexts + message)
-    try:
-        proc = sess.get_action('process_contexts')
-        ctxs = proc.get_contexts(sess) if proc else []
-    except Exception:
-        ctxs = []
-    total_tokens = compute_context_tokens(sess, ctxs) + count_text_tokens(sess, message or '')
-    gate = check_noninteractive_gate(sess, total_tokens)
-    if not gate.get('ok', True):
-        limit = gate.get('limit')
-        tokens = gate.get('tokens')
-        # Emit a structured error event for callers
-        try:
-            sess.ui.emit('error', {
-                'code': 'large_input_limit_exceeded',
-                'tokens': tokens,
-                'limit': limit,
-                'mode': 'completion',
-            })
-        except Exception:
-            pass
-        # Add assistant context for visibility
-        try:
-            sess.add_context('assistant', {
-                'name': 'large_input_limit_exceeded',
-                'content': f'Input size ({tokens} tokens) exceeds non-interactive limit ({limit}). Aborting run.'
-            })
-        except Exception:
-            pass
-        # Build result with collected events
-        events = []
-        try:
-            events = list(getattr(sess.ui, 'events', []) or [])
-        except Exception:
-            events = []
-        return ModeResult(last_text='Input exceeds configured limit', raw=None, turns=0,
-                          cost=None, usage=None, events=events, status='failed',
-                          error='Input exceeds configured limit',
-                          stop_reason='large_input_limit_exceeded')
-
-    runner = TurnRunner(sess)
-    # If we were given a trace_id/parent_span_id, bind a span for this run so it
-    # nests correctly under the caller's lifecycle.
-    try:
-        lg = sess.utils.logger
-    except Exception:
-        lg = None
-    if lg and trace_ctx and trace_ctx.get("trace_id"):
-        parent_span_id = trace_ctx.get("parent_span_id")
-        with lg.span("internal_completion", trace_id=trace_ctx.get("trace_id"), parent_span_id=parent_span_id):
-            res = runner.run_user_turn(message or "", options=TurnOptions(
-                stream=stream, suppress_context_print=True, allow_auto_submit=False,
-                stdin_as_message=stdin_as_message, execute_tools=False))
-    else:
-        res = runner.run_user_turn(message or "", options=TurnOptions(
-            stream=stream, suppress_context_print=True, allow_auto_submit=False,
-            stdin_as_message=stdin_as_message, execute_tools=False))
-
-    raw = None
-    if capture == 'raw':
-        prov = sess.get_provider()
-        if prov and hasattr(prov, 'get_full_response'):
-            try:
-                raw = prov.get_full_response()
-            except Exception:
-                raw = None
-
-    # Cost/usage (best-effort)
-    cost = None
-    usage = None
-    try:
-        prov = sess.get_provider()
-        if prov and hasattr(prov, 'get_cost'):
-            cost = prov.get_cost()
-        if prov and hasattr(prov, 'get_usage'):
-            usage = prov.get_usage()
-        elif prov and hasattr(prov, 'running_usage'):
-            usage = getattr(prov, 'running_usage')
-    except Exception:
-        pass
-
-    events = []
-    try:
-        events = list(getattr(sess.ui, 'events', []) or [])
-    except Exception:
-        events = []
-
-    return ModeResult(last_text=res.last_text, raw=raw, turns=res.turns_executed, cost=cost,
-                      usage=usage, events=events, truncated=getattr(res, 'truncated', False),
-                      **_outcome(res))
+        sess.utils.logger.update_base_context(trace_ctx)
+    return complete(session=sess, message=message, contexts=contexts, stream=stream,
+                    capture=capture, stdin_as_message=stdin_as_message,
+                    on_event=on_event, cancellation=cancellation)
 
 
 def run_agent(

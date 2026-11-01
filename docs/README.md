@@ -4,6 +4,7 @@ This folder contains deeper documentation for the Memex platform. Start with get
 
 - [getting-started.md](getting-started.md) - install, config, and basic usage
 - [modes.md](modes.md) - chat, completion, agent, TUI, Web
+- [core-runtime.md](core-runtime.md) - completion runtime and core refactor status
 - [cli.md](cli.md) - CLI and slash command reference
 - [tools.md](tools.md) - tool system and built-in tools
 - [prompts.md](prompts.md) - system addenda, per-turn prompts

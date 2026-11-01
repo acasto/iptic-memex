@@ -62,7 +62,7 @@ class MlxProvider(APIProvider):
                 self.model, self.tokenizer = self._model_cache[self.model_name]
                 # print("MLX model loaded from cache")
         except Exception as e:
-            print(f"Error loading MLX model: {e}")
+            self.session.utils.output.error(f"Error loading MLX model: {e}")
             raise
 
         # Wrap tokenizer if needed
@@ -285,7 +285,8 @@ class MlxProvider(APIProvider):
                     add_generation_prompt=True
                 )
         except Exception as e:
-            print(f"Warning: Could not use chat template, falling back to simple format: {e}")
+            self.session.utils.output.warning(
+                f"Could not use chat template, falling back to simple format: {e}")
 
         # Fallback to simple format
         prompt = ""

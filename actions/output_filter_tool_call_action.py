@@ -97,7 +97,10 @@ class OutputFilterToolCallAction(InteractionAction):
             possible_carry = lines[-1]
             # Only hold the carry if it might be a standalone opener (start-of-line '%%...%%').
             # Otherwise, emit it now to avoid line-by-line gating.
-            if not self.in_block and not self._in_code_fence and not possible_carry.lstrip().startswith(self.OPEN_DELIM):
+            candidate = possible_carry.lstrip()
+            possible_opener = (candidate.startswith(self.OPEN_DELIM)
+                               or self.OPEN_DELIM.startswith(candidate))
+            if not self.in_block and not self._in_code_fence and not possible_opener:
                 proc_lines = lines  # Treat entire buffer as complete lines for pass-through
                 carry = ""
             else:

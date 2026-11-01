@@ -21,7 +21,7 @@ class FakeInputUtils:
 
 class ChatContext:
     def __init__(self): self._msgs = []
-    def add(self, content, role, contexts=None): self._msgs.append({"role": role, "content": content})
+    def add(self, content, role, contexts=None, extra=None): self._msgs.append({"role": role, "content": content})
     def get(self, kind): return list(self._msgs) if kind == 'all' else None
 
 
@@ -78,7 +78,7 @@ def test_completion_mode_non_stream_outputs_text():
     sess = Session(with_stdin=True)
     mode = CompletionMode(sess)
     mode.start()
-    out = "".join(m + e for (m, e) in sess.utils.output.lines)
+    out = "".join(m + e for (m, e) in mode.output.lines)
     assert "Completed text" in out
 
 
@@ -87,5 +87,5 @@ def test_completion_mode_raw_emits_raw_full_response():
     sess._params["raw_completion"] = True
     mode = CompletionMode(sess)
     mode.start()
-    out = "".join(m + e for (m, e) in sess.utils.output.lines)
+    out = "".join(m + e for (m, e) in mode.output.lines)
     assert "full" in out

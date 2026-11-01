@@ -1,0 +1,52 @@
+"""Execution data shared by terminal and headless callers."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass(frozen=True)
+class RunRequest:
+    """A tool-free submitted task; provider calls differ from user turns."""
+
+    message: str = ''
+    stream: bool = False
+    stdin_as_message: bool = False
+    capture_raw: bool = False
+    input_limit: int | None = None
+    contexts: tuple[tuple[str, Any], ...] = ()
+
+
+@dataclass(frozen=True)
+class RunEvent:
+    """One ordered observation; sequence numbers are local to a run."""
+
+    run_id: str
+    session_id: str | None
+    sequence: int
+    timestamp: str
+    type: str
+    data: dict[str, Any]
+
+
+@dataclass
+class RunOutcome:
+    """Execution result, independent of rendering or transport.
+
+    Deltas go to observers, not the retained event list. Raw provider payloads
+    are opt-in and never emitted to observers.
+    """
+
+    run_id: str
+    last_text: str | None = None
+    sanitized: str | None = None
+    raw: Any = None
+    turns: int = 0
+    usage: dict | None = None
+    cost: dict | None = None
+    events: list[RunEvent] = field(default_factory=list)
+    status: str = 'completed'
+    error: str | None = None
+    stop_reason: str | None = None
+    truncated: bool = False

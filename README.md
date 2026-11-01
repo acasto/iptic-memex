@@ -2,6 +2,9 @@
 
 Iptic Memex is a command-line LLM workbench. It supports CLI chat, completion, agent, TUI, and Web modes, plus a flexible tool system, RAG, and optional hooks for sidecar analysis.
 
+The core refactor has started with tool-free completion. See
+[the runtime notes](docs/core-runtime.md) for the current boundary and deferred services.
+
 The name is a reference to the Memex, a device described by Vannevar Bush in his 1945 essay "As We May Think". See: https://en.wikipedia.org/wiki/Memex
 
 ![Iptic Memex demo](https://i.imgur.com/XLJ4AuY.gif)

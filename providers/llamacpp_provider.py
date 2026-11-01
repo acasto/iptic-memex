@@ -57,7 +57,7 @@ class LlamaCppProvider(APIProvider):
         self.draft_model = None
         logits_all = False
         if params.get('speculative', False) == "draft":
-            print("Using draft model for speculative decoding")
+            self.session.utils.output.status("Using draft model for speculative decoding")
             self.draft_model = LlamaSmallModelDraftWithMetrics(
                 # model_path="/Users/adam/LLM/models/draft/Llama-3.2-3B-Instruct-Q5_K_M.gguf",
                 model_path="/Users/adam/LLM/models/draft/Llama-3.2-1B-Instruct-Q5_K_M.gguf",
@@ -66,7 +66,7 @@ class LlamaCppProvider(APIProvider):
             )
             logits_all = True
         if params.get('speculative', False) == "prompt":
-            print("Using prompt lookup decoding")
+            self.session.utils.output.status("Using prompt lookup decoding")
             self.draft_model = LlamaPromptLookupDecoding(
                 max_ngram_size=5,
                 num_pred_tokens=params.get('draft', 10),
@@ -601,7 +601,7 @@ class LlamaCppProvider(APIProvider):
                     f"Ignoring unknown llamacpp_init keys: {', '.join(sorted(unknown))}"
                 )
             except Exception:
-                print(f"Warning: Ignoring unknown llamacpp_init keys: {', '.join(sorted(unknown))}")
+                pass
             for k in unknown:
                 init_kwargs.pop(k, None)
 

@@ -14,6 +14,11 @@ Pipe input for a single response. Useful for scripting.
 echo "What is PI?" | python main.py -f -
 ```
 
+Completion uses the event-based runtime and remains tool-free. Text/raw output,
+streaming, attachments, and explicit system prompts share headless execution.
+Optional service startup (hooks, MCP autoload, memory preparation, autosave) is
+deferred in this refactor slice. See [core-runtime.md](core-runtime.md).
+
 ## Agent mode (non-interactive)
 Run N assistant turns with tool calls and a configurable write policy.
 

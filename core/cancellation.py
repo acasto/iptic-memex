@@ -20,15 +20,18 @@ class CancellationToken:
 
     def cancel(self, reason: Optional[str] = None) -> None:
         with self._lock:
-            if not self._ev.is_set():
-                self._reason = reason
-                self._ev.set()
-                # Run cleanups best-effort
-                for fn in list(self._cleanups):
-                    try:
-                        fn()
-                    except Exception:
-                        pass
+            if self._ev.is_set():
+                return
+            self._reason = reason
+            self._ev.set()
+            cleanups, self._cleanups = self._cleanups, []
+        # Cleanup may register further cleanup or cancel a child/parent token.
+        # Never invoke application code while holding the cancellation lock.
+        for fn in cleanups:
+            try:
+                fn()
+            except Exception:
+                pass
 
     def is_cancelled(self) -> bool:
         return self._ev.is_set()
@@ -38,12 +41,11 @@ class CancellationToken:
 
     def register_cleanup(self, fn: Callable[[], None]) -> None:
         with self._lock:
-            # If already cancelled, run immediately
-            if self._ev.is_set():
-                try:
-                    fn()
-                except Exception:
-                    pass
+            if not self._ev.is_set():
+                self._cleanups.append(fn)
                 return
-            self._cleanups.append(fn)
+        try:
+            fn()
+        except Exception:
+            pass
 

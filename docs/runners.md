@@ -14,8 +14,10 @@ Entry points:
 Behavior:
 - Builds a subsession from the embedded `SessionBuilder`.
 - Attaches contexts (non-chat).
-- Uses a NullUI to avoid stdout.
-- Returns a `ModeResult` (`last_text`, `turns`, `usage`, `cost`, `events`).
+- Completion uses the event runtime without a UI or stdout capture and returns
+  RunOutcome (`last_text`, `turns`, `usage`, `cost`, `events`, status/stop reason).
+  Optional completion services are deferred; see [core-runtime.md](core-runtime.md).
+- Agent runs still use NullUI and return ModeResult pending migration.
 - Applies a non-interactive input gate (large inputs can abort with an error event).
 - For agents, chat history is not copied into the subsession; instead a chat seed is used for templates (see below).
 
