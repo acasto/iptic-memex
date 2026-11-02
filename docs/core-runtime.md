@@ -130,6 +130,12 @@ No background queue or durable continuation is implied.
 
 ## Interaction
 
+CLI chat shows a waiting spinner (or a plain status line) before reply text,
+then prints the assistant label when text arrives. Streamed chunks are flushed
+immediately. On POSIX terminals, input echo/typeahead is suspended during a run
+and restored for actual input requests and the next user prompt. Keystrokes
+entered while busy are discarded; piped input is untouched. Ctrl-C still works.
+
 Pass an `InteractionService(handler)` to a run for synchronous structured input.
 The handler receives an InteractionRequest with ID, kind, and constraints; CLI
 chat uses a terminal handler. Alternatively use `InteractionService(wait=True)`

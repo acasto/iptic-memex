@@ -2,7 +2,8 @@ from base_classes import InteractionMode
 from app.chat import configure_chat, run_chat_turn
 from core.runtime.interaction import InteractionService
 from ui.interaction_handler import CLIInteractionHandler
-from ui.completion_renderer import CompletionRenderer
+from ui.chat_renderer import ChatRenderer
+from ui.terminal_input import TerminalInputGuard
 from utils.output_utils import format_cli_label
 
 
@@ -15,7 +16,14 @@ class ChatMode(InteractionMode):
         self.utils = self.session.utils
         configure_chat(self.session)
         self.output = getattr(self.utils.output, 'idle_output', None) or self.utils.output
-        self.interactions = InteractionService(CLIInteractionHandler(self.utils.input, self.output))
+        self.terminal_input = TerminalInputGuard()
+        handler = CLIInteractionHandler(self.utils.input, self.output)
+
+        def prompt(request):
+            with self.terminal_input.allow_input():
+                return handler(request)
+
+        self.interactions = InteractionService(prompt)
 
         if self.session.get_context('chat') is None:
             self.session.add_context('chat')
@@ -115,28 +123,18 @@ class ChatMode(InteractionMode):
             params = self.params
             stream = bool(params.get('stream'))
 
-            # For streaming, print the assistant label before tokens
+            # Show the label only when reply text arrives, after the waiting display.
             raw_response_label = format_cli_label(params['response_label'])
             response_label = self.utils.output.style_text(
                 raw_response_label,
                 fg=params['response_label_color']
             )
 
-            if stream:
-                self.utils.output.write(f"{response_label} ", end='', flush=True)
-
-            renderer = CompletionRenderer(self.output.write, self.output.warning)
-            result = run_chat_turn(self.session, user_input, on_event=renderer,
-                                   interactions=self.interactions)
+            with self.terminal_input, ChatRenderer(self.output, response_label, stream=stream) as renderer:
+                result = run_chat_turn(self.session, user_input, on_event=renderer,
+                                       interactions=self.interactions)
             if result.status != 'completed':
                 self.output.warning(result.error or f'Run {result.status}')
-
-            if not stream:
-                # Non-stream: print label and the filtered display text
-                self.utils.output.write(f"{response_label} ", end='', flush=True)
-                if result.last_text:
-                    self.utils.output.write(result.last_text)
-                self.utils.output.write('')
 
             # Spacer between turns
             self.utils.output.write()

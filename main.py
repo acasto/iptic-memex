@@ -140,7 +140,7 @@ def _run_completion_cli(ctx, *, file=(), message=None):
         mode = CompletionMode(session, message=message)
         stream = bool(options.get('stream')) and not options.get('raw_completion')
         renderer = CompletionRenderer(
-            lambda text, end='\n': click.echo(text, nl=end != ''),
+            lambda text, end='\n', flush=False: click.echo(text, nl=end != ''),
             lambda text: click.echo(text, err=True), verbose=bool(ctx.obj.get('VERBOSE')),
         )
         result = mode.start(emit_output=False, on_event=renderer)

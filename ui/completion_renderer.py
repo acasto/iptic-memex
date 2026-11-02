@@ -10,10 +10,10 @@ class CompletionRenderer:
 
     def __call__(self, event):
         if event.type == 'assistant_delta':
-            self.write(event.data['text'], end='')
+            self.write(event.data['text'], end='', flush=True)
             self._streamed = True
         elif event.type == 'assistant_message' and event.data.get('intermediate') and self._streamed:
-            self.write('', end='\n')
+            self.write('', end='\n', flush=True)
             self._streamed = False
         elif event.type == 'tool_started':
             self.diagnostic(f"Tool calling: {event.data['name']}")
@@ -26,4 +26,4 @@ class CompletionRenderer:
             if message:
                 self.diagnostic(message)
         elif event.type == 'run_finished' and self._streamed:
-            self.write('', end='\n')
+            self.write('', end='\n', flush=True)
