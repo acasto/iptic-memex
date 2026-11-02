@@ -41,7 +41,9 @@ class ResearchCoordinator:
         return budget['total_calls'] - budget['synthesis_reserved'] - budget['used'] - budget['reserved']
 
     def decision(self, action, **details):
-        self.state['decisions'].append(dict(action=action, time=now(), **details))
+        record = dict(action=action, time=now())
+        record.update(details)
+        self.state['decisions'].append(record)
         self.save()
 
     def poll(self):

@@ -113,6 +113,8 @@ def test_discovery_requests_a_branch_and_changes_the_question_before_synthesis(t
     assert research['budget']['reserved'] == 0
     decisions = research['decisions']
     assert any(d['action'] == 'branch_requested' and d['evidence'] for d in decisions)
+    assert any(d['action'] == 'goal_assessed' for d in decisions)
+    assert all(worker.get('tool_failures', 0) == 0 for worker in result['workers'])
     directory = Path(result['directory'])
     before = {p: p.read_bytes() for p in directory.rglob('*') if p.is_file()}
     replay = runtime.synthesize(result['id'])
