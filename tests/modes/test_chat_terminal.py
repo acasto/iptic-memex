@@ -51,7 +51,7 @@ SCRIPT = textwrap.dedent('''
     config.base_config = ConfigParser()
     config.base_config.read_dict({
         'DEFAULT': {'default_model': 'offline', 'template_handler': 'none',
-                    'colors': colors, 'tools': 'false', 'stream': 'true',
+                    'colors': colors, 'tools': 'false', 'stream': 'true', 'spinner_style': 'block',
                     'user_label': 'You', 'response_label': 'Assistant',
                     'user_label_color': '', 'response_label_color': ''},
         'Fake': {'active': 'true'},
@@ -83,6 +83,8 @@ def test_chat_flushes_before_stream_end_and_owns_terminal_input(confirmation, co
         [sys.executable, '-c', SCRIPT, str(control_read), str(status_write),
          'confirm' if confirmation else 'plain', str(colors).lower()],
         cwd=Path(__file__).resolve().parents[2], stdin=slave, stdout=slave, stderr=slave,
+        env={**{key: value for key, value in os.environ.items() if key != 'NO_COLOR'},
+             'TERM': 'xterm-256color'},
         pass_fds=(control_read, status_write),
     )
     os.close(slave)
@@ -116,8 +118,14 @@ def test_chat_flushes_before_stream_end_and_owns_terminal_input(confirmation, co
         read_until(b'> You:')
         os.write(master, b'Question\n')
         status(b'W')
-        waiting = read_until(b'Waiting for response...')
+        if select.select([master], [], [], 0.2)[0]:
+            transcript.extend(os.read(master, 65536))
+        waiting = plain()
+        assert b'Waiting for response' not in waiting
         assert b'> Assistant:' not in waiting
+        if colors:
+            read_until('▖'.encode())
+            assert any(char.encode() in transcript for char in '▖▘▝▗')
         os.write(master, b'stray busy typing\n')
         if cancel:
             os.kill(process.pid, signal.SIGINT)

@@ -18,11 +18,9 @@ class ChatRenderer(CompletionRenderer):
         if self._waiting is not None:
             return
         factory = getattr(self.output, 'spinner', None)
-        self._waiting = factory('Waiting for response...') if factory else False
+        self._waiting = factory('') if factory else False
         if self._waiting:
             self._waiting.__enter__()
-        if not self._waiting or not getattr(self._waiting, 'enabled', False):
-            self.write('Waiting for response...', flush=True)
 
     def _stop_wait(self):
         if self._waiting:
