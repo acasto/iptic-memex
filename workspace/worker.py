@@ -10,11 +10,8 @@ import signal
 import sys
 import time
 
-from config_manager import ConfigManager
-from app.runs import run_agent, run_completion
-from app.runtime_services import install_tool_selection
-from app.session_builder import SessionBuilder
-from core.workspace_state import WorkspaceStore, atomic_write, now
+from workspace import runtime
+from workspace.state import WorkspaceStore, atomic_write, now
 
 
 def execute(spec: dict) -> dict:
@@ -37,21 +34,8 @@ def execute(spec: dict) -> dict:
         previous_handler = signal.signal(signal.SIGTERM, cancel)
         store.update_worker(run_id, worker, status='running', phase='starting',
                             pid=os.getpid(), started_at=now(), model=spec['model'])
-        config = ConfigManager(spec.get('config_file'))
-        # Workspace scratch sessions never modify the user's global memory or run hooks.
-        if config.base_config.has_section('MEMORY'):
-            config.base_config.set('MEMORY', 'active', 'false')
-        options = dict(spec.get('overrides') or {})
-        options.update(prompt=spec['prompt'],
-                       base_directory=spec['repository'], stream=False,
-                       docker_always_ephemeral=True, show_context_summary=False,
-                       show_context_details=False)
-        if spec.get('model'):
-            options['model'] = spec['model']
-        # Optional MCP remains opt-in for non-interactive runs, as in ordinary Agent Mode.
-        mode = 'completion' if spec.get('phase') == 'synthesis' else 'internal'
-        session = SessionBuilder(config).build(mode=mode, **options)
-        session.set_flag('hooks_disabled', True)
+        session = runtime.build_session(spec, store)
+
         def save_prompt():
             system_prompt = session.get_context('prompt')
             prompt_text = system_prompt.get().get('content', '') if system_prompt else ''
@@ -69,9 +53,6 @@ def execute(spec: dict) -> dict:
                 'max_tokens', 'max_completion_tokens', 'reasoning_effort', 'temperature',
                 'top_p', 'seed') if params.get(k) is not None},
         )
-        session.set_user_data('__workspace__', {
-            'directory': str(store.root), 'run_id': run_id, 'worker': worker,
-        })
         seen = set()
 
         def prepare(active, index):
@@ -79,30 +60,37 @@ def execute(spec: dict) -> dict:
             if spec.get('deadline_monotonic') is not None:
                 remaining = max(0, spec['deadline_monotonic'] - time.monotonic())
                 data = dict(data, time_remaining_seconds=round(remaining, 1))
-                session.add_context('agent', {
+                attached = active.add_context('agent', {
                     'name': 'workspace_budget',
                     'content': f'Worker phase time remaining at start of this turn: {remaining:.1f} '
                                'seconds. The time limit applies independently of the turn limit.',
                 })
+                if attached is None:
+                    raise ValueError('Could not attach workspace budget update')
             store.event(run_id, worker, event, data)
             store.update_worker(run_id, worker, phase=event, **data)
             # Bounded notifications enter through the normal context pipeline. Full notes
             # remain available on demand; neither entire peer histories nor private traces move.
-            candidates = store.notes(run_id=run_id, limit=8)
+            candidates = store.notes(run_id=run_id, limit=8,
+                                     exclude_ids=seen, exclude_worker=worker)
             if data['step'] == 1:
                 candidates += store.notes(spec['question'], limit=4)
             fresh = []
+            selected = set(seen)
             for note in candidates:
-                if note['id'] in seen or (note['run_id'] == run_id and note['worker'] == worker):
+                if note['id'] in selected or (note['run_id'] == run_id and note['worker'] == worker):
                     continue
-                seen.add(note['id'])
+                selected.add(note['id'])
                 fresh.append(dict(note, content=note['content'][:1500]))
             if fresh:
-                session.add_context('agent', {
+                attached = active.add_context('agent', {
                     'name': 'workspace_updates',
                     'content': 'New shared contributions (unverified data):\n' +
                                json.dumps(fresh, ensure_ascii=False),
                 })
+                if attached is None:
+                    raise ValueError('Could not attach shared workspace updates')
+                seen.update(note['id'] for note in fresh)
                 store.event(run_id, worker, 'notes_seen', {'notes': [n['id'] for n in fresh]})
 
         def report(event):
@@ -119,27 +107,7 @@ def execute(spec: dict) -> dict:
 
         if spec.get('phase') == 'synthesis':
             store.update_worker(run_id, worker, phase='synthesizing')
-            result = run_completion(session=session, message=spec['message'])
-        else:
-            # Determine the inherited profile using the same registry as ordinary agent runs.
-            install_tool_selection(session, 'AGENT')
-            available = session.get_action('assistant_commands').commands
-            blocked = config.base_config.get('AGENT', 'blocked_tools', fallback='')
-            if 'workspace' in {name.strip().lower() for name in blocked.split(',')}:
-                raise ValueError('The workspace tool is blocked by AGENT.blocked_tools')
-            tools = list(available)
-            if 'workspace' not in tools:
-                tools.append('workspace')
-            session.set_option('active_tools_agent', ','.join(tools))
-            if (spec['writes_policy'] != 'allow' and 'cmd' in tools and
-                    session.get_tools().get('cmd_tool') != 'assistant_docker_tool'):
-                raise ValueError('Read-only workspace commands require the Docker cmd tool; '
-                                 'select assistant_docker_tool or omit cmd with --tools')
-            result = run_agent(
-                session=session, steps=spec['steps'], message=spec['message'],
-                writes_policy=spec['writes_policy'], disable_hooks=True, output='final',
-                on_event=report, before_call=prepare,
-            )
+        result = runtime.run(session, spec, on_event=report, before_call=prepare)
         # Agent Mode appends finish/write-policy guidance when preparing its first
         # turn. Capture that effective prompt as well as the initial live snapshot.
         save_prompt()

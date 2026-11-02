@@ -186,6 +186,7 @@ class AssistantWebsearchToolAction(InteractionAction):
 
             res = run_completion(
                 builder=builder,
+                outer_session=self.session,
                 overrides=overrides,
                 message=final_query,
                 capture=('raw' if include_citations else 'text'),

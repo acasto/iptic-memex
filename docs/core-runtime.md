@@ -3,8 +3,8 @@
 Completion, CLI chat, agents, and internal helpers share requests, ordered events, explicit outcomes, and
 one provider/tool execution lifecycle. Application/session assembly, workflow
 services, and terminal rendering sit outside execution. Web/TUI still use the
-isolated `legacy/turns.py` executor pending migration; workspace retains its
-current worker algorithm and subprocess supervision.
+isolated `legacy/turns.py` executor pending migration. The separate `workspace/`
+package owns the current research algorithm, artifacts, and subprocess supervision.
 
 ## Supported behavior
 
@@ -55,6 +55,12 @@ does not read auto_submit flags or invent empty user turns for follow-up.
   pre-call context updates. `app/runs.py` owns isolated helper sessions and closes
   their resources on success or failure. Caller-supplied sessions remain open.
 - `app/headless.py` assembles completion/agent sessions without frontend imports.
+- `app/session_services.py` supplies explicit headless service choices: file-memory
+  access, required tools subject to the blocklist, and workflow initialization
+  before provider/prompt assembly. Workflow setup does not edit shared config.
+- `workspace/runtime.py` adapts worker and synthesis sessions to these services.
+  Core has no workspace imports. `workspace/state.py` and `workspace/report.py`
+  can be used without loading the application, providers, or interfaces.
 - `core/runtime/` owns provider execution, transcript/context transfer, filtering,
   cancellation checks, event ordering, and RunOutcome.
 - `ui/completion_renderer.py` renders events without calling providers or changing
@@ -182,6 +188,8 @@ their sidecars use the same internal-agent API without recursively starting hook
 Helpers inherit the caller's sandbox root, use the noninteractive model default,
 and copy non-chat context data independently. Parent chat is a template seed,
 not a second copy of the child transcript. Child cancellation follows the parent.
+Explicitly disabled file-memory access also remains disabled in nested helpers;
+workflow-specific required tools and workspace access do not propagate to them.
 
 Each agent step is one provider call; tool follow-ups consume the same budget.
 Budget exhaustion returns incomplete/steps. A reply without tool calls completes

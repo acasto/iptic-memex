@@ -32,6 +32,13 @@ def install_tool_selection(session, section):
             active = split(value) if value else None
         blocked = split(session.get_option('AGENT', 'blocked_tools', fallback=None)) if section == 'AGENT' else ()
         inactive = split(session.get_option('TOOLS', 'inactive_tools', fallback=None)) if section == 'TOOLS' else ()
-        return active, set(blocked) | set(inactive)
+        denied = set(blocked) | set(inactive)
+        required = tuple(getattr(session, 'required_tools', ()))
+        conflicts = denied.intersection(required)
+        if conflicts:
+            raise ValueError('Required tools are blocked: ' + ', '.join(sorted(conflicts)))
+        if active is not None:
+            active = tuple(dict.fromkeys((*active, *required)))
+        return active, denied
 
     session.resolve_tool_selection = resolve

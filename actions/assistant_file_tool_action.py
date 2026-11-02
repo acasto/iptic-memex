@@ -511,6 +511,7 @@ class AssistantFileToolAction(StepwiseAction):
                 return
             res = run_completion(
                 builder=builder,
+                outer_session=self.session,
                 overrides={'model': summary_model, 'prompt': summary_prompt} if summary_prompt else {'model': summary_model},
                 contexts=[('file', resolved_path)],
                 message='',

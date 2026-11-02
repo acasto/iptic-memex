@@ -8,9 +8,9 @@ import time
 
 import click
 
-from core.workspace_engine import WorkspaceEngine, WorkspaceSettings
-from core.workspace_report import run_report
-from core.workspace_state import WorkspaceStore, TERMINAL_STATES
+from workspace.engine import WorkspaceEngine, WorkspaceSettings
+from workspace.report import run_report
+from workspace.state import WorkspaceStore, TERMINAL_STATES
 
 
 def _paths(ctx, directory: str | None, repository: str | None = None):

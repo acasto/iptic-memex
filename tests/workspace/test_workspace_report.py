@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 
-from core.workspace_report import run_report
-from core.workspace_state import WorkspaceStore, now
+from workspace.report import run_report
+from workspace.state import WorkspaceStore, now
 
 
 def test_report_measures_activity_without_mutating_artifacts(tmp_path):

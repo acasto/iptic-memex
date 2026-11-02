@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from click.testing import CliRunner
 
 import main
-from core.workspace_engine import WorkspaceEngine
+from workspace.engine import WorkspaceEngine
 
 
 def configure(monkeypatch, tmp_path, *, synthesis_model=''):
@@ -74,7 +74,7 @@ def test_question_input_conflicts_are_reported(monkeypatch, tmp_path):
 
 
 def test_status_reads_saved_state_without_constructing_an_engine(monkeypatch, tmp_path):
-    from core.workspace_state import WorkspaceStore
+    from workspace.state import WorkspaceStore
 
     configure(monkeypatch, tmp_path)
     store = WorkspaceStore(tmp_path / '.memex-workspace')
@@ -116,8 +116,8 @@ def test_synthesis_replay_uses_explicit_model_prompt_and_standalone_timeout(monk
 
 def test_token_limits_inherit_models_unless_explicitly_overridden(monkeypatch, tmp_path):
     from modes.workspace_mode import _engine
-    from core.workspace_state import WorkspaceStore
-    from core.workspace_engine import WorkspaceSettings
+    from workspace.state import WorkspaceStore
+    from workspace.engine import WorkspaceSettings
 
     configure(monkeypatch, tmp_path)
     cfg = configparser.ConfigParser(defaults={'max_tokens': '8192'})

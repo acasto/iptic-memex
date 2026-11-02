@@ -147,13 +147,18 @@ class WorkspaceStore:
         return dict(record, content=content.read_text(encoding='utf-8')[:12000])
 
     def notes(self, query: str = '', *, run_id: str | None = None,
-              limit: int = 8) -> list[dict]:
+              limit: int = 8, exclude_ids=(), exclude_worker: str | None = None) -> list[dict]:
         """Find notes by keyword relevance and recency, with a bounded result count."""
         terms = set(re.findall(r'\w+', query.lower()))
+        excluded = set(exclude_ids)
         found = []
         for path in (self.root / 'notes').glob('note-*.json'):
+            if path.stem in excluded:
+                continue
             note = self.read_note(path.stem)
             if run_id and note['run_id'] != run_id:
+                continue
+            if exclude_worker and note['worker'] == exclude_worker:
                 continue
             words = set(re.findall(r'\w+', (note['title'] + ' ' + note['content']).lower()))
             score = len(terms & words)

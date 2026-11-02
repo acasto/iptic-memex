@@ -2,10 +2,11 @@
 
 from component_registry import ComponentRegistry
 from app.runtime_services import configure_runtime, install_tool_selection
+from app.session_services import HeadlessServices
 
 
 def build_headless_session(config_manager, options=None, *, builder=None,
-                           tools_enabled=False, default_prompt=False, memory=False):
+                           tools_enabled=False, default_prompt=False, memory=False, services=None):
     """Resolve noninteractive defaults; optional services stay disabled."""
     from session import Session
 
@@ -20,15 +21,20 @@ def build_headless_session(config_manager, options=None, *, builder=None,
     registry = ComponentRegistry(config)
     session = Session(config, registry)
     try:
+        services = services or HeadlessServices()
         session._builder = builder
         session.current_model = options.get('model')
+        session.file_memory_enabled = services.file_memory
+        session.required_tools = services.required_tools
         if tools_enabled:
             install_tool_selection(session, 'AGENT')
             session.write_policy = session._normalize_write_policy(
                 options.get('agent_writes') or config.base_config.get('AGENT', 'writes_policy', fallback='deny'))
         configure_runtime(session)
         session.utils.logger.update_base_context({'session_uid': session.session_uid})
-        if memory:
+        if services.configure:
+            services.configure(session)
+        if memory and services.file_memory is not False:
             from core.memory_files import prepare_memory
             prepare_memory(session, interactive=False)
         params = session.get_params()

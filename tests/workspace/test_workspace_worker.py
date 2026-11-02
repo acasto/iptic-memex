@@ -3,8 +3,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from core.runtime import RunOutcome
-from core.workspace_state import WorkspaceStore
-from core.workspace_worker import execute
+from workspace.state import WorkspaceStore
+from workspace.worker import execute
+from workspace.tools import WorkspaceAccess
 
 
 def outcome(text, raw=None, turns=0, cost=None, usage=None, events=None, **kwargs):
@@ -15,18 +16,7 @@ def outcome(text, raw=None, turns=0, cost=None, usage=None, events=None, **kwarg
 class Session:
     def __init__(self):
         self.context = []
-        self.data = {}
         self.closed = False
-        self.flags = {}
-
-    def set_flag(self, key, value):
-        self.flags[key] = value
-
-    def set_user_data(self, key, value):
-        self.data[key] = value
-
-    def get_user_data(self, key):
-        return self.data.get(key)
 
     def get_params(self):
         return {'model': 'local-test'}
@@ -34,20 +24,9 @@ class Session:
     def get_context(self, _kind):
         return SimpleNamespace(get=lambda: {'content': 'Resolved system prompt'})
 
-    def enter_agent_mode(self, policy):
-        self.policy = policy
-
-    def get_action(self, name):
-        return SimpleNamespace(commands={'file': {}})
-
-    def set_option(self, key, value):
-        self.data[key] = value
-
     def add_context(self, kind, data):
         self.context.append((kind, data))
-
-    def handle_exit(self, confirm=False):
-        self.closed = True
+        return SimpleNamespace(get=lambda: data)
 
     def close(self):
         self.closed = True
@@ -62,30 +41,26 @@ def spec(tmp_path, phase='worker'):
                        writes_policy='deny', phase=phase)
 
 
-def setup_builder(monkeypatch, session):
-    import core.workspace_worker as worker
+def setup_runtime(monkeypatch, session):
+    import workspace.worker as worker
 
-    class Builder:
-        def __init__(self, config):
-            self.config = config
+    def build(spec, store):
+        if spec.get('phase') != 'synthesis':
+            session.workspace = WorkspaceAccess(store, spec['run_id'], spec['worker'])
+        return session
 
-        def build(self, **kwargs):
-            assert self.config.base_config.get('MEMORY', 'active') == 'false'
-            return session
-
-    monkeypatch.setattr(worker, 'SessionBuilder', Builder)
+    monkeypatch.setattr(worker.runtime, 'build_session', build)
     return worker
 
 
 def test_new_peer_notes_enter_context_between_steps_and_cleanup_runs(tmp_path, monkeypatch):
     store, task = spec(tmp_path)
     session = Session()
-    worker = setup_builder(monkeypatch, session)
+    worker = setup_runtime(monkeypatch, session)
 
     def run_agent(**kwargs):
         assert kwargs['disable_hooks'] is True
         assert kwargs['writes_policy'] == 'deny'
-        assert session.data['active_tools_agent'] == 'file,workspace'
         kwargs['before_call'](session, 1)
         assert not session.context
         note = store.publish(task['run_id'], 'worker-2', 'Peer result', 'New evidence')
@@ -93,7 +68,7 @@ def test_new_peer_notes_enter_context_between_steps_and_cleanup_runs(tmp_path, m
         assert note['id'] in session.context[-1][1]['content']
         return outcome('Grounded answer', None, 2, None, None, [], stop_reason='sentinel')
 
-    monkeypatch.setattr(worker, 'run_agent', run_agent)
+    monkeypatch.setattr(worker.runtime, 'run_agent', run_agent)
     result = execute(task)
     assert result['status'] == 'completed'
     assert session.closed
@@ -105,14 +80,15 @@ def test_new_peer_notes_enter_context_between_steps_and_cleanup_runs(tmp_path, m
 def test_synthesis_uses_completion_and_receives_no_worker_chat(tmp_path, monkeypatch):
     store, task = spec(tmp_path, phase='synthesis')
     session = Session()
-    worker = setup_builder(monkeypatch, session)
+    worker = setup_runtime(monkeypatch, session)
 
     def complete(**kwargs):
-        assert kwargs == {'session': session, 'message': 'Question'}
+        assert kwargs['session'] is session and kwargs['message'] == 'Question'
+        assert callable(kwargs['on_event'])
         assert not session.context
         return outcome('Final answer', None, 1, None, None, [])
 
-    monkeypatch.setattr(worker, 'run_completion', complete)
+    monkeypatch.setattr(worker.runtime, 'run_completion', complete)
     assert execute(task)['last_text'] == 'Final answer'
     assert session.closed
     assert not store.notes()
@@ -121,8 +97,8 @@ def test_synthesis_uses_completion_and_receives_no_worker_chat(tmp_path, monkeyp
 def test_exhausted_worker_budget_is_incomplete(tmp_path, monkeypatch):
     store, task = spec(tmp_path)
     session = Session()
-    worker = setup_builder(monkeypatch, session)
-    monkeypatch.setattr(worker, 'run_agent', lambda **kw: outcome(
+    worker = setup_runtime(monkeypatch, session)
+    monkeypatch.setattr(worker.runtime, 'run_agent', lambda **kw: outcome(
         'Partial evidence', None, 3, None, None, [], stop_reason='steps'))
     assert execute(task)['status'] == 'incomplete'
 
@@ -130,10 +106,10 @@ def test_exhausted_worker_budget_is_incomplete(tmp_path, monkeypatch):
 def test_final_summary_links_own_findings_and_explicit_peer_citations(tmp_path, monkeypatch):
     store, task = spec(tmp_path)
     session = Session()
-    worker = setup_builder(monkeypatch, session)
+    worker = setup_runtime(monkeypatch, session)
     own = store.publish(task['run_id'], 'worker-1', 'My evidence', 'Own finding')
     peer = store.publish(task['run_id'], 'worker-2', 'Peer evidence', 'Peer finding')
-    monkeypatch.setattr(worker, 'run_agent', lambda **kw: outcome(
+    monkeypatch.setattr(worker.runtime, 'run_agent', lambda **kw: outcome(
         f"Answer building on {peer['id']}", None, 1, None, None, []))
     result = execute(task)
     final = store.read_note(result['note_id'])
@@ -144,8 +120,8 @@ def test_final_summary_links_own_findings_and_explicit_peer_citations(tmp_path, 
 def test_provider_error_is_not_published_as_a_finding(tmp_path, monkeypatch):
     store, task = spec(tmp_path)
     session = Session()
-    worker = setup_builder(monkeypatch, session)
-    monkeypatch.setattr(worker, 'run_agent', lambda **kw: outcome(
+    worker = setup_runtime(monkeypatch, session)
+    monkeypatch.setattr(worker.runtime, 'run_agent', lambda **kw: outcome(
         'Provider connection error', None, 1, None, None, [], status='failed',
         error='Provider connection error', stop_reason='error'))
     assert execute(task)['status'] == 'failed'
@@ -159,8 +135,7 @@ def test_workspace_tool_is_gated_and_checks_contribution_dependencies(tmp_path):
     store, task = spec(tmp_path)
     session = Session()
     assert not AssistantWorkspaceToolAction.can_run(session)
-    session.data['__workspace__'] = dict(directory=str(store.root), run_id=task['run_id'],
-                                       worker='worker-1')
+    session.workspace = WorkspaceAccess(store, task['run_id'], 'worker-1')
     assert AssistantWorkspaceToolAction.can_run(session)
     action = AssistantWorkspaceToolAction(session)
     result = action.run({'operation': 'publish', 'title': 'Evidence', 'content': 'A fact'})
@@ -177,8 +152,7 @@ def test_rejected_publication_keeps_diagnostics_without_saving_its_body(tmp_path
 
     store, task = spec(tmp_path)
     session = Session()
-    session.data['__workspace__'] = dict(directory=str(store.root), run_id=task['run_id'],
-                                       worker='worker-1')
+    session.workspace = WorkspaceAccess(store, task['run_id'], 'worker-1')
     result = AssistantWorkspaceToolAction(session).run(
         {'operation': 'publish', 'title': 'Too long'}, 'x' * 12001)
     assert not result.payload['ok']
@@ -197,7 +171,7 @@ def test_worker_sees_remaining_time_independently_of_turn_budget(tmp_path, monke
     store, task = spec(tmp_path)
     task['deadline_monotonic'] = time.monotonic() + 30
     session = Session()
-    worker = setup_builder(monkeypatch, session)
+    worker = setup_runtime(monkeypatch, session)
 
     def investigate(**kwargs):
         kwargs['before_call'](session, 1)
@@ -208,5 +182,75 @@ def test_worker_sees_remaining_time_independently_of_turn_budget(tmp_path, monke
         assert 0 < saved['time_remaining_seconds'] <= 30
         return outcome('Finding', None, 1, None, None, [])
 
-    monkeypatch.setattr(worker, 'run_agent', investigate)
+    monkeypatch.setattr(worker.runtime, 'run_agent', investigate)
     assert execute(task)['status'] == 'completed'
+
+
+def test_note_bursts_drain_in_bounded_batches_without_self_notes_or_duplicates(tmp_path, monkeypatch):
+    import json
+
+    store, task = spec(tmp_path)
+    session = Session()
+    worker = setup_runtime(monkeypatch, session)
+    peers = {store.publish(task['run_id'], 'worker-2', f'Peer {i}', 'Peer evidence')['id']
+             for i in range(19)}
+    for i in range(10):
+        store.publish(task['run_id'], 'worker-1', f'Own {i}', 'Own evidence')
+
+    def investigate(**kwargs):
+        sizes = []
+        for step in range(1, 5):
+            session.context.clear()
+            kwargs['before_call'](session, step)
+            update = [data for _, data in session.context if data['name'] == 'workspace_updates']
+            sizes.append(len(json.loads(update[0]['content'].split('\n', 1)[1])) if update else 0)
+        assert sizes == [8, 8, 3, 0]
+        return outcome('Finding', turns=4)
+
+    monkeypatch.setattr(worker.runtime, 'run_agent', investigate)
+    assert execute(task)['status'] == 'completed'
+    path = store.run_dir(task['run_id']) / 'worker-1' / 'events.jsonl'
+    delivered = [note for line in path.read_text().splitlines()
+                 if (event := json.loads(line))['event'] == 'notes_seen' for note in event['notes']]
+    assert len(delivered) == len(set(delivered)) == 19
+    assert set(delivered) == peers
+
+
+def test_rejected_context_delivery_fails_visibly_without_claiming_notes_seen(tmp_path, monkeypatch):
+    import json
+
+    store, task = spec(tmp_path)
+    session = Session()
+    worker = setup_runtime(monkeypatch, session)
+    store.publish(task['run_id'], 'worker-2', 'Peer', 'Evidence')
+    session.add_context = lambda kind, data: None
+
+    def investigate(**kwargs):
+        kwargs['before_call'](session, 1)
+        raise AssertionError('Rejected context was silently ignored')
+
+    monkeypatch.setattr(worker.runtime, 'run_agent', investigate)
+    result = execute(task)
+    assert result['status'] == 'failed'
+    assert 'attach shared workspace updates' in result['error']
+    path = store.run_dir(task['run_id']) / 'worker-1' / 'events.jsonl'
+    assert all(json.loads(line)['event'] != 'notes_seen' for line in path.read_text().splitlines())
+
+
+def test_publication_remains_successful_when_its_reporting_fails(tmp_path, monkeypatch):
+    from actions.assistant_workspace_tool_action import AssistantWorkspaceToolAction
+
+    store, task = spec(tmp_path)
+    session = Session()
+    session.workspace = WorkspaceAccess(store, task['run_id'], 'worker-1')
+
+    def fail_event(*args, **kwargs):
+        raise OSError('Log unavailable')
+
+    monkeypatch.setattr(store, 'event', fail_event)
+    result = AssistantWorkspaceToolAction(session).run(
+        {'operation': 'publish', 'title': 'Evidence', 'content': 'Saved once'})
+    assert result.payload['ok']
+    assert 'Note saved' in result.payload['warning']
+    assert store.read_note(result.payload['result']['id'])['content'].strip() == 'Saved once'
+    assert len(store.notes()) == 1

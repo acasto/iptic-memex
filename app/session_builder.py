@@ -19,14 +19,17 @@ class SessionBuilder:
     def __init__(self, config_manager):
         self.config_manager = config_manager
 
-    def build(self, mode: Optional[str] = None, **options):
+    def build(self, mode: Optional[str] = None, *, services=None, **options):
         if mode == 'completion':
             from app.completion import build_completion_session
-            return build_completion_session(self.config_manager, options, builder=self)
+            return build_completion_session(self.config_manager, options, builder=self,
+                                            services=services)
         if mode in ('agent', 'internal'):
             from app.agent import build_agent_session
             return build_agent_session(self.config_manager, options, builder=self,
-                                       default_prompt=mode == 'internal')
+                                       default_prompt=mode == 'internal', services=services)
+        if services is not None:
+            raise ValueError('Headless services require completion, agent, or internal mode')
         # Late import to avoid circular dependency at module load time
         from session import Session
 

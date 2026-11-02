@@ -22,6 +22,8 @@ Behavior:
   without exit prompts, hooks, or statistics writes. Caller-supplied sessions stay open.
 - Cancellation propagates from the parent. The sandbox root is inherited, while
   model selection follows the noninteractive default unless explicitly overridden.
+- Disabled file-memory access propagates as a service restriction. Workspace
+  tool access and required tools stay local to their contributor session.
 - Applies a non-interactive input gate (large inputs can abort with an error event).
 - For agents, chat history is not copied into the subsession; instead a chat seed is used for templates (see below).
 - Required context updates use a pre-call service; event observers only observe

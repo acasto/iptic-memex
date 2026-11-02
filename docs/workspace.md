@@ -11,11 +11,17 @@ answers the original question using published findings and worker outcomes.
 Private worker chat histories are not passed to synthesis. This is synthesis,
 not an independent verification pass.
 
-Workers now use the shared runtime through `app/agent.py`; synthesis uses the
-tool-free completion profile. Workspace still owns subprocess supervision and
-saved research state. Peer-note and remaining-budget updates enter through an
-explicit pre-call service, separate from passive event reporting. The research
-algorithm and note-selection limits are unchanged in this runtime migration.
+The `workspace/` package owns supervision (`engine.py`), persistence (`state.py`),
+reports (`report.py`), the subprocess entry point (`worker.py`), and shared-note
+tools (`tools.py`). `runtime.py` builds sessions using explicit application
+services and submits through the common agent/completion adapters. Core does not
+import workspace. CLI and action-discovery modules remain thin entry points.
+
+Workers use the shared runtime through `app/agent.py`; synthesis uses the
+tool-free completion profile, including when worker tools were explicitly
+selected. Peer-note and remaining-budget updates enter through an explicit
+pre-call service, separate from passive event reporting. Process limits, saved
+artifact formats, and the bounded research strategy are preserved.
 
 ## Start a run
 
@@ -108,6 +114,10 @@ workspace sessions. Blocking it prevents a contributor from running. `--tools
 None` disables additional tools, retaining shared-state access. MCP is off
 unless explicitly enabled with the existing non-interactive `--mcp` flag.
 Global file memory and lifecycle hooks are disabled in these scratch sessions.
+File-memory restrictions apply before prompt/provider setup and propagate to
+nested helpers without changing the shared configuration. Workspace access and
+required workspace tools belong only to contributor sessions, not synthesis or
+ordinary helper sessions.
 
 The default write policy denies ordinary filesystem changes, including shell
 writes through Docker's read-only mounts. Publishing a contribution is a separate,
@@ -222,6 +232,16 @@ The workspace tool provides keyword search, reading a note, and publication.
 Search returns a bounded selection, not the entire history. New peer notes are
 also made visible between model steps through Memex's ordinary context pipeline.
 Agents cannot receive an update during an already-running model request.
+Each update includes up to eight unseen current-run peer notes, plus the existing
+four search-selected previews at startup. Already-delivered and own current-run
+notes do not consume the peer-note allowance, so finite publication backlogs drain
+over subsequent calls. Failed context attachment ends the worker visibly rather
+than claiming delivery. Preview bodies remain limited to 1,500 characters each.
+
+An invalid publication reports its validation error and size diagnostics without
+saving the rejected body. If a note was saved successfully but its activity-log
+write fails, the tool returns the note ID with a warning and a successful result;
+it does not report the committed publication as failed.
 
 Synthesis receives bounded current findings, historical notes explicitly read
 through the workspace tool by the run's workers, and referenced historical notes,
@@ -251,7 +271,8 @@ This version has bounded invocations, not a background scheduler. There is no
 live steering, automatic consensus, independent judge, or web/TUI dependency.
 The shared environment is the durable part; workers can end between questions.
 
-Focused tests use real concurrent fake-worker processes to establish cross-worker
-information transfer, failure handling and timeout cleanup, plus the existing
-runner and tool tests. A two-worker local-model smoke test is useful for checking
-actual tool use and the quality of the final answer.
+Focused tests use real concurrent processes with offline providers to exercise
+the actual worker entry point, tools, synthesis isolation, replay, and timeout
+cleanup. They also cover note backlogs, publication diagnostics, and passive
+readers with application/provider imports disabled. Model quality still requires
+a separate live-model evaluation.

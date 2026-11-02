@@ -17,6 +17,12 @@
   `app/runs.py`. Completion, CLI chat, agents, and workspace workers use
   `core/runtime`. Only Web/TUI retain `legacy/turns.py` pending migration.
   See `docs/core-runtime.md`.
+- Workspace: `workspace/engine.py` owns process supervision and synthesis;
+  `state.py` and `report.py` read/write artifacts without model dependencies;
+  `worker.py` is the private subprocess entry point; `runtime.py` adapts explicit
+  application services; `tools.py` implements shared contributions. CLI wiring
+  remains in `modes/workspace_mode.py` and tool discovery in
+  `actions/assistant_workspace_tool_action.py`. Shared core must not import workspace.
 
 ## Build, Run, and Dev
 - Python 3.11+. Use a virtual env.
@@ -51,6 +57,11 @@
   not select provider streaming. Internal helpers own separate sessions and close
   them without interactive exit hooks or stats; caller-owned sessions remain open.
 - Keep legacy frontend execution in `legacy/`; do not add new agent loops there.
+- Headless workflows pass `HeadlessServices` through `SessionBuilder.build` for
+  file-memory restrictions, required tools, and workflow initialization before
+  provider/prompt setup. Do not mutate `ConfigManager.base_config` to configure
+  scratch sessions. Required tools cannot bypass blocklists. Internal helpers
+  inherit disabled file memory but not workspace access or its required tools.
 
 ## Coding Style & Naming
 - Follow PEP 8; 4-space indentation; keep lines ~100 chars.

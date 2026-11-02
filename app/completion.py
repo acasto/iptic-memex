@@ -12,12 +12,13 @@ def configure_completion(session):
         configure_runtime(session)
 
 
-def build_completion_session(config_manager, options=None, *, builder=None):
+def build_completion_session(config_manager, options=None, *, builder=None, services=None):
     """Resolve completion defaults without initializing a frontend."""
     from app.headless import build_headless_session
     options = dict(options or {})
     enabled = options.get('active_tools_agent') not in (None, '', '__none__')
-    session = build_headless_session(config_manager, options, builder=builder, tools_enabled=enabled)
+    session = build_headless_session(config_manager, options, builder=builder,
+                                     tools_enabled=enabled, services=services)
     session.completion_tools_enabled = enabled
     session.mcp_autoload_policy = {'enabled': False}
     return session

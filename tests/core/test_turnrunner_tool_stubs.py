@@ -113,14 +113,13 @@ def test_turnrunner_emits_stub_on_action_exception(monkeypatch):
 
 def test_completed_tool_failure_is_logged_as_error_and_returned_to_model(tmp_path, monkeypatch):
     import json
-    from core.workspace_state import WorkspaceStore
+    from workspace.state import WorkspaceStore
+    from workspace.tools import WorkspaceAccess
 
     store = WorkspaceStore(tmp_path)
     run = store.create_run('Question', {})
     sess = _make_session()
-    sess.set_user_data('__workspace__', {
-        'directory': str(tmp_path), 'run_id': run['id'], 'worker': 'worker-1',
-    })
+    sess.workspace = WorkspaceAccess(store, run['id'], 'worker-1')
     sess.set_option('active_tools_agent', 'workspace')
     sess.set_option('tool_mode', 'official')
     sess.enter_agent_mode('deny')

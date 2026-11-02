@@ -269,8 +269,8 @@ def test_agent_mcp_is_explicit_and_completion_cannot_pass_it_through(builder, mo
 @pytest.mark.parametrize('synthesis', [False, True])
 def test_workspace_worker_uses_real_runtime_and_publication(builder, tmp_path, monkeypatch, synthesis):
     import json
-    import core.workspace_worker as worker
-    from core.workspace_state import WorkspaceStore
+    import workspace.worker as worker
+    from workspace.state import WorkspaceStore
 
     store = WorkspaceStore(tmp_path / 'workspace')
     run = store.create_run('Question', {})
@@ -287,8 +287,8 @@ def test_workspace_worker_uses_real_runtime_and_publication(builder, tmp_path, m
                 }}]}, {'text': 'Grounded answer %%DONE%%'}])
         return child
 
-    monkeypatch.setattr(worker, 'ConfigManager', lambda config: builder.config_manager)
-    monkeypatch.setattr(worker, 'SessionBuilder', lambda config: SimpleNamespace(build=build))
+    monkeypatch.setattr(worker.runtime, 'ConfigManager', lambda config: builder.config_manager)
+    monkeypatch.setattr(worker.runtime, 'SessionBuilder', lambda config: SimpleNamespace(build=build))
     result = worker.execute(dict(
         directory=str(store.root), repository=str(tmp_path), run_id=run['id'],
         worker='worker-1', model='worker-model', prompt='Test prompt', message='Question',
@@ -300,9 +300,85 @@ def test_workspace_worker_uses_real_runtime_and_publication(builder, tmp_path, m
     assert children[0]._closed and children[0].ui is None
     if synthesis:
         assert result['turns'] == 1 and not store.notes()
+        assert children[0].get_effective_tool_mode() == 'none'
+        assert not children[0].completion_tools_enabled
+        assert not hasattr(children[0], 'workspace')
     else:
         assert result['turns'] == 2 and result['tool_calls'] == 1
         assert any(n['content'].strip() == 'A sourced finding' for n in store.notes())
         events_path = store.run_dir(run['id']) / 'worker-1' / 'events.jsonl'
         events = [json.loads(line)['event'] for line in events_path.read_text().splitlines()]
         assert 'step_start' in events and 'tool_end' in events and 'model_done' in events
+
+
+def test_workspace_services_disable_file_memory_without_changing_config(builder, tmp_path, monkeypatch):
+    from core import memory_files
+    from workspace import runtime
+    from workspace.state import WorkspaceStore
+
+    memory_root = tmp_path / 'memory'
+    builder.config_manager.base_config.read_dict({
+        'MEMORY': {'active': 'true', 'directory': str(memory_root)},
+        'DEFAULT': {'template_handler': 'prompt_template_memory_file'},
+    })
+    original = dict(builder.config_manager.base_config['MEMORY'])
+    store = WorkspaceStore(tmp_path / 'workspace')
+    run = store.create_run('Question', {})
+    monkeypatch.setattr(runtime, 'ConfigManager', lambda config: builder.config_manager)
+    monkeypatch.setattr(runtime, 'SessionBuilder', lambda config: builder)
+    task = dict(phase='worker', prompt='Memory: {{memory}} {{memory_directory}}',
+                repository=str(tmp_path), run_id=run['id'], worker='worker-1',
+                writes_policy='deny', model='worker-model', overrides={'active_tools_agent': 'file'})
+
+    def forbidden(*args, **kwargs):
+        pytest.fail('Workspace started file-memory preparation')
+
+    with monkeypatch.context() as patch:
+        patch.setattr(memory_files, 'prepare_memory', forbidden)
+        session = runtime.build_session(task, store)
+        assert not memory_files.memory_enabled(session)
+        assert session.get_context('prompt').get()['content'] == 'Memory:  '
+        assert not memory_root.exists()
+        assert not any(root['path'] == str(memory_root) for root in
+                       session.get_action('assistant_fs_handler').get_allowed_roots())
+        # Helpers preserve this restriction without inheriting workspace access.
+        children = []
+        build = builder.build
+
+        def capture(**options):
+            child = build(**options)
+            children.append(child)
+            return child
+
+        patch.setattr(builder, 'build', capture)
+        assert session.run_internal_agent(steps=1).status == 'completed'
+        assert session.run_internal_completion(message='Task').status == 'completed'
+        assert all(not memory_files.memory_enabled(child) for child in children)
+        assert all(not hasattr(child, 'workspace') for child in children)
+        assert all(child._closed for child in children)
+    session.close()
+    assert dict(builder.config_manager.base_config['MEMORY']) == original
+    # Ordinary agent startup still follows the same, unmodified configuration.
+    ordinary = builder.build(mode='agent')
+    assert memory_files.memory_enabled(ordinary) and memory_root.exists()
+    assert 'workspace' not in ordinary.get_action('assistant_commands').commands
+    ordinary.close()
+
+
+def test_workspace_required_tool_respects_blocklist_and_explicit_none(builder, tmp_path, monkeypatch):
+    from workspace import runtime
+    from workspace.state import WorkspaceStore
+
+    monkeypatch.setattr(runtime, 'ConfigManager', lambda config: builder.config_manager)
+    monkeypatch.setattr(runtime, 'SessionBuilder', lambda config: builder)
+    store = WorkspaceStore(tmp_path / 'workspace')
+    run = store.create_run('Question', {})
+    task = dict(phase='worker', prompt='Investigate', repository=str(tmp_path),
+                run_id=run['id'], worker='worker-1', model='worker-model',
+                writes_policy='deny', overrides={'active_tools_agent': '__none__'})
+    session = runtime.build_session(task, store)
+    assert set(session.get_action('assistant_commands').commands) == {'workspace'}
+    session.close()
+    builder.config_manager.base_config['AGENT']['blocked_tools'] = 'workspace'
+    with pytest.raises(ValueError, match='blocked.*workspace'):
+        runtime.build_session(task, store)

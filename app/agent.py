@@ -16,10 +16,12 @@ from utils.tool_args import get_bool
 FINISH = re.compile(r'%%(?:DONE|COMPLETED|COMPLETE)%%', re.IGNORECASE)
 
 
-def build_agent_session(config_manager, options=None, *, builder=None, default_prompt=False):
+def build_agent_session(config_manager, options=None, *, builder=None, default_prompt=False,
+                        services=None):
     """Assemble the noninteractive tool profile without UI or implicit hooks."""
     return build_headless_session(config_manager, options, builder=builder,
-                                  tools_enabled=True, default_prompt=default_prompt, memory=True)
+                                  tools_enabled=True, default_prompt=default_prompt, memory=True,
+                                  services=services)
 
 
 def configure_agent(session, writes_policy=None):

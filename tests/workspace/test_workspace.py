@@ -8,8 +8,8 @@ import time
 
 import pytest
 
-from core.workspace_engine import WorkspaceEngine, WorkspaceSettings
-from core.workspace_state import WorkspaceStore
+from workspace.engine import WorkspaceEngine, WorkspaceSettings
+from workspace.state import WorkspaceStore
 
 
 def test_notes_are_persistent_and_references_are_checked(tmp_path):
@@ -45,7 +45,7 @@ def test_note_reads_reject_escaping_symlinks(tmp_path):
 # before either completes. No LLM endpoint is required for this lifecycle test.
 FAKE_WORKER = '''
 import json, os, sys, time
-from core.workspace_state import WorkspaceStore, atomic_write, now
+from workspace.state import WorkspaceStore, atomic_write, now
 spec = json.load(sys.stdin)
 store = WorkspaceStore(spec['directory'])
 run, worker = spec['run_id'], spec['worker']

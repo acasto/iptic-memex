@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 import json
 
-from core.workspace_state import WorkspaceStore
+from workspace.state import WorkspaceStore
 
 
 def seconds_between(start: str | None, end: str | None) -> float | None:

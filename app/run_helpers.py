@@ -40,11 +40,14 @@ def attach_contexts(session, contexts):
 
 
 def child_options(outer_session, overrides):
-    """Inherit the caller's sandbox without inheriting its model or permissions."""
+    """Inherit sandbox and service restrictions, keeping model/tool choices separate."""
     options = {}
     if outer_session is not None:
         options['base_directory'] = outer_session.get_option('TOOLS', 'base_directory', fallback='working')
     options.update(overrides or {})
+    if getattr(outer_session, 'file_memory_enabled', None) is False:
+        from app.session_services import HeadlessServices
+        options['services'] = HeadlessServices(file_memory=False)
     return options
 
 

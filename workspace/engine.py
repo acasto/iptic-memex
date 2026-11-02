@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 
-from core.workspace_state import WorkspaceStore, TERMINAL_STATES, atomic_write, now, read_json
+from workspace.state import WorkspaceStore, TERMINAL_STATES, atomic_write, now, read_json
 
 
 APP_ROOT = Path(__file__).resolve().parent.parent
@@ -61,7 +61,7 @@ class WorkspaceEngine:
         self.settings = settings
         self.config_file = config_file
         self.overrides = dict(overrides or {})
-        self.worker_command = worker_command or [sys.executable, '-m', 'core.workspace_worker']
+        self.worker_command = worker_command or [sys.executable, '-m', 'workspace.worker']
         self._children = {}
 
     def _spawn(self, run_id: str, worker: str, question: str, *,
@@ -219,7 +219,7 @@ class WorkspaceEngine:
                     outcomes=outcomes)
 
     def _save_synthesis_input(self, run_id: str, evidence: dict) -> None:
-        from core.workspace_state import write_json
+        from workspace.state import write_json
 
         write_json(self.store.run_dir(run_id) / 'synthesis-input.json', evidence)
         self.store.update_run(
