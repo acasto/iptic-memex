@@ -7,8 +7,8 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.par
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from core.turns import TurnRunner, TurnOptions
-from core.null_ui import NullUI
+from legacy.turns import TurnRunner, TurnOptions
+from legacy.null_ui import NullUI
 from ui.base import UI
 
 

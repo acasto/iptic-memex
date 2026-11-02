@@ -194,14 +194,16 @@ def autoload_mcp(session) -> None:
 
     # Non-interactive gating: only enable MCP when [AGENT].use_mcp is true
     # Non-interactive = Agent mode or Completion mode
-    non_interactive = False
-    try:
-        non_interactive = bool(getattr(session, 'in_agent_mode', lambda: False)() or session.get_flag('completion_mode', False))
-    except Exception:
-        non_interactive = False
+    policy = getattr(session, 'mcp_autoload_policy', None)
+    non_interactive = policy is not None
+    if policy is None:
+        try:
+            non_interactive = bool(getattr(session, 'in_agent_mode', lambda: False)() or session.get_flag('completion_mode', False))
+        except Exception:
+            non_interactive = False
     if non_interactive:
         try:
-            use_mcp = bool(session.get_option('AGENT', 'use_mcp', fallback=False))
+            use_mcp = policy['enabled'] if policy is not None else bool(session.get_option('AGENT', 'use_mcp', fallback=False))
         except Exception:
             use_mcp = False
         if not use_mcp:
@@ -257,7 +259,8 @@ def autoload_mcp(session) -> None:
     # If in non-interactive and [AGENT].available_mcp is set, restrict autoload set
     if non_interactive:
         try:
-            avail = [x.strip() for x in str(session.get_option('AGENT', 'available_mcp', fallback='') or '').split(',') if x.strip()]
+            selection = policy.get('servers', '') if policy is not None else session.get_option('AGENT', 'available_mcp', fallback='')
+            avail = [x.strip() for x in str(selection or '').split(',') if x.strip()]
         except Exception:
             avail = []
         if avail:

@@ -668,7 +668,8 @@ class OpenAIResponsesProvider(OpenAIUsage, APIProvider):
                     continue
             # Add MCP built-in tools when app-side MCP is active
             try:
-                mcp_active = bool(self.session.get_option('MCP', 'active', fallback=False))
+                from memex_mcp.policy import mcp_enabled
+                mcp_active = mcp_enabled(self.session)
             except Exception:
                 mcp_active = False
             if mcp_active:

@@ -41,57 +41,56 @@ class FakeSessionBuilder:
         return FakeSession()
 
 
-class CapturingAgentMode:
+class CapturingAgentRun:
     last_kwargs = None
 
-    def __init__(self, session, **kwargs):
-        self.session = session
-        CapturingAgentMode.last_kwargs = kwargs
-
-    def start(self, *, emit_output=True):
-        pass
+    @staticmethod
+    def run(**kwargs):
+        from core.runtime import RunOutcome
+        CapturingAgentRun.last_kwargs = kwargs
+        return RunOutcome(run_id='fixture', last_text='Answer')
 
 
 def test_agent_command_uses_configured_write_policy(monkeypatch):
-    import modes.agent_mode as agent_mode
+    import app.runs as runs
 
     monkeypatch.setattr(main, "ConfigManager", FakeConfigManager)
     monkeypatch.setattr(main, "SessionBuilder", FakeSessionBuilder)
-    monkeypatch.setattr(agent_mode, "AgentMode", CapturingAgentMode)
-    CapturingAgentMode.last_kwargs = None
+    monkeypatch.setattr(runs, "run_agent", CapturingAgentRun.run)
+    CapturingAgentRun.last_kwargs = None
 
     result = CliRunner().invoke(main.cli, ["agent"])
 
     assert result.exit_code == 0
-    assert CapturingAgentMode.last_kwargs is not None
-    assert CapturingAgentMode.last_kwargs["writes_policy"] == "dry-run"
+    assert CapturingAgentRun.last_kwargs is not None
+    assert CapturingAgentRun.last_kwargs["writes_policy"] == "dry-run"
 
 
 def test_agent_command_write_policy_cli_override_wins(monkeypatch):
-    import modes.agent_mode as agent_mode
+    import app.runs as runs
 
     monkeypatch.setattr(main, "ConfigManager", FakeConfigManager)
     monkeypatch.setattr(main, "SessionBuilder", FakeSessionBuilder)
-    monkeypatch.setattr(agent_mode, "AgentMode", CapturingAgentMode)
-    CapturingAgentMode.last_kwargs = None
+    monkeypatch.setattr(runs, "run_agent", CapturingAgentRun.run)
+    CapturingAgentRun.last_kwargs = None
 
     result = CliRunner().invoke(main.cli, ["--agent-writes", "allow", "agent"])
 
     assert result.exit_code == 0
-    assert CapturingAgentMode.last_kwargs is not None
-    assert CapturingAgentMode.last_kwargs["writes_policy"] == "allow"
+    assert CapturingAgentRun.last_kwargs is not None
+    assert CapturingAgentRun.last_kwargs["writes_policy"] == "allow"
 
 
 def test_agent_command_no_status_tags_flag_reaches_agent_mode(monkeypatch):
-    import modes.agent_mode as agent_mode
+    import app.runs as runs
 
     monkeypatch.setattr(main, "ConfigManager", FakeConfigManager)
     monkeypatch.setattr(main, "SessionBuilder", FakeSessionBuilder)
-    monkeypatch.setattr(agent_mode, "AgentMode", CapturingAgentMode)
-    CapturingAgentMode.last_kwargs = None
+    monkeypatch.setattr(runs, "run_agent", CapturingAgentRun.run)
+    CapturingAgentRun.last_kwargs = None
 
     result = CliRunner().invoke(main.cli, ["--no-agent-status-tags", "agent"])
 
     assert result.exit_code == 0
-    assert CapturingAgentMode.last_kwargs is not None
-    assert CapturingAgentMode.last_kwargs["use_status_tags"] is False
+    assert CapturingAgentRun.last_kwargs is not None
+    assert CapturingAgentRun.last_kwargs["status_tags"] is False

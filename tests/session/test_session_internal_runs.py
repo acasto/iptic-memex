@@ -50,7 +50,7 @@ def test_run_internal_completion_delegates_and_returns_result(monkeypatch):
     setattr(sess, '_builder', object())
 
     calls = {}
-    def fake_run_completion(builder, overrides=None, contexts=None, message='', capture='text', trace=None):
+    def fake_run_completion(builder, overrides=None, contexts=None, message='', capture='text', trace=None, outer_session=None):
         calls['builder'] = builder
         calls['overrides'] = overrides
         calls['contexts'] = contexts
@@ -59,7 +59,7 @@ def test_run_internal_completion_delegates_and_returns_result(monkeypatch):
         calls['trace'] = trace
         return {'ok': True, 'msg': message, 'ovr': overrides}
 
-    import core.mode_runner as mr
+    import app.runs as mr
     monkeypatch.setattr(mr, 'run_completion', fake_run_completion)
 
     res = sess.run_internal_completion(message='hello', overrides={'model': 'm1'}, contexts=[('x', 1)], capture='text')
@@ -83,7 +83,7 @@ def test_run_internal_agent_delegates_and_returns_result(monkeypatch):
         calls['trace'] = trace
         return {'ok': True, 'steps': steps, 'out': output}
 
-    import core.mode_runner as mr
+    import app.runs as mr
     monkeypatch.setattr(mr, 'run_agent', fake_run_agent)
 
     res = sess.run_internal_agent(steps=2, overrides={'model': 'm2'}, contexts=[('y', 2)], output='final', verbose_dump=True)

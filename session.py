@@ -98,7 +98,7 @@ class Session:
         return None
 
     def register_cleanup_callback(self, callback: Callable[[], None]) -> None:
-        """Register a callback to run during session teardown (handle_exit)."""
+        """Register a callback to run once during session teardown."""
         if not callable(callback):
             return
         self._cleanup_callbacks.append(callback)
@@ -592,6 +592,28 @@ class Session:
                 if not self.context[context_type]:
                     del self.context[context_type]
 
+    def close(self) -> None:
+        """Release owned resources once, without prompts, hooks, or statistics writes."""
+        if getattr(self, '_closed', False):
+            return
+        self._closed = True
+        # Run cleanup tasks
+        if self.provider and hasattr(self.provider, 'cleanup'):
+            try:
+                self.provider.cleanup()
+            except Exception as e:
+                self.utils.output.error(f"Error during provider cleanup: {e}")
+
+        # Invoke registered cleanup callbacks
+        while self._cleanup_callbacks:
+            callback = self._cleanup_callbacks.pop()
+            try:
+                callback()
+            except Exception as e:
+                try:
+                    self.utils.output.warning(f"Cleanup callback failed: {e}")
+                except Exception:
+                    pass
     def handle_exit(self, confirm: bool = True) -> bool:
         """Handle exit functionality - backward compatibility.
 
@@ -625,23 +647,7 @@ class Session:
         except Exception:
             pass
 
-        # Run cleanup tasks
-        if self.provider and hasattr(self.provider, 'cleanup'):
-            try:
-                self.provider.cleanup()
-            except Exception as e:
-                self.utils.output.error(f"Error during provider cleanup: {e}")
-
-        # Invoke registered cleanup callbacks
-        while self._cleanup_callbacks:
-            callback = self._cleanup_callbacks.pop()
-            try:
-                callback()
-            except Exception as e:
-                try:
-                    self.utils.output.warning(f"Cleanup callback failed: {e}")
-                except Exception:
-                    pass
+        self.close()
 
         # Persist stats if available
         try:
@@ -689,7 +695,7 @@ class Session:
         if not hasattr(self, '_builder') or getattr(self, '_builder', None) is None:
             raise RuntimeError('Session builder is not available')
         # Local import to avoid import-time cycles
-        from core.mode_runner import run_completion as _run_completion  # type: ignore
+        from app.runs import run_completion as _run_completion  # type: ignore
         trace = None
         try:
             trace = getattr(self.utils.logger, "get_context", lambda: None)()
@@ -702,6 +708,7 @@ class Session:
             message=message,
             capture=capture,
             trace=trace if isinstance(trace, dict) else None,
+            outer_session=self,
         )
 
         
@@ -716,11 +723,11 @@ class Session:
     ):
         """Run an internal agent loop using the embedded builder.
 
-        Returns core.mode_runner.ModeResult.
+        Returns core.runtime.RunOutcome.
         """
         if not hasattr(self, '_builder') or getattr(self, '_builder', None) is None:
             raise RuntimeError('Session builder is not available')
-        from core.mode_runner import run_agent as _run_agent  # type: ignore
+        from app.runs import run_agent as _run_agent  # type: ignore
         return _run_agent(
             builder=self._builder,
             steps=steps,

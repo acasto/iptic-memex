@@ -10,7 +10,7 @@ import pytest
 from openai import OpenAI
 
 from contexts.chat_context import ChatContext
-from core.turns import TurnRunner
+from legacy.turns import TurnRunner
 from providers.openai_provider import OpenAIProvider
 from providers.openairesponses_provider import OpenAIResponsesProvider
 

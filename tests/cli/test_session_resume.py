@@ -18,7 +18,7 @@ from actions.manage_sessions_action import ManageSessionsAction
 from base_classes import InteractionNeeded
 from component_registry import ComponentRegistry
 from config_manager import ConfigManager
-from core.null_ui import NullUI
+from legacy.null_ui import NullUI
 from core.session_persistence import list_sessions, load_session_data, save_session
 from session import Session
 from ui.cli import CLIUI

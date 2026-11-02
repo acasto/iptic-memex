@@ -296,7 +296,7 @@ duplicate registry names. Full canonical schemas are copied into
 over `tool_choice`; the latter supports `auto`, `none`, `required`/`any`, or an
 OpenAI-style function selector. Tool mode `none`/`pseudo` suppresses native tool
 declarations, including those supplied through `extra_body`. The SDK's automatic
-client function execution is disabled; TurnRunner executes registered client tools.
+client function execution is disabled; the shared runtime executes registered client tools.
 
 Native model parts, thought signatures, API function names, and function IDs survive
 tool follow-ups and JSON checkpoints. Parallel results are grouped into one user

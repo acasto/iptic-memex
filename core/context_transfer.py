@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Iterable, Optional, Tuple
+from copy import deepcopy
 
 
 def copy_contexts(
@@ -22,7 +23,7 @@ def copy_contexts(
         if wanted and ctx_type not in wanted:
             continue
         for ctx in (ctx_list or []):
-            data = ctx.get()
+            data = deepcopy(ctx.get())
             dest_session.add_context(ctx_type, data)
 
     if include_chat:

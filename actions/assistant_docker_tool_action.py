@@ -124,7 +124,8 @@ class AssistantDockerToolAction(InteractionAction):
             )
             # Non-allow write policies need a fresh container so read-only mounts
             # cannot be bypassed by a previously-created persistent container.
-            force_ephemeral = (in_agent and always_ephemeral) or self._agent_forces_readonly()
+            force_ephemeral = (getattr(self.session, 'ephemeral_commands', False)
+                               or (in_agent and always_ephemeral) or self._agent_forces_readonly())
         except Exception:
             force_ephemeral = False
         self.docker_env = 'ephemeral' if force_ephemeral else desired_env

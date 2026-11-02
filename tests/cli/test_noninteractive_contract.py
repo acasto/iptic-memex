@@ -12,6 +12,7 @@ from contexts.chat_context import ChatContext
 from contexts.file_context import FileContext
 from utils.output_utils import OutputHandler
 from utils.stream_utils import StreamHandler
+from utils.logging_utils import LoggingHandler
 from actions.assistant_output_action import AssistantOutputAction
 
 
@@ -28,6 +29,7 @@ class Session:
             fs=SimpleNamespace(resolve_file_path=lambda f: str(Path(f)) if Path(f).is_file() else None),
         )
         self.utils.stream = StreamHandler(self, self.utils.output)
+        self.utils.logger = LoggingHandler(self, self.utils.output)
         self.provider = Provider(self, behavior)
 
     def get_option(self, section, key, fallback=None):
@@ -93,7 +95,17 @@ class Session:
         return self.policy is not None
 
     def get_agent_write_policy(self):
-        return self.policy
+        return getattr(self, 'write_policy', self.policy)
+
+    def _normalize_write_policy(self, value):
+        value = str(value or 'deny').lower()
+        return value if value in ('deny', 'dry-run', 'allow') else 'deny'
+
+    def get_effective_tool_mode(self):
+        return 'none'
+
+    def get_cancellation_token(self):
+        return self.user_data.get('__turn_cancel__')
 
 
 class Provider:
@@ -158,7 +170,7 @@ def harness(monkeypatch):
 
     monkeypatch.setattr(main, 'ConfigManager', Config)
     monkeypatch.setattr(main, 'SessionBuilder', Builder)
-    monkeypatch.setattr('core.turns.run_hooks', lambda *a, **kw: None)
+    monkeypatch.setattr('core.hooks.run_hooks', lambda *a, **kw: None)
     monkeypatch.setattr('memex_mcp.bootstrap.autoload_mcp', lambda *a, **kw: None)
     return CliRunner(), sessions, behavior
 
@@ -279,7 +291,7 @@ def test_invalid_cli_token_limit_fails_before_session_creation(harness, limit):
 
 
 @pytest.mark.parametrize('args', [['-s', '--message', 'Task'],
-                                  ['--agent-output', 'full', 'agent', '--message', 'Task']])
+                                  ['-s', '--agent-output', 'full', 'agent', '--message', 'Task']])
 def test_stream_errors_keep_partial_output_but_exit_nonzero(harness, args):
     harness[2]['exception'] = True
     result = harness[0].invoke(main.cli, args)

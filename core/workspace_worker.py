@@ -11,9 +11,9 @@ import sys
 import time
 
 from config_manager import ConfigManager
-from core.mode_runner import run_agent, run_completion
-from core.null_ui import NullUI
-from core.session_builder import SessionBuilder
+from app.runs import run_agent, run_completion
+from app.runtime_services import install_tool_selection
+from app.session_builder import SessionBuilder
 from core.workspace_state import WorkspaceStore, atomic_write, now
 
 
@@ -49,8 +49,8 @@ def execute(spec: dict) -> dict:
         if spec.get('model'):
             options['model'] = spec['model']
         # Optional MCP remains opt-in for non-interactive runs, as in ordinary Agent Mode.
-        session = SessionBuilder(config).build(mode='internal', **options)
-        session.ui = NullUI()
+        mode = 'completion' if spec.get('phase') == 'synthesis' else 'internal'
+        session = SessionBuilder(config).build(mode=mode, **options)
         session.set_flag('hooks_disabled', True)
         def save_prompt():
             system_prompt = session.get_context('prompt')
@@ -74,8 +74,9 @@ def execute(spec: dict) -> dict:
         })
         seen = set()
 
-        def report(event: str, data: dict):
-            if event == 'step_start' and spec.get('deadline_monotonic') is not None:
+        def prepare(active, index):
+            event, data = 'step_start', {'step': index, 'max_steps': spec['steps']}
+            if spec.get('deadline_monotonic') is not None:
                 remaining = max(0, spec['deadline_monotonic'] - time.monotonic())
                 data = dict(data, time_remaining_seconds=round(remaining, 1))
                 session.add_context('agent', {
@@ -85,8 +86,6 @@ def execute(spec: dict) -> dict:
                 })
             store.event(run_id, worker, event, data)
             store.update_worker(run_id, worker, phase=event, **data)
-            if event != 'step_start':
-                return
             # Bounded notifications enter through the normal context pipeline. Full notes
             # remain available on demand; neither entire peer histories nor private traces move.
             candidates = store.notes(run_id=run_id, limit=8)
@@ -106,12 +105,24 @@ def execute(spec: dict) -> dict:
                 })
                 store.event(run_id, worker, 'notes_seen', {'notes': [n['id'] for n in fresh]})
 
+        def report(event):
+            data = dict(event.data)
+            kind = event.type
+            if kind == 'tool_started':
+                kind, data = 'tool_start', dict(data, tool=data.get('name'))
+            elif kind == 'tool_finished':
+                kind, data = 'tool_end', dict(data, tool=data.get('name'))
+            elif kind == 'provider_finished':
+                kind = 'model_done'
+            store.event(run_id, worker, kind, data)
+            store.update_worker(run_id, worker, phase=kind)
+
         if spec.get('phase') == 'synthesis':
             store.update_worker(run_id, worker, phase='synthesizing')
             result = run_completion(session=session, message=spec['message'])
         else:
             # Determine the inherited profile using the same registry as ordinary agent runs.
-            session.enter_agent_mode(spec['writes_policy'])
+            install_tool_selection(session, 'AGENT')
             available = session.get_action('assistant_commands').commands
             blocked = config.base_config.get('AGENT', 'blocked_tools', fallback='')
             if 'workspace' in {name.strip().lower() for name in blocked.split(',')}:
@@ -127,12 +138,13 @@ def execute(spec: dict) -> dict:
             result = run_agent(
                 session=session, steps=spec['steps'], message=spec['message'],
                 writes_policy=spec['writes_policy'], disable_hooks=True, output='final',
-                on_event=report,
+                on_event=report, before_call=prepare,
             )
         # Agent Mode appends finish/write-policy guidance when preparing its first
         # turn. Capture that effective prompt as well as the initial live snapshot.
         save_prompt()
         record = asdict(result)
+        record['execution_id'] = record.pop('run_id')
         record.pop('raw', None)
         record.pop('events', None)
         if record['status'] == 'completed' and record.get('stop_reason') == 'steps':
@@ -162,7 +174,7 @@ def execute(spec: dict) -> dict:
         return record
     finally:
         if session is not None:
-            session.handle_exit(confirm=False)
+            session.close()
         if previous_handler is not None:
             signal.signal(signal.SIGTERM, previous_handler)
 

@@ -14,12 +14,18 @@ Entry points:
 Behavior:
 - Builds a subsession from the embedded `SessionBuilder`.
 - Attaches contexts (non-chat).
-- Completion uses the event runtime without a UI or stdout capture and returns
+- Completion and agents use the event runtime without a UI or stdout capture and return
   RunOutcome (`last_text`, `turns`, `usage`, `cost`, `events`, status/stop reason).
   Optional completion services are deferred; see [core-runtime.md](core-runtime.md).
-- Agent runs still use NullUI and return ModeResult pending migration.
+- `app/runs.py` owns these adapters; `core/mode_runner.py` is an import bridge.
+- Owned helper sessions close their provider/MCP resources on success or failure,
+  without exit prompts, hooks, or statistics writes. Caller-supplied sessions stay open.
+- Cancellation propagates from the parent. The sandbox root is inherited, while
+  model selection follows the noninteractive default unless explicitly overridden.
 - Applies a non-interactive input gate (large inputs can abort with an error event).
 - For agents, chat history is not copied into the subsession; instead a chat seed is used for templates (see below).
+- Required context updates use a pre-call service; event observers only observe
+  RunEvents. A failing observer cannot silently disable workspace note delivery.
 
 ## External runner
 

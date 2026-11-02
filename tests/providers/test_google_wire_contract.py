@@ -11,7 +11,7 @@ from google import genai
 from google.genai import types
 
 from core.cancellation import CancellationToken
-from core.turns import TurnRunner
+from legacy.turns import TurnRunner
 from contexts.chat_context import ChatContext
 from providers.google_provider import GoogleProvider
 

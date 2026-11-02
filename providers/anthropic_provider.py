@@ -233,8 +233,8 @@ class AnthropicProvider(AnthropicUsage, APIProvider):
                  })} for spec in specs]
 
     def _mcp_active(self):
-        return bool(get_bool({'active': self.session.get_option('MCP', 'active', fallback=False)},
-                             'active', False))
+        from memex_mcp.policy import mcp_enabled
+        return mcp_enabled(self.session)
 
     def _mcp_beta(self):
         value = self.session.get_params().get('mcp_beta', 'mcp-client-2025-11-20')

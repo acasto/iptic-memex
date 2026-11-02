@@ -1,9 +1,9 @@
-# Core runtime: completion and CLI chat
+# Shared core runtime
 
-Completion and CLI chat share requests, ordered events, explicit outcomes, and
+Completion, CLI chat, agents, and internal helpers share requests, ordered events, explicit outcomes, and
 one provider/tool execution lifecycle. Application/session assembly, workflow
-services, and terminal rendering sit outside execution. Bounded agents and the
-Web/TUI frontends still use TurnRunner pending migration; workspace retains its
+services, and terminal rendering sit outside execution. Web/TUI still use the
+isolated `legacy/turns.py` executor pending migration; workspace retains its
 current worker algorithm and subprocess supervision.
 
 ## Supported behavior
@@ -17,8 +17,9 @@ current worker algorithm and subprocess supervision.
 | Headless completion | Same runtime/outcome, optional event observer, no UI substitution or stdout capture |
 | Failures | Input gate, provider finish reasons, partial output, cooperative cancellation |
 | CLI chat | Same runtime, tool executor, and interaction service as completion |
-| Bounded agents | Existing TurnRunner path; migrate in the next slice |
-| Workspace | Existing worker/notes workflow; synthesis completion uses the new runtime |
+| Bounded agents | Same runtime, with a provider-call budget and explicit agent policy |
+| Internal helpers | Separate headless sessions; shared RunOutcome and inherited cancellation |
+| Workspace | Workers use the agent adapter; fresh synthesis uses tool-free completion |
 
 ```bash
 python main.py --message "Explain this concept"
@@ -50,6 +51,10 @@ does not read auto_submit flags or invent empty user turns for follow-up.
   into a RunRequest. Optional services are not inferred inside execution.
 - `app/chat.py` resolves chat policy and keeps its hook lifecycle in explicit
   before-call/after-run services. Observer callbacks do not perform workflow work.
+- `app/agent.py` resolves agent tool/write policy, finish markers, MCP opt-in, and
+  pre-call context updates. `app/runs.py` owns isolated helper sessions and closes
+  their resources on success or failure. Caller-supplied sessions remain open.
+- `app/headless.py` assembles completion/agent sessions without frontend imports.
 - `core/runtime/` owns provider execution, transcript/context transfer, filtering,
   cancellation checks, event ordering, and RunOutcome.
 - `ui/completion_renderer.py` renders events without calling providers or changing
@@ -58,11 +63,12 @@ does not read auto_submit flags or invent empty user turns for follow-up.
   into events during execution. Chat's terminal helpers remain usable between
   runs. This adapter neither captures stdout nor acts as a UI.
 
-The replaced completion execution body in `core/mode_runner.py` is deleted; its
-entry point delegates to application completion for existing internal callers.
+The replaced execution bodies in `core/mode_runner.py` are deleted; it is a small
+import bridge to `app/runs.py` for existing callers. There is no separate agent loop
+or ModeResult. The old Web/TUI user-turn executor lives under `legacy/`; its
+duplicate agent loop is deleted.
 `core/session_builder.py` is a temporary import bridge to application assembly,
-with no assembly implementation of its own. The remaining workflows will migrate
-incrementally, rather than retaining two completion implementations.
+with no assembly implementation of its own.
 
 ## Events and outcomes
 
@@ -130,9 +136,11 @@ No background queue or durable continuation is implied.
 
 ## Interaction
 
-CLI chat shows a waiting spinner (or a plain status line) before reply text,
+CLI chat shows the configured spinner without a text label before reply text,
 then prints the assistant label when text arrives. Streamed chunks are flushed
-immediately. On POSIX terminals, input echo/typeahead is suspended during a run
+immediately. `DEFAULT.spinner_style`, colors, and terminal policy determine whether
+an animation appears; there is no hardcoded waiting message or fallback line.
+On POSIX terminals, input echo/typeahead is suspended during a run
 and restored for actual input requests and the next user prompt. Keystrokes
 entered while busy are discarded; piped input is untouched. Ctrl-C still works.
 
@@ -167,7 +175,23 @@ or backups, or session autosave. Explicit prompt templates/addenda still resolve
 normally, including templates that read memory. Service lifecycle integration
 will return as explicit application/workflow services.
 
-Continued agent work, an asynchronous run handle, durable resume, hard deadlines,
+Agent helpers retain noninteractive file-memory preparation and explicitly opt
+into MCP through `[AGENT].use_mcp` (and the global MCP gate). Completion disables
+MCP startup and provider pass-through. Hooks stay application-owned in CLI chat;
+their sidecars use the same internal-agent API without recursively starting hooks.
+Helpers inherit the caller's sandbox root, use the noninteractive model default,
+and copy non-chat context data independently. Parent chat is a template seed,
+not a second copy of the child transcript. Child cancellation follows the parent.
+
+Each agent step is one provider call; tool follow-ups consume the same budget.
+Budget exhaustion returns incomplete/steps. A reply without tool calls completes
+naturally; finish markers are recognized and trimmed for final/none output.
+Provider streaming follows model configuration; final/full/none controls rendering.
+Required pre-call updates run under the session lock separately from observers.
+Updates after the initial input become explicit context records, rather than
+fabricated empty user turns, and provider adapters encode them as context input.
+
+Continued goal pursuit, an asynchronous run handle, durable resume, hard deadlines,
 and research scheduling remain outside this slice. Chat keeps its existing
 memory/MCP/autosave startup and application-owned hooks. Web/TUI have not been
 migrated or rebuilt; their old continuation paths remain until migration.

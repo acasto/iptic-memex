@@ -229,7 +229,7 @@ def test_headless_completion_never_imports_a_frontend_or_old_runner(builder, mon
     original = builtins.__import__
 
     def guarded(name, *args, **kwargs):
-        if name == 'ui' or name.startswith('ui.') or name in ('core.turns', 'core.null_ui'):
+        if name == 'ui' or name.startswith('ui.') or name in ('core.turns', 'core.null_ui', 'legacy.turns', 'legacy.null_ui'):
             raise AssertionError(f'Completion imported legacy execution/frontend: {name}')
         return original(name, *args, **kwargs)
 

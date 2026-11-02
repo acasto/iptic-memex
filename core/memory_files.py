@@ -34,7 +34,11 @@ def memory_directory(session) -> Path:
 
 
 def _warning(session, message: str) -> None:
-    session.ui.emit('warning', {'message': f'File memory: {message}'})
+    text = f'File memory: {message}'
+    if session.ui is not None:
+        session.ui.emit('warning', {'message': text})
+    else:
+        session.utils.output.warning(text)
 
 
 def read_memory(session, project: str | None = None) -> str:

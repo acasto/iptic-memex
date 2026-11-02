@@ -89,22 +89,28 @@ class ChatContext(InteractionContext):
 
         # Get fresh params each time
         params = self.session.get_params()
+        # Domain context-update records carry actual external data. Providers
+        # receive them as context-bearing input, never fabricated empty turns.
+        conversation = self.conversation
+        if any(turn.get('role') == 'context' for turn in conversation):
+            conversation = [dict(turn, role='user') if turn.get('role') == 'context' else turn
+                            for turn in conversation]
         context_sent = params.get('context_sent', 'all')
         if context_sent == 'none' or context_sent == 'last_1':
-            return self.conversation[-1:] if self.conversation else []
+            return conversation[-1:] if conversation else []
         elif context_sent == 'all':
-            return self.conversation
+            return conversation
         else:
             parts = context_sent.split('_')
             if len(parts) == 2 and parts[1].isdigit():
                 n = int(parts[1])
                 if parts[0] == 'first':
-                    return self.conversation[:n]
+                    return conversation[:n]
                 elif parts[0] == 'last':
-                    return self.conversation[-n:]
+                    return conversation[-n:]
 
         # Default to returning all if the option is not recognized
-        return self.conversation
+        return conversation
 
     def clear(self):
         self.conversation = []

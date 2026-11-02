@@ -18,7 +18,7 @@ except ImportError:  # pragma: no cover - surfaced when textual missing
     TEXTUAL_AVAILABLE = False
 
 from base_classes import Completed, InteractionNeeded
-from core.turns import TurnRunner
+from legacy.turns import TurnRunner
 from tui.commands import CommandController
 from tui.input_completion import InputCompletionManager
 from tui.models import CommandItem

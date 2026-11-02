@@ -11,6 +11,12 @@ answers the original question using published findings and worker outcomes.
 Private worker chat histories are not passed to synthesis. This is synthesis,
 not an independent verification pass.
 
+Workers now use the shared runtime through `app/agent.py`; synthesis uses the
+tool-free completion profile. Workspace still owns subprocess supervision and
+saved research state. Peer-note and remaining-budget updates enter through an
+explicit pre-call service, separate from passive event reporting. The research
+algorithm and note-selection limits are unchanged in this runtime migration.
+
 ## Start a run
 
 From the repository root:
@@ -35,11 +41,10 @@ The question may instead be supplied with `--message` or `--stdin-message`.
 `--json` returns the run record and answer. File attachments are not supported
 in this initial mode; use `--repository` for source access.
 
-Workers inherit `[AGENT].default_model` (`glm-5.3` for this experiment).
-Synthesis uses `[WORKSPACE].synthesis_model`, now configured as `gpt-6.1`.
-Both aliases must exist in your model configuration. A normal run therefore
-uses local GLM workers and sends their published findings to GPT-6.1 for the
-final answer. Existing chat defaults are unaffected.
+Workers inherit `[AGENT].default_model`. Synthesis uses
+`[WORKSPACE].synthesis_model` when configured, otherwise the worker model.
+Both aliases must exist in your model configuration. Model choices belong in
+configuration or CLI options; workspace does not hardcode a local model.
 
 Model precedence for synthesis, highest first:
 

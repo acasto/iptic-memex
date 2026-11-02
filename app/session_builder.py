@@ -12,8 +12,8 @@ class SessionBuilder:
     """
     Resolve application profiles and assemble sessions.
 
-    Completion uses event-based assembly. Other workflows keep their existing
-    assembly until their execution paths migrate.
+    Headless profiles share event-based assembly. Interactive profiles retain
+    their frontend startup services outside the execution runtime.
     """
 
     def __init__(self, config_manager):
@@ -23,27 +23,19 @@ class SessionBuilder:
         if mode == 'completion':
             from app.completion import build_completion_session
             return build_completion_session(self.config_manager, options, builder=self)
+        if mode in ('agent', 'internal'):
+            from app.agent import build_agent_session
+            return build_agent_session(self.config_manager, options, builder=self,
+                                       default_prompt=mode == 'internal')
         # Late import to avoid circular dependency at module load time
         from session import Session
 
-        # Determine effective default model based on interaction style (mode)
-        # - Non-interactive runs ('completion', 'internal') prefer [AGENT].default_model when not explicitly set
-        # - Interactive runs ('chat', 'tui', 'web') keep using [DEFAULT].default_model
         eff_options = dict(options or {})
         try:
             ui_mode = (mode or 'chat').lower()
         except Exception:
             ui_mode = 'chat'
         interactive = ui_mode in ('chat', 'web', 'tui')
-        if not eff_options.get('model') and ui_mode in ('completion', 'internal', 'agent'):
-            try:
-                base_cfg = getattr(self.config_manager, 'base_config', None)
-                if base_cfg is not None:
-                    agent_default = base_cfg.get('AGENT', 'default_model', fallback=None)
-                    if agent_default:
-                        eff_options['model'] = agent_default
-            except Exception:
-                pass
 
         session_config: SessionConfig = self.config_manager.create_session_config(eff_options)
         registry = ComponentRegistry(session_config)
@@ -66,10 +58,6 @@ class SessionBuilder:
             elif ui_mode in ('tui',):
                 from ui.tui import TUIUI
                 session.ui = TUIUI(session)
-            elif ui_mode in ('internal',):
-                # caller will override with a core.NullUI for internal runs
-                from ui.cli import CLIUI
-                session.ui = CLIUI(session)
             else:
                 from ui.cli import CLIUI
                 session.ui = CLIUI(session)

@@ -1,6 +1,6 @@
 from base_classes import InteractionAction
 from typing import Any, Dict, List, Optional
-from core.mode_runner import run_completion
+from app.runs import run_completion
 from utils.tool_args import get_str, get_list
 
 

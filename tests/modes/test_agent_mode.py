@@ -63,7 +63,10 @@ class Session:
     def get_agent_write_policy(self): return 'deny'
 
 
-def test_agent_mode_final_outputs_trimmed_text_and_stops_on_done():
+def test_agent_mode_renders_workflow_outcome(monkeypatch):
+    from core.runtime import RunOutcome
+    monkeypatch.setattr('modes.agent_mode.run_agent', lambda **kwargs: RunOutcome(
+        run_id='fixture', last_text='Result here', stop_reason='sentinel'))
     sess = Session()
     mode = AgentMode(sess, steps=3)
     mode.start()

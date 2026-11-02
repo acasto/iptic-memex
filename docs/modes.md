@@ -44,14 +44,15 @@ python main.py workspace status --watch
 See [workspace.md](workspace.md) for configuration, tool policies, and limitations.
 
 ## TUI mode
-Terminal UI with stepwise interactions backed by the same TurnRunner.
+Terminal UI with stepwise interactions, still backed by `legacy/turns.py`.
+It has not migrated to the shared runtime.
 
 ```bash
 python main.py tui
 ```
 
 ## Web mode
-Local Web UI with the same action pipeline.
+Local Web UI with the existing action pipeline and legacy executor, pending migration.
 
 ```bash
 python main.py web

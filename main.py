@@ -2,7 +2,6 @@ import click
 import json
 import os
 import sys
-from contextlib import nullcontext, redirect_stdout
 from config_manager import ConfigManager
 from session import SessionBuilder
 
@@ -42,8 +41,9 @@ def _agent_settings(ctx, options):
 
 
 def _render_exception(ctx, exc, *, json_output=False):
-    from core.mode_runner import ModeResult
-    _render_result(ctx, ModeResult(last_text=None, raw=None, turns=0, cost=None,
+    from core.runtime import RunOutcome
+    from uuid import uuid4
+    _render_result(ctx, RunOutcome(run_id=uuid4().hex, last_text=None, raw=None, turns=0, cost=None,
                                   usage=None, events=[], status='failed', error=str(exc),
                                   stop_reason='error'), json_output=json_output)
 
@@ -75,61 +75,49 @@ def _render_result(ctx, result, *, json_output=False, raw=False, streamed=False,
 
 def _run_agent_cli(ctx, *, file=(), message=None, snapshot=None, no_hooks=False, json_output=False):
     """Adapt all CLI agent routes to the same core pipeline and input contract."""
-    from core.mode_runner import (
-        run_agent, _attach_contexts, _agent_status_tags_enabled, _build_subsession,
-    )
-    from modes.agent_mode import AgentMode
+    from app.runs import run_agent
+    from ui.agent_renderer import AgentRenderer
     options = dict((snapshot or {}).get('params') or {})
     options.update(ctx.obj.get('OPTIONS', {}))
     steps, policy = _agent_settings(ctx, options)
     cfg = ctx.obj['CONFIG_MANAGER'].base_config
     output = options.get('agent_output', cfg.get('AGENT', 'output', fallback='final'))
+    session = None
     try:
-        if json_output or snapshot is not None:
-            from core.runner_seed import snapshot_to_contexts
-            contexts = list(snapshot_to_contexts(snapshot)) if snapshot is not None else []
-            contexts.extend(('image' if is_image_file(f) else 'file', f) for f in file)
-            with redirect_stdout(sys.stderr):
-                session = _build_subsession(ctx.obj['BUILDER'], overrides=options)
-            if output == 'full' and not json_output:
-                session.utils.output.set_stream(sys.stdout)
-            with redirect_stdout(sys.stderr):
-                result = run_agent(
-                    session=session, steps=steps, overrides=options,
-                    contexts=contexts, message=message, writes_policy=policy,
-                    output='final' if json_output else output,
-                    verbose_dump=bool(options.get('agent_debug')),
-                    chat_seed=(snapshot or {}).get('chat_seed'),
-                    disable_hooks=no_hooks, trace=(snapshot or {}).get('trace'),
-                )
-        else:
-            with redirect_stdout(sys.stderr):
-                session = ctx.obj['BUILDER'].build(mode='agent', **options)
-                ctx.obj['SESSION'] = session
-                if no_hooks:
-                    session.set_flag('hooks_disabled', True)
-                _attach_contexts(session, [
-                    ('image' if is_image_file(f) else 'file', f) for f in file
-                ])
-                mode = AgentMode(session, steps=steps, writes_policy=policy,
-                                 use_status_tags=_agent_status_tags_enabled(session, options),
-                                 output_mode=output, message=message)
-            if output == 'full' and hasattr(session.utils.output, '_stream'):
-                session.utils.output._stream = sys.stdout
-            with nullcontext() if output == 'full' else redirect_stdout(sys.stderr):
-                result = mode.start(emit_output=False)
+        from core.runner_seed import snapshot_to_contexts
+        contexts = list(snapshot_to_contexts(snapshot)) if snapshot is not None else []
+        contexts.extend(('image' if is_image_file(f) else 'file', f) for f in file)
+        session = ctx.obj['BUILDER'].build(mode='agent', **options)
+        ctx.obj['SESSION'] = session
+        renderer = AgentRenderer(
+            lambda text, end='\n', flush=False: click.echo(text, nl=end != ''),
+            lambda text: click.echo(text, err=True),
+            output='final' if json_output else output, verbose=bool(options.get('agent_debug')),
+        )
+        result = run_agent(
+            session=session, steps=steps, overrides=options, contexts=contexts, message=message,
+            writes_policy=policy, output='final' if json_output else output,
+            verbose_dump=bool(options.get('agent_debug')),
+            status_tags=False if options.get('no_agent_status_tags') else None,
+            chat_seed=(snapshot or {}).get('chat_seed'), disable_hooks=no_hooks,
+            trace=(snapshot or {}).get('trace'), on_event=renderer,
+        )
     except Exception as exc:
         _render_exception(ctx, exc, json_output=json_output)
+    finally:
+        if session is not None:
+            getattr(session, 'close', lambda: None)()
     _render_result(ctx, result, json_output=json_output, raw=bool(options.get('raw_completion')),
                    output=output, streamed=output == 'full' and not json_output)
 
 
 def _run_completion_cli(ctx, *, file=(), message=None):
     from modes.completion_mode import CompletionMode
-    from core.mode_runner import _attach_contexts
+    from app.run_helpers import attach_contexts as _attach_contexts
     from app.completion import configure_completion
     from ui.completion_renderer import CompletionRenderer
     options = ctx.obj.get('OPTIONS', {})
+    session = None
     try:
         session = ctx.obj['BUILDER'].build(mode='completion', **options)
         ctx.obj['SESSION'] = session
@@ -146,6 +134,9 @@ def _run_completion_cli(ctx, *, file=(), message=None):
         result = mode.start(emit_output=False, on_event=renderer)
     except Exception as exc:
         _render_exception(ctx, exc)
+    finally:
+        if session is not None:
+            getattr(session, 'close', lambda: None)()
     _render_result(ctx, result, raw=bool(options.get('raw_completion')), streamed=stream)
 
 

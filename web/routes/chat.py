@@ -148,7 +148,7 @@ async def handle_api_chat(app, request: Request):
 
     # Use TurnRunner and suppress stdout via WebOutput
     from web.output_sink import WebOutput
-    from core.turns import TurnRunner, TurnOptions
+    from legacy.turns import TurnRunner, TurnOptions
     utils = app.session.utils
     original_output = utils.output
     web_output = WebOutput()

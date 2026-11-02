@@ -1,5 +1,5 @@
 from base_classes import InteractionMode
-from core.mode_runner import run_completion
+from app.runs import run_completion
 from app.completion import configure_completion
 from ui.completion_renderer import CompletionRenderer
 from app.session_output import EventOutput

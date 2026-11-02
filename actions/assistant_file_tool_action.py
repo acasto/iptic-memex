@@ -4,7 +4,7 @@ from base_classes import StepwiseAction, Completed, InteractionNeeded
 import os
 from typing import Any, Dict, Optional
 from utils.tool_args import get_str, get_bool
-from core.mode_runner import run_completion
+from app.runs import run_completion
 
 
 class AssistantFileToolAction(StepwiseAction):

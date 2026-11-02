@@ -11,7 +11,7 @@ from anthropic import Anthropic
 
 from contexts.chat_context import ChatContext
 from core.cancellation import CancellationToken
-from core.turns import TurnRunner
+from legacy.turns import TurnRunner
 from providers.anthropic_provider import AnthropicProvider
 
 

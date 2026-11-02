@@ -238,7 +238,7 @@ async def handle_api_stream(app, request: Request):
             except Exception:
                 pass
         try:
-            from core.turns import TurnRunner, TurnOptions
+            from legacy.turns import TurnRunner, TurnOptions
             from base_classes import InteractionNeeded
             runner = TurnRunner(app.session)
             # Bridge Web cancel event to the per-turn cancellation token so it also

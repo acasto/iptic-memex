@@ -13,11 +13,19 @@ from core import memory_files
 from core.session_builder import SessionBuilder
 
 
+@pytest.fixture(autouse=True)
+def offline_provider(monkeypatch):
+    from component_registry import ComponentRegistry
+    monkeypatch.setattr(ComponentRegistry, 'load_provider_class',
+                        lambda self, name: lambda session: object())
+
+
 def make_session(tmp_path, **settings):
     base = tmp_path / 'workspace'
     base.mkdir(exist_ok=True)
     config = configparser.ConfigParser()
-    config['DEFAULT'] = {'template_handler': 'prompt_template_memory_file'}
+    config['DEFAULT'] = {'template_handler': 'prompt_template_memory_file', 'provider': 'Fake'}
+    config['Fake'] = {'active': 'true'}
     config['TOOLS'] = {'base_directory': str(base)}
     config['MEMORY'] = {
         'active': 'true', 'directory': str(tmp_path / 'memory'),
@@ -121,7 +129,7 @@ def test_failed_copy_preserves_backups(tmp_path, monkeypatch):
 
 
 def test_shared_roots_and_docker_policy(tmp_path):
-    session = make_session(tmp_path).build(mode='internal')
+    session = make_session(tmp_path).build(mode='chat')
     root = memory_files.memory_directory(session)
     roots = session.get_action('assistant_fs_handler').get_allowed_roots()
     assert {'path': str(root), 'mode': 'rw'} in roots

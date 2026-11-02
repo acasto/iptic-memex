@@ -7,7 +7,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.par
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from core.turns import TurnRunner, TurnOptions
+from legacy.turns import TurnRunner, TurnOptions
 
 
 class FakeOutput:
@@ -118,13 +118,6 @@ class FakeSession:
         return False
 
 
-def test_final_mode_strips_sentinels_and_stops():
-    provider = ProviderOnce("Work... %%DONE%% more ignored")
-    sess = FakeSession(provider)
-    runner = TurnRunner(sess)
-    res = runner.run_agent_loop(steps=3, options=TurnOptions(agent_output_mode='final'))
-    assert res.stopped_on_sentinel is True
-    assert '%%DONE%%' not in (res.last_text or '')
 
 
 def test_no_auto_submit_when_disallowed():
@@ -134,43 +127,3 @@ def test_no_auto_submit_when_disallowed():
     res = runner.run_user_turn("hi", options=TurnOptions(stream=False))
     # Should not follow up even though assistant_commands set auto_submit
     assert res.turns_executed == 1
-
-
-def test_early_stop_no_tools_breaks_loop():
-    provider = ProviderOnce("Plain text answer")
-    # Session without assistant_commands so no tools ever run
-    class SessNoTools(FakeSession):
-        def __init__(self, provider):
-            super().__init__(provider)
-            self._actions = {"process_contexts": FakeProcessContexts()}
-    sess = SessNoTools(provider)
-    runner = TurnRunner(sess)
-    res = runner.run_agent_loop(steps=3, options=TurnOptions(agent_output_mode='final', early_stop_no_tools=True))
-    assert res.turns_executed == 1
-    assert res.ran_tools is False
-
-
-def test_agent_loop_can_disable_status_tags():
-    seen_agent_context = {"value": False}
-
-    class CaptureProcessContexts:
-        def get_contexts(self, session):
-            seen_agent_context["value"] = "agent" in session._contexts
-            return []
-
-        def process_contexts_for_user(self, auto_submit: bool):
-            return []
-
-    class SessNoStatus(FakeSession):
-        def __init__(self, provider):
-            super().__init__(provider)
-            self._actions = {"process_contexts": CaptureProcessContexts()}
-
-    sess = SessNoStatus(ProviderOnce("Done %%DONE%%"))
-    runner = TurnRunner(sess)
-    runner.run_agent_loop(
-        steps=1,
-        options=TurnOptions(agent_output_mode='final', agent_status_tags=False),
-    )
-
-    assert seen_agent_context["value"] is False

@@ -7,7 +7,7 @@ if ROOT not in sys.path:
 from config_manager import ConfigManager
 from component_registry import ComponentRegistry
 from session import Session
-from core.turns import TurnRunner
+from legacy.turns import TurnRunner
 
 
 class FakeProvider:

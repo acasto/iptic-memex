@@ -4,19 +4,19 @@
 - Root Python package: entrypoint `main.py`; core modules in the repo root (`session.py`, `component_registry.py`, `config_manager.py`, `base_classes.py`).
 - Core runtime: `core/` (shared building blocks)
   - `runtime/` (UI-independent task/tool execution, input service, events, outcomes, filtering)
-  - `turns.py` (TurnRunner, TurnOptions, TurnResult)
-  - `mode_runner.py` (headless internal runs for completion/agent)
+  - `mode_runner.py` (temporary import bridge to `app/runs.py`)
   - `provider_factory.py` (capability-aware provider instantiation)
   - `prompt_resolver.py` (prompt chains/files/literals)
   - `session_builder.py` (temporary import bridge to application assembly)
   - `utils.py` (UtilsHandler used by registry)
-  - `null_ui.py` (non-interactive UI for internal runs)
   - `context_transfer.py` (copy contexts/chat across sessions)
 - Feature folders: `providers/` (LLM backends), `contexts/` (context sources/loaders), `prompts/` (templates), `modes/` (CLI modes), `tui/` (terminal UI), `utils/` (helpers), `scripts/` (small CLI wrappers), `examples/`, `sessions/`.
 - Configuration: project `config.ini`, `models.ini`; user-level config in `~/.config/iptic-memex/` (symlink `user-config` points there).
 - Application assembly: `app/session_builder.py`; completion policy/services in
-  `app/completion.py` and `app/chat.py`. Completion and CLI chat use `core/runtime`;
-  agents/Web/TUI retain TurnRunner pending migration. See `docs/core-runtime.md`.
+  `app/completion.py`, `app/chat.py`, and `app/agent.py`; isolated helpers in
+  `app/runs.py`. Completion, CLI chat, agents, and workspace workers use
+  `core/runtime`. Only Web/TUI retain `legacy/turns.py` pending migration.
+  See `docs/core-runtime.md`.
 
 ## Build, Run, and Dev
 - Python 3.11+. Use a virtual env.
@@ -30,12 +30,13 @@
 
 ### Default Model Selection (Unified Rule)
 - Interactive modes (`chat`, `tui`, `web`) use `[DEFAULT].default_model` unless a model is explicitly provided (CLI `-m/--model` or `/set model`).
-- Non‑interactive modes (`completion`, internal runs via `core.mode_runner`, and Agent Mode) use `[AGENT].default_model` when no explicit model is provided.
+- Non‑interactive modes (`completion`, internal runs via `app.runs`, and Agent Mode) use `[AGENT].default_model` when no explicit model is provided.
 - Explicit model always wins. Application assembly resolves these defaults via
   `app.session_builder.SessionBuilder`; completion is assembled in `app/completion.py`.
 
 ### Task runtime boundary
-- Completion and CLI chat do not use TurnRunner, NullUI, or stdout capture. Interfaces render
+- Completion, CLI chat, agents, internal helpers, and workspace workers do not use
+  TurnRunner, NullUI, or stdout capture. Interfaces render
   RunEvents and use RunOutcome for final status/content.
 - Completion is tool-free by default; explicit `--tools` enables bounded exchanges.
   It does not implicitly start hooks, MCP autoload,
@@ -44,7 +45,12 @@
 - Official/pseudo tools share one executor. Preserve native call IDs, complete
   skipped calls with explicit results, and never retry side effects automatically.
 - Input goes through InteractionService; CLI handlers and live responders use the
-  same request constraints. Chat hooks are application services, not event observers.
+  same request constraints. Chat hooks and required pre-call context updates are
+  application services, not event observers.
+- Agent steps count provider calls, including tool follow-ups. Output policy does
+  not select provider streaming. Internal helpers own separate sessions and close
+  them without interactive exit hooks or stats; caller-owned sessions remain open.
+- Keep legacy frontend execution in `legacy/`; do not add new agent loops there.
 
 ## Coding Style & Naming
 - Follow PEP 8; 4-space indentation; keep lines ~100 chars.
@@ -56,7 +62,7 @@
 - Unit and integration tests use `pytest` under `tests/` (mirrors module layout).
 - Quick runs: `pytest -q` (or `make test`) and Web-only: `pytest -q tests/web/` (or `make test-web`).
 - Headless smoke: `python web/selftest.py` runs a fake-session e2e for `/api/status`, `/api/chat`, SSE `/api/stream`, stepwise start→resume, and token reuse/expiry.
-- Suites cover Web (SSE done + interaction handoff, auto-submit, multi-step), TUI adapters (InteractionNeeded), TurnRunner (auto-submit/sentinel), and modes (Chat/Agent/Completion).
+- Suites cover Web (SSE done + interaction handoff, auto-submit, multi-step), TUI adapters (InteractionNeeded), shared runtime (tools, cancellation, budgets, sentinel outcomes), and modes (Chat/Agent/Completion).
 
 ## Commit & PR Guidelines
 - Commits: concise, imperative mood (e.g., "Add MLX provider"; "Fix usage tracking"). Group related changes.
@@ -110,7 +116,7 @@
 ### Internal Runs (Helpers)
 - Two helpers on `session.Session` simplify running internal completions/agent loops from actions without subprocesses:
   - `session.run_internal_completion(message: str, overrides: dict | None = None, contexts: Iterable[Tuple[str, Any]] | None = None, capture: 'text'|'raw' = 'text') -> RunOutcome`
-  - `session.run_internal_agent(steps: int, overrides: dict | None = None, contexts: Iterable[Tuple[str, Any]] | None = None, output: 'final'|'full'|'none' | None = None, verbose_dump: bool = False) -> ModeResult`
+  - `session.run_internal_agent(steps: int, overrides: dict | None = None, contexts: Iterable[Tuple[str, Any]] | None = None, output: 'final'|'full'|'none' | None = None, verbose_dump: bool = False) -> RunOutcome`
 
 Example usage in an action:
 
@@ -131,7 +137,7 @@ class MyVisionSummarizer(StepwiseAction):
         return Completed({"summary": res.last_text})
 ```
 
-- Rationale: less boilerplate than importing `core.mode_runner` in every action, consistent NullUI behavior, and easy to mock in tests.
+- Rationale: less boilerplate than importing `app.runs` in every action, shared headless outcomes, and easy to mock in tests.
 
 Minimal template (Stepwise)
 
@@ -176,7 +182,7 @@ class MyAction(StepwiseAction):
 - Rendering: produces a compact plain-text transcript like `User: ...` / `Assistant: ...`, with a conservative truncation limit (`DEFAULT.chat_template_max_chars`, default ~2000 chars) to avoid bloating prompts.
 
 ### Metacognitive Hooks (pre_turn/post_turn)
-- Location: `core/hooks.py` and `core/turns.py`.
+- Location: `core/hooks.py` and application lifecycle services in `app/chat.py`.
 - Goal: run lightweight “sidecar” internal agents at well-defined points in the turn lifecycle, reusing the existing context pipeline and tools.
 - Configuration:
   - `[HOOKS]` section defines pipelines:
@@ -198,7 +204,7 @@ class MyAction(StepwiseAction):
     - `when_role = user` → future-proof role filter (current turns are user-initiated).
   - `enable` – `true|false` (optional; default true). When `false`, the hook is ignored even if listed in `[HOOKS]`, so you can toggle behavior without editing the pipeline order.
 - Execution:
-  - TurnRunner (`core/turns.TurnRunner`) calls `run_hooks(session, phase, extras)`:
+  - CLI chat application callbacks call `run_hooks(session, phase, extras)` once per submitted task:
     - `phase="pre_turn"`: after the user message is added to chat but before the provider’s first call. Only `mode=inject` hooks run here (silent hooks are auto-skipped).
     - `phase="post_turn"`: after the assistant reply and any tools. Both `inject` and `silent` hooks run here.
   - Each hook uses `session.run_internal_agent(...)` with:
@@ -291,7 +297,7 @@ Gating and CLI‑only flows
 - Provider (Google/Gemini):
   - Sends function declarations as Gemini tools when effective tool mode is `official`.
   - Mapping: assistant commands → Google functionDeclarations via provider-local builder from the canonical registry specs.
-  - Streaming: only textual parts are surfaced; `function_call` parts are not coerced to text. Tool calls are parsed from candidates’ content parts and normalized for the TurnRunner.
+  - Streaming: only textual parts are surfaced; `function_call` parts are not coerced to text. Tool calls are parsed from candidates’ content parts and normalized for the shared runtime.
   - Note: No `tool_choice` control is wired at this time; the model decides when to call.
   - Parses `tool_calls` in non-streaming and streaming. Streaming aggregates argument deltas without printing JSON.
 - Turn orchestration:
@@ -303,7 +309,7 @@ Gating and CLI‑only flows
 - Introspection: `show messages` surfaces assistant entries with Tool Calls metadata (name/id) alongside normal message text.
 
 ### Mid‑Turn Interactions (Confirmations)
-- Unified behavior (official + pseudo): When a tool/action requires user input mid‑turn, it raises `InteractionNeeded`. The TurnRunner pauses, prompts via a session‑scoped broker, resumes the same action instance (looping if needed), then continues the tool flow.
+- Unified behavior (official + pseudo): When a tool/action requires user input mid‑turn, it raises `InteractionNeeded`. The shared runtime resolves input through InteractionService and resumes the same action instance. Legacy Web/TUI still use their session-scoped broker.
 - TUI broker: the TUI registers an interaction broker on the session; `prompt(need)` displays a modal and blocks the worker thread safely until the user responds.
 - Pseudo‑tools: assistant commands annotate `InteractionNeeded.spec` with `__action__`, `__args__`, `__content__`. The runner rehydrates `_current_args/_current_content` before calling `resume()` so state is preserved.
 - Output scoping: confirmations and resume output render in a tool bubble. The runner sets `__last_tool_scope__` for consistent grouping of auto‑submit summaries.
@@ -468,7 +474,7 @@ Gating and CLI‑only flows
 ### Provider: OpenAIResponses
 
 - Name: `OpenAIResponses` (module: `providers/openairesponses_provider.py`).
-- Purpose: Use OpenAI’s Responses API instead of Chat Completions while keeping the same TurnRunner/tooling UX.
+- Purpose: Use OpenAI’s Responses API instead of Chat Completions while using the shared provider/tool runtime.
 - Selection: Choose per model via `provider = OpenAIResponses` in `models.ini`.
 
 - Key config (config.ini → `[OpenAIResponses]`):
@@ -504,7 +510,7 @@ max_completion_tokens = 4096
   - Functions are built from `actions/assistant_commands_action.py` into Responses schema with:
     - `parameters.type = object`, `parameters.additionalProperties = false`, and `parameters.required` including every key in `parameters.properties`.
     - `strict = true`.
-  - Tool calls in outputs are parsed as `function_call` items and normalized for TurnRunner.
+  - Tool calls in outputs are parsed as `function_call` items and normalized for the shared runtime.
   - MCP tool calls are executed on the provider side (OpenAI). They surface as `mcp_*` items in `output` rather than `function_call` entries and therefore are not routed through our tool runner. Control approval with `mcp_require_approval = never|always` (global or per server via `mcp_require_approval_<label>`). Gated by `[MCP].active`.
   - Provider clears `get_tool_calls()` after read to avoid double execution in follow‑ups.
 
@@ -536,8 +542,8 @@ max_completion_tokens = 4096
 - Current usage: Core actions keep spinners for waits; file tools do not emit progress (operations are fast and progress lines clutter with the spinner). The capability remains available for future long‑running actions where a bar is useful.
 - Auto-submit mechanics (centralized):
   - Tools set `session.auto_submit` (with `TOOLS.allow_auto_submit=True`).
-  - The `TurnRunner` orchestrates the follow-up across all modes: reprocess contexts (silent when requested) → add a synthetic empty user turn → run the next assistant turn.
-  - Chat, Agent, and Web (stream and non‑stream) all use the same logic; no mode‑specific drift.
+  - `core/runtime` records native tool results and owns bounded follow-ups for CLI chat, completion, agents, and workspace workers, without synthetic empty user turns.
+  - Legacy Web/TUI still use their old auto-submit continuation under `legacy/turns.py`.
   - Large-input gate: Interactive runs (Chat/TUI/Web) apply a centralized check during context processing. If combined context tokens exceed `TOOLS.large_input_limit` and `TOOLS.confirm_large_input=True`, auto-submit is cancelled so the user can review contexts before proceeding. Non-interactive runs (Completion/Agent/internal) use a separate `[AGENT].large_input_limit` and abort early with a structured error event when exceeded.
 
 ## Web/TUI Runner Notes
@@ -609,7 +615,7 @@ max_completion_tokens = 4096
   - `--agent-writes {deny|dry-run|allow}`: file tool write policy.
   - `--agent-output {final|full|none}`: control assistant output visibility.
   - `--no-agent-status-tags`: disable per‑turn `<status>` tag injection.
-  - `-v/--verbose`: dumps system prompt (once) and provider‑visible messages before each turn; skips last assistant content to avoid duplication (implemented by `TurnRunner`).
+  - `-v/--verbose`: dumps system prompt (once) and provider‑visible messages before each turn; skips last assistant content to avoid duplication (implemented by the application agent adapter).
   - `-r/--raw`: in final mode, prints only the raw provider response (JSON if applicable); sentinel tokens are stripped.
 
 - Output modes:
@@ -633,46 +639,25 @@ max_completion_tokens = 4096
   - allow: perform writes without confirmation.
   - `[TOOLS].ensure_trailing_newline` appends a newline on text writes when enabled.
 
-## Turn Orchestration (TurnRunner)
+## Shared Task Execution
 
-- Overview:
-  - `core/turns.py` provides a mode‑agnostic engine that coordinates user turns, assistant turns, tool execution, auto‑submit follow‑ups, and sentinel handling.
-  - Used by: `AgentMode`, Web endpoints (`/api/chat`, `/api/stream`), and internal agent runs via `core/mode_runner.py`. Completion and CLI chat use `core/runtime`.
-
-- API:
-  - `run_user_turn(input_text, options) -> TurnResult` for single‑turn flows with optional auto‑submit continuations (Chat/Web).
-  - `run_agent_loop(steps, prepare_prompt, options) -> TurnResult` for bounded N‑turn agent runs, including status context injection and write‑policy prompt notes.
-
-- Streaming and display:
-  - Streaming uses `assistant_output_action` to render tokens. Non‑streaming applies `AssistantOutputAction.filter_full_text(...)` for display and `..._for_return(...)` for tools.
-  - `suppress_context_print` option lets callers show pre‑prompt summaries once (e.g., Chat) and attach contexts silently during turns.
-
-- Agent specifics supported:
-  - Sentinel detection (`%%DONE%%|%%COMPLETED%%|%%COMPLETE%%`) and trimming in final mode.
-  - `verbose_dump` emits the system prompt (once) and provider‑visible messages before each turn for troubleshooting.
-  - `-r/--raw` is honored in Agent “final” mode by printing `provider.get_full_response()` (JSON) instead of the filtered text.
-
-- Interaction handling:
-  - When actions raise `InteractionNeeded`, TurnRunner lets it propagate; Web mode catches it and issues a state token for `/api/action/resume`.
-
-- Status updates between prompts:
-  - For interactive Chat, use `show_pre_prompt_updates()` to print context summaries and any assistant/agent details accumulated between turns; TurnRunner then attaches contexts silently for the actual turn when requested.
-
-- Newline handling:
-  - In Agent Mode final/none, stdout is wrapped to drop leading blanks and collapse newline bursts.
-  - Context printing avoids unconditional spacers during auto‑submit agent turns.
-
-- Config keys:
-  - `[AGENT]`: `default_steps`, `writes_policy`, `output`, `show_context_details`, `context_detail_max_chars`.
-  - `[DEFAULT]`: `show_context_summary` (Agent Mode enables summaries/details only in full).
-  - `[TOOLS]`: `ensure_trailing_newline`.
-
-- Examples:
-  - Steps + full: `python main.py --steps 3 --agent-output full -f notes.md`
-  - Stdin user msg: `echo "Do X" | python main.py -f - --steps 2`
-  - Verbose: `python main.py --steps 3 -v -f -`
-  - Raw‑only final: `echo "Do X" | python main.py --steps 2 -r --agent-output final -f -`
-  - Deny writes: `python main.py --steps 3 --agent-writes deny -f plan.md`
+- `core/runtime.execute` owns one provider/tool lifecycle and returns RunOutcome.
+  Application adapters resolve model/tool/write policy and lifecycle services.
+- `app/chat.py`, `app/completion.py`, and `app/agent.py` submit RunRequests;
+  interfaces render ordered RunEvents and do not schedule provider follow-ups.
+- `app/runs.py` builds isolated internal sessions without a UI or stdout capture.
+  Helpers inherit cancellation and sandbox roots, keep their own model defaults,
+  and close owned resources. Agent contexts are deep-copied; parent chat is a
+  template seed rather than duplicated history.
+- Required updates enter through `before_call` under the session lock. Context
+  records after tool results carry real external input; provider views encode
+  them as context-bearing messages. Observers never supply required state.
+- Agent finish/write guidance, status tags, and MCP opt-in are application policy.
+  Streaming acquisition follows model config; final/full/none affects rendering.
+- `legacy/turns.py` retains only the old Web/TUI user-turn executor. Its agent loop
+  is removed. `core/mode_runner.py` and `core/session_builder.py` are import bridges.
+- See `docs/core-runtime.md`, `docs/runners.md`, and `docs/agents.md` for the
+  supported contract, input handling, ownership, and deferred features.
 
 ### Status System (Events + Scopes)
 
@@ -714,7 +699,7 @@ Actions and core emit lightweight status signals that UIs render consistently ac
   - TUI suppresses generic “/<command> completed” for context‑modifying commands.
 
 - Where to hook in code:
-  - Tool spinner/scope: `core/turns.py` and `actions/assistant_commands_action.py`.
+  - Tool events: `core/runtime/tools.py`; terminal rendering: `ui/`. Legacy frontend scopes remain in `legacy/turns.py`.
   - Context emits: `actions/load_file_action.py`, `actions/assistant_file_tool_action.py`, helpers like `actions/markitdown_action.py` (metadata/index only).
   - CLI/Web/TUI sinks and scoping: `utils/output_utils.py` (tool_scope), `tui/output_sink.py`, `web/output_sink.py`, and `web/routes/stream.py` (attach scope on emits).
 

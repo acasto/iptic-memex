@@ -77,7 +77,7 @@ class InputLimitExceeded(ValueError):
 
 
 def execute(session, request: RunRequest, *, on_event=None, cancellation=None,
-            interactions=None, before_call=None, after_run=None) -> RunOutcome:
+            interactions=None, before_run=None, before_call=None, after_run=None) -> RunOutcome:
     """Own a submitted task through bounded provider/tool exchanges.
 
     Separate sessions can run concurrently. Responses to input can arrive on
@@ -85,6 +85,8 @@ def execute(session, request: RunRequest, *, on_event=None, cancellation=None,
     """
     if request.max_calls < 1:
         raise ValueError('max_calls must be positive')
+    if getattr(session, '_closed', False):
+        raise RuntimeError('Session is closed')
     lock = getattr(session, '_execution_lock', None)
     if lock is None:
         lock = session._execution_lock = Lock()
@@ -147,6 +149,8 @@ def execute(session, request: RunRequest, *, on_event=None, cancellation=None,
         if token.is_cancelled():
             fail('cancelled', 'cancelled', token.reason() or 'Run cancelled')
         else:
+            if before_run:
+                before_run(session)
             effective_tools = getattr(session, 'get_effective_tool_mode', None)
             if not request.execute_tools and effective_tools and effective_tools() != 'none':
                 raise ValueError('Tool-free execution requires tools to be disabled')
@@ -167,6 +171,13 @@ def execute(session, request: RunRequest, *, on_event=None, cancellation=None,
                     break
                 if before_call:
                     before_call(session, index + 1)
+                updates = take_contexts(session)
+                if updates:
+                    if result.turns == 0:
+                        chat.get('all')[-1].setdefault('context', []).extend(updates)
+                    else:
+                        chat.add('', 'context', updates, extra={'meta': {'kind': 'context_update'}})
+                    emit('context', {'action': 'updated', 'count': len(updates)})
                 tokens = _input_tokens(session, chat)
                 if request.input_limit and request.input_limit > 0 and tokens > request.input_limit:
                     raise InputLimitExceeded(tokens, request.input_limit)

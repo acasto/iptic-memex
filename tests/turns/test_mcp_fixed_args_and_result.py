@@ -4,7 +4,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.par
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from core.turns import TurnRunner, TurnOptions
+from legacy.turns import TurnRunner, TurnOptions
 from config_manager import ConfigManager
 from component_registry import ComponentRegistry
 from session import Session

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Awaitable, Callable, Optional, TYPE_CHECKING
 
-from core.turns import TurnOptions, TurnRunner
+from legacy.turns import TurnOptions, TurnRunner
 
 if TYPE_CHECKING:  # pragma: no cover - type checking only
     from tui.widgets.chat_transcript import ChatTranscript
