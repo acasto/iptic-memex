@@ -18,6 +18,7 @@ This folder contains deeper documentation for the Memex platform. Start with get
 - [sandbox.md](sandbox.md) - filesystem sandbox and base-dir
 - [agents.md](agents.md) - agent behavior and Docker notes
 - [workspace.md](workspace.md) - concurrent agents, shared findings, synthesis replay, and run reports
+- [workspace-research-evaluation.md](workspace-research-evaluation.md) - first adaptive TUI pilot and comparison limits
 - [providers.md](providers.md) - provider setup, OpenAI-compatible providers
 - [logging.md](logging.md) - observability options
 - [web.md](web.md) - Web/TUI notes, uploads, options panel
