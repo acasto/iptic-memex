@@ -656,7 +656,7 @@ def _maybe_resume_session(session, *, resume: str | None) -> None:
 # take care of business
 from modes.workspace_mode import register_workspace_commands
 
-register_workspace_commands(cli, _task_message)
+register_workspace_commands(cli, _task_message, is_image_file)
 
 
 if __name__ == "__main__":

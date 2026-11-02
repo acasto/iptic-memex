@@ -13,7 +13,7 @@ from uuid import uuid4
 from base_classes import InteractionNeeded
 from core.cancellation import CancellationToken
 from core.input_limits import compute_context_tokens, count_text_tokens
-from core.runtime.contracts import RunEvent, RunOutcome, RunRequest
+from core.runtime.contracts import RunEvent, RunOutcome, RunRequest, RunStopped
 from core.runtime.provider import invoke, optional
 from core.runtime.interaction import InteractionService
 from core.runtime.tools import (action_services, collect_calls, record_result,
@@ -229,6 +229,10 @@ def execute(session, request: RunRequest, *, on_event=None, cancellation=None,
                     break
                 if index + 1 == request.max_calls:
                     fail('incomplete', 'call_limit', 'Provider call limit reached before tool follow-up')
+    except RunStopped as exc:
+        fail('completed' if exc.completed else 'incomplete', exc.reason,
+             None if exc.completed else str(exc))
+        emit('status', {'code': exc.reason, 'message': str(exc)})
     except InputLimitExceeded as exc:
         fail('failed', 'large_input_limit_exceeded', str(exc))
         emit('error', {'code': result.stop_reason, 'tokens': exc.tokens, 'limit': exc.limit,

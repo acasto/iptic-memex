@@ -45,9 +45,12 @@ def child_options(outer_session, overrides):
     if outer_session is not None:
         options['base_directory'] = outer_session.get_option('TOOLS', 'base_directory', fallback='working')
     options.update(overrides or {})
-    if getattr(outer_session, 'file_memory_enabled', None) is False:
+    memory = getattr(outer_session, 'file_memory_enabled', None)
+    boundary = (getattr(outer_session, 'child_call_boundary', None) or
+                getattr(outer_session, 'before_provider_call', None))
+    if memory is False or boundary:
         from app.session_services import HeadlessServices
-        options['services'] = HeadlessServices(file_memory=False)
+        options['services'] = HeadlessServices(file_memory=memory, before_call=boundary)
     return options
 
 

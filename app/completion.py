@@ -37,4 +37,5 @@ def run_completion(*, session, message='', contexts=None, stream=False, capture=
                                       stdin_as_message=stdin_as_message,
                                       contexts=tuple(contexts or ()), execute_tools=tools,
                                       max_calls=max(1, calls)),
-                   on_event=on_event, cancellation=cancellation, interactions=interactions)
+                   on_event=on_event, cancellation=cancellation, interactions=interactions,
+                   before_call=getattr(session, 'before_provider_call', None))

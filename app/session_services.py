@@ -17,3 +17,4 @@ class HeadlessServices:
     file_memory: bool | None = None
     required_tools: tuple[str, ...] = ()
     configure: Callable[[Any], None] | None = None
+    before_call: Callable[[Any, int], None] | None = None

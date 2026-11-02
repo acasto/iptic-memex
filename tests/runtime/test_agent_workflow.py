@@ -328,7 +328,8 @@ def test_workspace_services_disable_file_memory_without_changing_config(builder,
     monkeypatch.setattr(runtime, 'SessionBuilder', lambda config: builder)
     task = dict(phase='worker', prompt='Memory: {{memory}} {{memory_directory}}',
                 repository=str(tmp_path), run_id=run['id'], worker='worker-1',
-                writes_policy='deny', model='worker-model', overrides={'active_tools_agent': 'file'})
+                writes_policy='deny', model='worker-model', steps=3,
+                overrides={'active_tools_agent': 'file'})
 
     def forbidden(*args, **kwargs):
         pytest.fail('Workspace started file-memory preparation')
@@ -375,10 +376,41 @@ def test_workspace_required_tool_respects_blocklist_and_explicit_none(builder, t
     run = store.create_run('Question', {})
     task = dict(phase='worker', prompt='Investigate', repository=str(tmp_path),
                 run_id=run['id'], worker='worker-1', model='worker-model',
-                writes_policy='deny', overrides={'active_tools_agent': '__none__'})
+                writes_policy='deny', steps=3, overrides={'active_tools_agent': '__none__'})
     session = runtime.build_session(task, store)
     assert set(session.get_action('assistant_commands').commands) == {'workspace'}
     session.close()
     builder.config_manager.base_config['AGENT']['blocked_tools'] = 'workspace'
     with pytest.raises(ValueError, match='blocked.*workspace'):
         runtime.build_session(task, store)
+
+
+@pytest.mark.parametrize('completed', [False, True])
+def test_application_can_stop_at_a_call_boundary_without_an_extra_model_call(builder, completed):
+    from core.runtime.contracts import RunStopped
+
+    session = builder.build(mode='agent', stream=False)
+
+    def stop(active, index):
+        raise RunStopped('application_limit', 'Application stopped the run', completed=completed)
+
+    result = run_agent(session=session, steps=4, before_call=stop)
+    assert session.provider.calls == result.turns == 0
+    assert result.status == ('completed' if completed else 'incomplete')
+    assert result.stop_reason == 'application_limit'
+    assert result.events[-1].data['status'] == result.status
+
+
+def test_nested_helpers_cannot_exceed_a_workers_reserved_calls(builder):
+    from app.session_services import HeadlessServices
+    from workspace.budget import CallAllowance
+
+    allowance = CallAllowance(2)
+    session = builder.build(mode='agent', services=HeadlessServices(before_call=allowance.before_call))
+    for _ in range(2):
+        assert session.run_internal_completion(message='Helper task').status == 'completed'
+    result = session.run_internal_completion(message='Unfunded helper')
+    assert result.status == 'incomplete' and result.turns == 0
+    result = run_agent(session=session, steps=5)
+    assert result.status == 'incomplete' and result.turns == 0
+    assert allowance.used == 2

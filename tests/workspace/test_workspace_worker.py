@@ -146,7 +146,7 @@ def test_workspace_tool_is_gated_and_checks_contribution_dependencies(tmp_path):
                            'references': 'missing'}).payload['ok']
 
 
-def test_rejected_publication_keeps_diagnostics_without_saving_its_body(tmp_path):
+def test_rejected_publication_keeps_diagnostics_without_logging_its_body(tmp_path):
     import json
     from actions.assistant_workspace_tool_action import AssistantWorkspaceToolAction
 
@@ -254,3 +254,33 @@ def test_publication_remains_successful_when_its_reporting_fails(tmp_path, monke
     assert 'Note saved' in result.payload['warning']
     assert store.read_note(result.payload['result']['id'])['content'].strip() == 'Saved once'
     assert len(store.notes()) == 1
+
+
+def test_publication_retry_is_idempotent_and_rejected_drafts_can_be_repaired(tmp_path):
+    from actions.assistant_workspace_tool_action import AssistantWorkspaceToolAction
+
+    store, task = spec(tmp_path)
+    session = Session()
+    session.workspace = WorkspaceAccess(store, task['run_id'], 'worker-1')
+    action = AssistantWorkspaceToolAction(session)
+    args = dict(operation='publish', title='Evidence', content='Original finding',
+                publication_id='stable', sources='source.py:10 at revision test',
+                method='Read the original source', uncertainty='Not exercised live')
+    first = action.run(args).payload
+    second = action.run(args).payload
+    assert first['ok'] and second['ok']
+    assert first['result']['id'] == second['result']['id']
+    assert len(store.notes()) == 1
+    rejected = action.run(dict(args, content='Changed finding')).payload
+    assert not rejected['ok'] and 'different content' in rejected['error']
+    draft = action.run(dict(operation='read_draft', draft_id=rejected['draft_id'])).payload
+    assert draft['result']['content'] == 'Changed finding'
+    repaired = action.run(dict(args, content='Changed finding', publication_id='revision',
+                               relation='contradicts', references=first['result']['id'])).payload
+    assert repaired['ok']
+    note = store.read_note(repaired['result']['id'])
+    assert note['provenance']['relation'] == 'contradicts'
+    assert note['references'] == [first['result']['id']]
+    long_title = action.run(dict(args, title='x' * 250, publication_id='long-title')).payload
+    assert long_title['ok'] and long_title['result']['title'] == 'x' * 200
+    assert long_title['result']['provenance']['submitted_title'] == 'x' * 250

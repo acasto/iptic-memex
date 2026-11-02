@@ -26,6 +26,7 @@ def build_headless_session(config_manager, options=None, *, builder=None,
         session.current_model = options.get('model')
         session.file_memory_enabled = services.file_memory
         session.required_tools = services.required_tools
+        session.before_provider_call = services.before_call
         if tools_enabled:
             install_tool_selection(session, 'AGENT')
             session.write_policy = session._normalize_write_policy(

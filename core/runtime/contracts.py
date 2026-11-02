@@ -6,6 +6,15 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+class RunStopped(Exception):
+    """An application service ends execution at a provider-call boundary."""
+
+    def __init__(self, reason: str, message: str, *, completed: bool = False):
+        super().__init__(message)
+        self.reason = reason
+        self.completed = completed
+
+
 @dataclass(frozen=True)
 class RunRequest:
     """A submitted task, including its bounded provider/tool exchanges."""

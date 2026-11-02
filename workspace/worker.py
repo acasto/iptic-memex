@@ -92,6 +92,12 @@ def execute(spec: dict) -> dict:
                     raise ValueError('Could not attach shared workspace updates')
                 seen.update(note['id'] for note in fresh)
                 store.event(run_id, worker, 'notes_seen', {'notes': [n['id'] for n in fresh]})
+            research = getattr(active, 'research', None)
+            if research:
+                research.state['delivery'] = dict(delivered=sorted(seen), backlog=len(
+                    store.notes(run_id=run_id, limit=100000,
+                                exclude_ids=seen, exclude_worker=worker)))
+                research.save()
 
         def report(event):
             data = dict(event.data)
@@ -112,6 +118,9 @@ def execute(spec: dict) -> dict:
         # turn. Capture that effective prompt as well as the initial live snapshot.
         save_prompt()
         record = asdict(result)
+        allowance = getattr(session, 'call_allowance', None)
+        if allowance:
+            record['workflow_calls'] = allowance.used
         record['execution_id'] = record.pop('run_id')
         record.pop('raw', None)
         record.pop('events', None)

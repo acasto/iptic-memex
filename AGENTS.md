@@ -23,6 +23,13 @@
   application services; `tools.py` implements shared contributions. CLI wiring
   remains in `modes/workspace_mode.py` and tool discovery in
   `actions/assistant_workspace_tool_action.py`. Shared core must not import workspace.
+- Adaptive research: `workspace/adaptive.py` supervises the lead,
+  `workspace/research.py` owns its single-writer state and branch reservations,
+  and `research_tool.py` exposes model-directed decisions. Keep generic runtime
+  independent of research policy; application services may use RunStopped at call
+  boundaries. Shared budgets count coordination, branches, model-backed helpers and fresh
+  synthesis. HeadlessServices.before_call is inherited by internal helpers; it
+  does not carry workflow-specific tool access into them.
 
 ## Build, Run, and Dev
 - Python 3.11+. Use a virtual env.

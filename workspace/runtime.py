@@ -25,9 +25,19 @@ def build_session(spec, store):
         session.set_flag('hooks_disabled', True)
         if not synthesis:
             session.workspace = WorkspaceAccess(store, spec['run_id'], spec['worker'])
+            if not spec.get('research'):
+                from workspace.budget import CallAllowance
+                session.call_allowance = CallAllowance(spec['steps'])
+                session.before_provider_call = session.call_allowance.before_call
+        if spec.get('research'):
+            from workspace.research import ResearchCoordinator
+            session.research = ResearchCoordinator(spec, store)
+            session.child_call_boundary = session.research.helper_call
+            session.register_cleanup_callback(session.research.close)
 
+    required = ('workspace', 'research') if spec.get('research') else ('workspace',)
     services = HeadlessServices(file_memory=False,
-                                required_tools=() if synthesis else ('workspace',),
+                                required_tools=() if synthesis else required,
                                 configure=configure)
     session = SessionBuilder(ConfigManager(spec.get('config_file'))).build(
         mode='completion' if synthesis else 'internal', services=services, **options)
@@ -51,6 +61,26 @@ def run(session, spec, *, on_event, before_call):
     """Submit through the common runtime; workspace owns processes and persistence."""
     if spec.get('phase') == 'synthesis':
         return run_completion(session=session, message=spec['message'], on_event=on_event)
-    return run_agent(session=session, steps=spec['steps'], message=spec['message'],
-                     writes_policy=spec['writes_policy'], disable_hooks=True, output='final',
-                     on_event=on_event, before_call=before_call)
+    def prepare(active, index):
+        research = getattr(active, 'research', None)
+        if research:
+            research.before_call(active, index)
+        before_call(active, index)
+
+    def observe(event):
+        research = getattr(session, 'research', None)
+        if research:
+            research.observe(event)
+        on_event(event)
+
+    result = run_agent(session=session, steps=spec['steps'], message=spec['message'],
+                       writes_policy=spec['writes_policy'], disable_hooks=True, output='final',
+                       on_event=observe, before_call=prepare, contexts=spec.get('contexts'))
+    research = getattr(session, 'research', None)
+    if research and result.status in ('completed', 'incomplete'):
+        research.wait()
+        if research.state['assessment'] is None:
+            research.state['assessment'] = dict(
+                status='partial', content='Lead ended without an explicit coverage assessment')
+            research.save()
+    return result

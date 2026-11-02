@@ -138,7 +138,10 @@ in that application adapter.
 This is a blocking API. A caller may use its own worker thread and cancel the
 token from another thread. Overlapping runs on one session are rejected before
 request contexts are attached. Independent sessions can execute concurrently.
-No background queue or durable continuation is implied.
+No background queue or durable continuation is implied. Application pre-call
+services can raise RunStopped with an explicit completed/incomplete outcome
+and reason; execution stops without another provider invocation. This keeps
+workflow limits and goal assessment outside the provider/tool lifecycle.
 
 ## Interaction
 

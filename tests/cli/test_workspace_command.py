@@ -48,6 +48,41 @@ def test_workspace_run_inherits_default_and_accepts_question(monkeypatch, tmp_pa
     assert 'max_tokens' not in captured['overrides']
 
 
+def test_research_accepts_a_brief_and_attachments_with_one_shared_budget(monkeypatch, tmp_path):
+    from workspace.adaptive import AdaptiveEngine
+
+    configure(monkeypatch, tmp_path)
+    brief = tmp_path / 'brief.md'
+    brief.write_text('Original research brief')
+    attachment = tmp_path / 'source.txt'
+    attachment.write_text('Supporting evidence')
+    captured = {}
+
+    def run(self, question, **kwargs):
+        captured.update(question=question, calls=self.total_calls, strategy=self.strategy,
+                        contexts=self.contexts, settings=self.settings)
+        return dict(status='completed', answer='Research answer')
+
+    monkeypatch.setattr(AdaptiveEngine, 'run', run)
+    result = CliRunner().invoke(main.cli, [
+        '-m', 'other-model', 'workspace', 'research', '--brief', str(brief),
+        '-f', str(attachment), '--calls', '21', '--strategy', 'single',
+    ])
+    assert result.exit_code == 0, result.output
+    assert captured['question'] == 'Original research brief'
+    assert captured['calls'] == 21 and captured['strategy'] == 'single'
+    assert captured['contexts'] == (('file', str(attachment)),)
+    assert captured['settings'].model == captured['settings'].synthesis_model == 'other-model'
+    result = CliRunner().invoke(main.cli, [
+        'workspace', 'research', 'Another brief', '--brief', str(brief),
+    ])
+    assert result.exit_code == 2 and 'once' in result.output
+    result = CliRunner().invoke(main.cli, [
+        '--steps', '12', 'workspace', 'research', '--brief', str(brief),
+    ])
+    assert result.exit_code == 2 and '--calls' in result.output
+
+
 def test_explicit_model_tools_and_limits_reach_workers(monkeypatch, tmp_path):
     captured = configure(monkeypatch, tmp_path)
     result = CliRunner().invoke(main.cli, [

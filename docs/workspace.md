@@ -238,8 +238,8 @@ notes do not consume the peer-note allowance, so finite publication backlogs dra
 over subsequent calls. Failed context attachment ends the worker visibly rather
 than claiming delivery. Preview bodies remain limited to 1,500 characters each.
 
-An invalid publication reports its validation error and size diagnostics without
-saving the rejected body. If a note was saved successfully but its activity-log
+An invalid publication reports validation and size diagnostics without putting
+the rejected body in the event log; repairable drafts are retained separately. If a note was saved successfully but its activity-log
 write fails, the tool returns the note ID with a warning and a successful result;
 it does not report the committed publication as failed.
 
@@ -276,3 +276,72 @@ the actual worker entry point, tools, synthesis isolation, replay, and timeout
 cleanup. They also cover note backlogs, publication diagnostics, and passive
 readers with application/provider imports disabled. Model quality still requires
 a separate live-model evaluation.
+
+## Adaptive research experiment
+
+`workspace research` keeps one continuing investigation and lets it request one
+independent focused branch at a time. The lead chooses questions and priorities;
+the scheduler enforces mechanics and limits. Fixed `workspace run` is retained
+as a comparison and does not acquire this policy.
+
+```bash
+python main.py -m MODEL --tools file,cmd workspace research \
+  --brief examples/workspace/tui-review.md --repository /path/to/source
+python main.py -m MODEL --tools file,cmd workspace research \
+  --brief task.md -f supporting-notes.pdf --calls 31 --timeout 600 \
+  --synthesis-timeout 120 --synthesis-model ANSWER_MODEL
+python main.py -m MODEL --tools file,cmd workspace research \
+  --brief task.md --strategy single
+```
+
+The brief is task input, separate from `-p` (system prompt) and `-f` (supporting
+attachments). Text, `--message` and `--stdin-message` remain available. Attachments
+are copied into the run before loading with existing Memex context loaders;
+`inputs.json` records sources, snapshots and hashes. URLs are sources for tools
+to fetch, not evidence already inspected. `--steps` is intentionally rejected:
+`--calls` bounds the entire run, including lead coordination, all branches, and
+one reserved synthesis call. Its default is `[WORKSPACE].research_total_calls`
+(fallback 32). Existing run/synthesis timeout settings apply. Explicit `-m`
+selects research and synthesis unless `--synthesis-model` overrides the latter.
+
+The lead has a `research` tool to record its working brief, advisory activity,
+open/resolved/deferred questions, focused requests and a sufficient/partial
+coverage assessment. Branch requests cite relevant evidence and reserve an
+allowance from the shared ledger. Their unused calls are returned after exit.
+Model-backed internal helpers consume the same allowance, including helpers
+inside a focused branch. Their usage is not silently counted as zero when
+separate helper metrics are unavailable.
+An unavailable interrupted-worker count is charged at its reserved ceiling and
+labeled conservative; missing token/cost metrics remain unknown. Failed zero-call
+branches still count toward a finite dispatch ceiling. Branches can propose
+questions in their findings but cannot recursively delegate.
+
+A branch runs alongside the lead, in a separate context using the same tools and
+source access. `research wait` collects its result without repeated model calls.
+Branch results are evidence; only the lead owns scheduling/question state.
+`research.json` saves the brief versions, questions, decisions, delivery backlog,
+branch requests/results, assessment and budget. The pre-call view includes only
+recent decisions and the latest brief interpretation. Activity expires after
+two minutes and is advisory, not a work reservation. Status/report remain passive.
+
+Fresh synthesis receives selected findings plus frozen research state and gaps,
+not private worker histories. A lead's 'sufficient' assessment is not verification.
+Missing/partial assessments or failed/incomplete work produce a partial answer.
+Synthesis replay preserves that assessment. A branch saying done does not close
+its question automatically; the lead must assess its evidence. Timeouts/cancel
+reach the lead's whole process group, including a branch after a lead crash.
+
+Publication accepts optional sources, method, uncertainty and relation metadata
+(`extends`, `contradicts`, `supersedes`, `checks`). These are contributor claims,
+not automatic verification. A stable `publication_id` makes identical retries
+return the same note; changed content needs a new ID. Rejected publications retain
+scoped drafts readable with `read_draft`, with actionable repair errors. Oversized
+display titles are shortened while the submitted title is retained in provenance;
+substantive evidence is never silently shortened by this tool. Drafts are not
+published findings or synthesis evidence.
+
+The experiment is foreground and bounded. It has no live steering, arbitrary
+Python-stack resume, recursive delegation, permanent manager persona, or automatic
+artifact-building phase. The `single` strategy retains the same goal/state/note
+tools while disabling independent branches. Compare it and fixed workers under
+the same model, tools, sources and aggregate allowance before increasing complexity.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -102,7 +103,8 @@ class WorkspaceStore:
             stream.write(json.dumps(payload, ensure_ascii=False) + '\n')
 
     def publish(self, run_id: str, worker: str, title: str, content: str,
-                references: list[str] | None = None, *, kind: str = 'finding') -> dict:
+                references: list[str] | None = None, *, kind: str = 'finding',
+                publication_id: str | None = None, provenance: dict | None = None) -> dict:
         """Publish an immutable Markdown contribution with validated dependencies."""
         if not title.strip() or not content.strip():
             raise ValueError('A contribution needs a title and content')
@@ -115,9 +117,23 @@ class WorkspaceStore:
         for reference in references:
             self.read_note(reference)
         references = list(dict.fromkeys(references + self.citations(content)))
-        note_id = 'note-' + uuid.uuid4().hex
+        fingerprint = hashlib.sha256(json.dumps(
+            [title.strip(), content.strip(), references, kind, provenance],
+            sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        note_id = 'note-' + (uuid.uuid5(uuid.NAMESPACE_URL,
+                            f'{run_id}/{worker}/{publication_id}').hex
+                            if publication_id else uuid.uuid4().hex)
+        if publication_id and (self.root / 'notes' / f'{note_id}.json').exists():
+            saved = self.read_note(note_id)
+            if saved.get('publication_sha256') != fingerprint:
+                raise ValueError('publication_id already names different content; use a new ID for a revision')
+            return {key: value for key, value in saved.items() if key != 'content'}
         record = dict(id=note_id, run_id=identifier(run_id), worker=identifier(worker),
                       title=title.strip(), created_at=now(), references=references, kind=kind)
+        if publication_id:
+            record.update(publication_id=publication_id, publication_sha256=fingerprint)
+        if provenance:
+            record['provenance'] = provenance
         # Metadata is the publication marker: readers only discover a complete note.
         atomic_write(self.root / 'notes' / f'{note_id}.md', content.strip() + '\n')
         write_json(self.root / 'notes' / f'{note_id}.json', record)
@@ -187,7 +203,10 @@ class WorkspaceStore:
                 record = dict(record, saved_status=record['status'], status='interrupted')
             except PermissionError:
                 pass
-        return dict(record, workers=workers, directory=str(directory))
+        result = dict(record, workers=workers, directory=str(directory))
+        if (directory / 'research.json').exists():
+            result['research'] = read_json(directory / 'research.json')
+        return result
 
     def read_notes(self, run_id: str) -> list[dict]:
         """Return published notes explicitly read by this run's contributors.
@@ -196,7 +215,7 @@ class WorkspaceStore:
         unfinished event line or a note removed after it was read.
         """
         note_ids = {}
-        for path in sorted(self.run_dir(run_id).glob('worker-*/events.jsonl')):
+        for path in sorted(self.run_dir(run_id).glob('*/events.jsonl')):
             for line in path.read_text(encoding='utf-8').splitlines():
                 try:
                     event = json.loads(line)

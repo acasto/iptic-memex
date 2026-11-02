@@ -61,14 +61,19 @@ def run_report(store: WorkspaceStore, run_id: str | None = None) -> dict:
                                                       min(publications) if publications else None),
             wall_seconds=seconds_between(worker.get('started_at'), worker.get('finished_at')),
             usage=worker.get('usage'), prompt_sha256=worker.get('prompt_sha256'),
+            workflow_calls=worker.get('workflow_calls', worker.get('turns')),
             workspace_errors=[{k: e[k] for k in (
                 'time', 'operation', 'error', 'title_chars', 'content_chars') if k in e}
                               for e in events if e.get('event') == 'workspace_error'],
         ))
     usage = {}
+    helpers_unreported = any((w.get('workflow_calls') or 0) > (w.get('turns') or 0)
+                             for w in workers) or bool(
+        (run.get('research') or {}).get('budget', {}).get('helper_calls'))
     for key in ('total_in', 'total_out', 'total_cached', 'total_reasoning'):
         values = [(w.get('usage') or {}).get(key) for w in workers]
-        usage[key] = sum(values) if values and all(v is not None for v in values) else None
+        usage[key] = (sum(values) if values and all(v is not None for v in values)
+                      and not helpers_unreported else None)
     return dict(
         run_id=run['id'], status=run['status'], question=run['question'],
         source_run=run.get('source_run'),
@@ -82,4 +87,5 @@ def run_report(store: WorkspaceStore, run_id: str | None = None) -> dict:
         synthesis_notes_deduplicated=run.get('synthesis_notes_deduplicated'),
         synthesis_notes_current=run.get('synthesis_notes_current'),
         synthesis_notes_historical=run.get('synthesis_notes_historical'),
+        research=run.get('research'),
     )

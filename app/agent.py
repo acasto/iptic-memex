@@ -131,6 +131,8 @@ def run_agent(*, builder=None, steps, overrides=None, contexts=None, output=None
         limit = int(limit) if limit is not None and str(limit).strip() else None
 
         def prepare(active, index):
+            if boundary := getattr(active, 'before_provider_call', None):
+                boundary(active, index)
             if before_call:
                 before_call(active, index)
             if tags:
@@ -149,7 +151,7 @@ def run_agent(*, builder=None, steps, overrides=None, contexts=None, output=None
                 })
 
         def finish(active, outcome):
-            if outcome.status == 'completed':
+            if outcome.status == 'completed' and outcome.stop_reason in ('stop', 'end_turn', None):
                 outcome.stop_reason = 'sentinel' if FINISH.search(outcome.last_text or '') else 'no_tools'
             elif outcome.status == 'incomplete' and outcome.stop_reason == 'call_limit':
                 outcome.stop_reason = 'steps'

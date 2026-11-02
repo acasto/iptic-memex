@@ -30,6 +30,13 @@ def _render_status(snapshot: dict) -> str:
              f"Question: {snapshot['question']}", f"Saved in: {snapshot['directory']}"]
     if limit := _render_limits(snapshot):
         lines.append(limit)
+    if research := snapshot.get('research'):
+        budget = research['budget']
+        lines.append(f"Research: {research['strategy']}; calls used/reserved/total: "
+                     f"{budget['used'] + budget['synthesis_calls']}/"
+                     f"{budget['reserved']}/{budget['total_calls']}")
+        for question in research['questions'].values():
+            lines.append(f"  {question['status']}: {question['question']}")
     for worker in snapshot['workers']:
         step = f"step {worker['step']}/{worker.get('max_steps', '?')}" if 'step' in worker else ''
         action = worker.get('tool') if worker.get('phase') == 'tool_start' else worker.get('phase')
@@ -48,6 +55,11 @@ def _render_limits(record: dict) -> str:
         return ''
     if record.get('kind') == 'synthesis':
         return f'Synthesis time limit: {total:g}s'
+    if record.get('kind') == 'research':
+        return (f"Research budget: {record['total_calls']} total provider calls, including synthesis; "
+                f"{total:g}s total; {record['synthesis_timeout_seconds']:g}s synthesis reserve.\n"
+                f"Models: research={record['model']}; "
+                f"synthesis={record['synthesis_model'] or record['model']}")
     reserved = record.get('synthesis_timeout_seconds', 0)
     return (f"Limits: {record.get('steps', '?')} steps/worker; worker phase up to "
             f'{total - reserved:g}s; total {total:g}s '
@@ -95,12 +107,82 @@ def _reject_task_inputs(ctx):
         raise click.UsageError('Task inputs require workspace run.')
 
 
-def register_workspace_commands(cli, task_message) -> None:
+def register_workspace_commands(cli, task_message, is_image_file) -> None:
     """Register thin CLI entry points without changing other modes."""
 
     @cli.group()
     def workspace():
         """Run agents against persistent shared findings; inspect saved activity."""
+
+    @workspace.command('research')
+    @click.argument('question', required=False)
+    @click.option('--brief', type=click.Path(exists=True, dir_okay=False),
+                  help='Read the task brief from a UTF-8 file (separate from system prompt).')
+    @click.option('-f', '--file', 'files', multiple=True,
+                  type=click.Path(exists=True, dir_okay=False), help='Supporting attachment.')
+    @click.option('--message', default=None)
+    @click.option('--stdin-message', is_flag=True)
+    @click.option('--directory', type=click.Path(path_type=str))
+    @click.option('--repository', type=click.Path(exists=True, file_okay=False))
+    @click.option('--strategy', type=click.Choice(['adaptive', 'single']), default='adaptive')
+    @click.option('--calls', type=click.IntRange(min=3), default=None,
+                  help='Shared provider-call ceiling including branches and synthesis.')
+    @click.option('--timeout', type=click.FloatRange(min=0, min_open=True), default=None)
+    @click.option('--synthesis-timeout', type=click.FloatRange(min=0, min_open=True), default=None)
+    @click.option('--synthesis-model', default=None)
+    @click.option('--json', 'json_output', is_flag=True)
+    @click.pass_context
+    def research(ctx, question, brief, files, message, stdin_message, directory, repository,
+                 strategy, calls, timeout, synthesis_timeout, synthesis_model, json_output):
+        """Pursue a brief with one continuing investigation and optional focused branches."""
+        from workspace.adaptive import AdaptiveEngine
+        try:
+            supplied = [value for value in (question, message, ctx.obj.get('MESSAGE'))
+                        if value is not None]
+            if len(supplied) > 1 or (brief and (supplied or stdin_message or
+                                               ctx.obj.get('STDIN_MESSAGE'))):
+                raise click.UsageError('Provide the task once: --brief, question, or message input.')
+            task = (Path(brief).read_text(encoding='utf-8') if brief else
+                    task_message(ctx, supplied[0] if supplied else None,
+                                 stdin_message=stdin_message))
+            if not task or not task.strip():
+                raise click.UsageError('Provide a nonempty brief or question.')
+            attachments = tuple(ctx.obj.get('FILES', ())) + files
+            if '-' in attachments:
+                raise click.UsageError('Use --stdin-message for stdin task text; attachments need paths.')
+            contexts = [('image' if is_image_file(path) else 'file', str(Path(path).resolve()))
+                        for path in attachments]
+            repo, store = _paths(ctx, directory, repository)
+            cfg = ctx.obj['CONFIG_MANAGER'].base_config
+            options = dict(ctx.obj['OPTIONS'])
+            if 'steps' in options:
+                raise click.UsageError('Research uses a shared --calls budget, not per-worker --steps.')
+            model = options.get('model') or cfg.get('AGENT', 'default_model', fallback=None)
+            settings = WorkspaceSettings(
+                repository=str(repo), model=model,
+                synthesis_model=synthesis_model or (model if options.get('model') else
+                    cfg.get('WORKSPACE', 'synthesis_model', fallback='') or model),
+                writes_policy=options.pop('agent_writes', 'deny'),
+                run_timeout_seconds=timeout if timeout is not None else cfg.getfloat(
+                    'WORKSPACE', 'run_timeout_seconds', fallback=600),
+                synthesis_timeout_seconds=synthesis_timeout if synthesis_timeout is not None
+                    else cfg.getfloat('WORKSPACE', 'synthesis_timeout_seconds', fallback=90),
+                synthesis_prompt=cfg.get('WORKSPACE', 'synthesis_prompt', fallback='workspace/synthesize'),
+                synthesis_max_chars=cfg.getint('WORKSPACE', 'synthesis_max_chars', fallback=48000),
+            )
+            # Reuse config/model validation and the normal noninteractive defaults.
+            lead_prompt = options.pop('prompt', 'workspace/research')
+            resolved = _engine(ctx, store, settings, options)
+            engine = AdaptiveEngine(
+                store, settings, config_file=resolved.config_file, overrides=resolved.overrides,
+                total_calls=calls if calls is not None else cfg.getint(
+                    'WORKSPACE', 'research_total_calls', fallback=32),
+                strategy=strategy, contexts=contexts,
+                lead_prompt=lead_prompt,
+            )
+            _answer(ctx, engine.run(task, on_started=_started(store)), json_output)
+        except (ValueError, OSError) as exc:
+            raise click.ClickException(str(exc)) from exc
 
     @workspace.command('run')
     @click.argument('question', required=False)

@@ -6,7 +6,9 @@ Completion, CLI chat, bounded agents, internal helpers, and workspace workers no
 share the event-based core runtime. Web/TUI retain their legacy executor. See
 [the runtime notes](docs/core-runtime.md) for the current boundary and deferred services.
 The experimental research engine is contained in `workspace/`, with a runtime
-adapter that uses the same providers and tools as other headless runs.
+adapter that uses the same providers and tools as other headless runs. The
+`workspace research --brief FILE` experiment adds goal/question state and optional
+focused investigations under one shared budget.
 
 The name is a reference to the Memex, a device described by Vannevar Bush in his 1945 essay "As We May Think". See: https://en.wikipedia.org/wiki/Memex
 

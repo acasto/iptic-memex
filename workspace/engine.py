@@ -56,17 +56,18 @@ class WorkspaceEngine:
 
     def __init__(self, store: WorkspaceStore, settings: WorkspaceSettings, *,
                  config_file: str | None = None, overrides: dict | None = None,
-                 worker_command: list[str] | None = None):
+                 worker_command: list[str] | None = None, new_process_group: bool = True):
         self.store = store
         self.settings = settings
         self.config_file = config_file
         self.overrides = dict(overrides or {})
         self.worker_command = worker_command or [sys.executable, '-m', 'workspace.worker']
         self._children = {}
+        self.new_process_group = new_process_group
 
     def _spawn(self, run_id: str, worker: str, question: str, *,
                phase: str = 'worker', message: str | None = None,
-               deadline: float | None = None) -> None:
+               deadline: float | None = None, extra: dict | None = None) -> None:
         settings = self.settings
         self.store.update_worker(run_id, worker, status='queued', phase='queued')
         spec = dict(
@@ -85,12 +86,13 @@ class WorkspaceEngine:
                 'Other contributors have the same question and choose their own investigations.'
             ),
         )
+        spec.update(extra or {})
         log = (self.store.run_dir(run_id) / worker / 'process.log').open('wb')
         process = None
         try:
             process = subprocess.Popen(
                 self.worker_command, cwd=APP_ROOT, stdin=subprocess.PIPE,
-                stdout=log, stderr=subprocess.STDOUT, start_new_session=(os.name == 'posix'),
+                stdout=log, stderr=subprocess.STDOUT, start_new_session=(os.name == 'posix' and self.new_process_group),
             )
             self._children[worker] = (process, log)
             process.stdin.write(json.dumps(spec).encode('utf-8'))
@@ -105,11 +107,14 @@ class WorkspaceEngine:
     def _stop(self, workers: list[str]) -> None:
         """Terminate process groups, allowing worker and Docker cleanup before escalation."""
         active = [(self._children[w][0], self._children[w][1]) for w in workers
-                  if w in self._children and self._children[w][0].poll() is None]
+                  if w in self._children and (self._children[w][0].poll() is None
+                                             or self.new_process_group)]
+        groups = []
         for process, _ in active:
             try:
-                if os.name == 'posix':
+                if os.name == 'posix' and self.new_process_group:
                     os.killpg(process.pid, signal.SIGTERM)
+                    groups.append(process.pid)
                 else:
                     process.terminate()
             except ProcessLookupError:
@@ -120,31 +125,55 @@ class WorkspaceEngine:
                 process.wait(timeout=max(0.01, deadline - time.monotonic()))
             except subprocess.TimeoutExpired:
                 try:
-                    if os.name == 'posix':
+                    if os.name == 'posix' and self.new_process_group:
                         os.killpg(process.pid, signal.SIGKILL)
                     else:
                         process.kill()
                 except ProcessLookupError:
                     pass
                 process.wait()
+        # A group can outlive its leader after a crash. Give descendants the
+        # same cleanup grace, then enforce the hard stop for the whole group.
+        while groups and time.monotonic() < deadline:
+            remaining = []
+            for group in groups:
+                try:
+                    os.killpg(group, 0)
+                    remaining.append(group)
+                except ProcessLookupError:
+                    pass
+            groups = remaining
+            if groups:
+                time.sleep(0.05)
+        for group in groups:
+            try:
+                os.killpg(group, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    def _poll(self, run_id: str, workers: list[str]) -> set[str]:
+        """Reap completed children and validate their terminal snapshots."""
+        pending = set(workers)
+        for worker in list(pending):
+            process = self._children[worker][0]
+            if process.poll() is None:
+                continue
+            pending.remove(worker)
+            status = read_json(self.store.run_dir(run_id) / worker / 'status.json')
+            if status.get('status') not in TERMINAL_STATES:
+                self.store.update_worker(
+                    run_id, worker, status='failed', phase='finished',
+                    error=f'Worker exited without a result (exit {process.returncode})',
+                )
+            elif process.returncode and status.get('status') == 'completed':
+                self.store.update_worker(run_id, worker, status='failed', phase='finished',
+                                         error=f'Worker exited with status {process.returncode}')
+        return pending
 
     def _wait(self, run_id: str, workers: list[str], deadline: float) -> None:
         pending = set(workers)
         while pending:
-            for worker in list(pending):
-                process = self._children[worker][0]
-                if process.poll() is None:
-                    continue
-                pending.remove(worker)
-                status = read_json(self.store.run_dir(run_id) / worker / 'status.json')
-                if status.get('status') not in TERMINAL_STATES:
-                    self.store.update_worker(
-                        run_id, worker, status='failed', phase='finished',
-                        error=f'Worker exited without a result (exit {process.returncode})',
-                    )
-                elif process.returncode and status.get('status') == 'completed':
-                    self.store.update_worker(run_id, worker, status='failed', phase='finished',
-                                             error=f'Worker exited with status {process.returncode}')
+            pending = self._poll(run_id, list(pending))
             if pending and time.monotonic() >= deadline:
                 timed_out = sorted(pending)
                 self._stop(timed_out)
@@ -238,6 +267,8 @@ class WorkspaceEngine:
 
     @staticmethod
     def _label_historical_answer(evidence: dict, text: str) -> str:
+        if evidence.get('research') and (evidence['research'].get('assessment') or {}).get('status') != 'sufficient':
+            text = '> Partial research result: the saved coverage assessment is incomplete.\n\n' + text
         if text.strip() and evidence.get('notes_current') == 0:
             return ('> Partial result: this investigation published no new findings. '
                     'The answer reuses earlier notes explicitly read by its workers; '
@@ -283,7 +314,9 @@ class WorkspaceEngine:
             result = read_json(self.store.run_dir(run_id) / 'synthesis' / 'status.json')
             answer = self._label_historical_answer(evidence, result.get('last_text') or '')
             if result.get('status') == 'completed' and answer.strip():
-                status = ('completed' if evidence.get('notes_current') != 0
+                coverage = (not evidence.get('research') or
+                            (evidence['research'].get('assessment') or {}).get('status') == 'sufficient')
+                status = ('completed' if coverage and evidence.get('notes_current') != 0
                           and all(w.get('status') == 'completed'
                                              for w in evidence['outcomes']) else 'partial')
             else:
