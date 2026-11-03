@@ -346,6 +346,11 @@ class BuildSystemAddendaAction(InteractionAction):
             if model_text:
                 items.append(model_text)
 
+        # Project text is literal: do not interpret it as a prompt path or chain.
+        project = getattr(self.session, "project", None)
+        if project is not None and project.supplemental_prompt:
+            items.append(project.supplemental_prompt)
+
         # De-duplicate while preserving order (avoids repeated supplementals when
         # the same chain/text is configured at multiple scopes)
         seen = set()

@@ -196,7 +196,8 @@ def test_owned_helpers_close_resources_and_inherit_only_the_sandbox(builder, age
     child.register_cleanup_callback(lambda: cleaned.append('callback'))
 
     def build(**options):
-        assert options == {'mode': 'internal' if agent else 'completion', 'base_directory': '/tmp'}
+        assert options == {'mode': 'internal' if agent else 'completion',
+                           'base_directory': '/tmp', 'project_context': outer.project}
         return child
 
     fn = run_agent if agent else run_completion

@@ -44,6 +44,9 @@ def child_options(outer_session, overrides):
     options = {}
     if outer_session is not None:
         options['base_directory'] = outer_session.get_option('TOOLS', 'base_directory', fallback='working')
+    project = getattr(outer_session, "project", None)
+    if project is not None:
+        options["project_context"] = project
     options.update(overrides or {})
     memory = getattr(outer_session, 'file_memory_enabled', None)
     boundary = (getattr(outer_session, 'child_call_boundary', None) or

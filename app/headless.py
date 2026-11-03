@@ -10,7 +10,8 @@ def build_headless_session(config_manager, options=None, *, builder=None,
     """Resolve noninteractive defaults; optional services stay disabled."""
     from session import Session
 
-    options = dict(options or {})
+    from app.project import project_options, bind_project
+    project, options, sources = project_options(options, interactive=False)
     if not options.get('model'):
         model = config_manager.base_config.get('AGENT', 'default_model', fallback=None)
         if model:
@@ -21,6 +22,7 @@ def build_headless_session(config_manager, options=None, *, builder=None,
     registry = ComponentRegistry(config)
     session = Session(config, registry)
     try:
+        bind_project(session, project, sources)
         services = services or HeadlessServices()
         session._builder = builder
         session.current_model = options.get('model')

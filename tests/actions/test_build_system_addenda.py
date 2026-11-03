@@ -99,3 +99,14 @@ def test_addenda_includes_skills_when_enabled(tmp_path):
     assert "<available_skills>" in out
     assert "pdf-processing" in out
     assert str(skill_md) in out
+
+
+def test_project_addendum_is_literal_last_and_deduplicated(tmp_path):
+    from types import SimpleNamespace
+    session = FakeSession()
+    source = tmp_path / 'instructions.md'
+    source.write_text('Must not load file contents')
+    session.project = SimpleNamespace(supplemental_prompt=str(source))
+    assert BuildSystemAddendaAction(session).run().endswith(str(source))
+    session.project.supplemental_prompt = 'MODEL'
+    assert BuildSystemAddendaAction(session).run().count('MODEL') == 1

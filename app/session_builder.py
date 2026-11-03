@@ -33,7 +33,9 @@ class SessionBuilder:
         # Late import to avoid circular dependency at module load time
         from session import Session
 
-        eff_options = dict(options or {})
+        from app.project import project_options, bind_project
+        project, eff_options, sources = project_options(options, interactive=True)
+        options = eff_options
         try:
             ui_mode = (mode or 'chat').lower()
         except Exception:
@@ -43,6 +45,7 @@ class SessionBuilder:
         session_config: SessionConfig = self.config_manager.create_session_config(eff_options)
         registry = ComponentRegistry(session_config)
         session = Session(session_config, registry)
+        bind_project(session, project, sources)
         try:
             setattr(session, '_builder', self)
         except Exception:

@@ -162,9 +162,11 @@ def _run_completion_cli(ctx, *, file=(), message=None):
 @click.option('--mcp', 'mcp_enable', is_flag=True, default=False, help='Enable MCP for non-interactive runs (Agent/Completion)')
 @click.option('--no-mcp', 'mcp_disable', is_flag=True, default=False, help='Disable MCP for non-interactive runs (Agent/Completion)')
 @click.option('--mcp-servers', default=None, help='Limit MCP servers in non-interactive runs (CSV labels)')
+@click.option('--project', 'project_root', type=click.Path(exists=True, file_okay=False),
+              default=None, help='Project root (defaults to current directory)')
 @click.option('--base-dir', default=None, help='Override [TOOLS].base_directory (workspace root) for file/cmd tools')
 @click.pass_context
-def cli(ctx, conf, model, prompt, message, stdin_message, temperature, max_tokens, stream, verbose, raw, file, steps, agent_writes, no_agent_status_tags, agent_output, tools, mcp_enable, mcp_disable, mcp_servers, base_dir):
+def cli(ctx, conf, model, prompt, message, stdin_message, temperature, max_tokens, stream, verbose, raw, file, steps, agent_writes, no_agent_status_tags, agent_output, tools, mcp_enable, mcp_disable, mcp_servers, base_dir, project_root):
     """
     the main entry point for the CLI click interface
     """
@@ -179,6 +181,8 @@ def cli(ctx, conf, model, prompt, message, stdin_message, temperature, max_token
     
     # Build session options from CLI parameters
     options = {}
+    if project_root:
+        options["project_root"] = os.path.abspath(os.path.expanduser(project_root))
     if model:
         options['model'] = model
     if prompt:
