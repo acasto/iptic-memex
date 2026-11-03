@@ -214,3 +214,8 @@ cover terminal and headless execution, stdin/files, model precedence/addenda,
 stream filtering, outcomes, metadata, cancellation, observer failure, and session
 isolation. Existing chat/agent/workspace and provider suites provide regression
 coverage. The correctness suite requires no model call.
+
+Application clients that need retained live sessions can use
+[SessionHost](session-lifecycle.md) for isolated task submission, safe queued text,
+live interaction, observation, and cancellation. It reuses this execution runtime;
+durable workspace tasks and restart restoration remain separate concerns.
