@@ -15,7 +15,8 @@ from workspace.state import WorkspaceStore, TERMINAL_STATES
 
 def _paths(ctx, directory: str | None, repository: str | None = None):
     cfg = ctx.obj['CONFIG_MANAGER'].base_config
-    repo = repository or ctx.obj['OPTIONS'].get('base_directory')
+    repo = (repository or ctx.obj['OPTIONS'].get('project_root')
+            or ctx.obj['OPTIONS'].get('base_directory'))
     repo = repo or cfg.get('TOOLS', 'base_directory', fallback='working')
     repo = Path.cwd() if repo in ('working', '.') else Path(repo).expanduser().resolve()
     location = directory or cfg.get('WORKSPACE', 'directory', fallback='.memex-workspace')
@@ -53,6 +54,12 @@ def _render_limits(record: dict) -> str:
     total = record.get('run_timeout_seconds')
     if total is None:
         return ''
+    if record.get('kind') == 'task':
+        profile = record['profile']
+        used = (record.get('task_state') or {}).get('calls_used', '?')
+        return (f"Task: {record['task_id']}; strategy={record['strategy']['name']}; "
+                f"calls={used}/{profile['calls']}; concurrency={profile['concurrency']}; "
+                f"timeout={total:g}s; model={profile['model']}")
     if record.get('kind') == 'synthesis':
         return f'Synthesis time limit: {total:g}s'
     if record.get('kind') == 'research':
@@ -113,6 +120,9 @@ def register_workspace_commands(cli, task_message, is_image_file) -> None:
     @cli.group()
     def workspace():
         """Run agents against persistent shared findings; inspect saved activity."""
+
+    from modes.workspace_task_commands import register_task_commands
+    register_task_commands(workspace, _paths, task_message)
 
     @workspace.command('research')
     @click.argument('question', required=False)

@@ -40,8 +40,9 @@ def run_report(store: WorkspaceStore, run_id: str | None = None) -> dict:
         delivered, retrieved, searched = set(), set(), set()
         publications = [n['created_at'] for n in notes if n['worker'] == worker['worker']]
         for event in events:
-            if event['event'] == 'tool_start':
-                tools[event['tool']] = tools.get(event['tool'], 0) + 1
+            if event['event'] in ('tool_start', 'tool_started'):
+                tool = event.get('tool') or event.get('name')
+                tools[tool] = tools.get(tool, 0) + 1
             elif event['event'] == 'notes_seen':
                 delivered.update(event['notes'])
             elif event['event'] == 'note_read':
@@ -69,7 +70,9 @@ def run_report(store: WorkspaceStore, run_id: str | None = None) -> dict:
     usage = {}
     helpers_unreported = any((w.get('workflow_calls') or 0) > (w.get('turns') or 0)
                              for w in workers) or bool(
-        (run.get('research') or {}).get('budget', {}).get('helper_calls'))
+        (run.get('research') or {}).get('budget', {}).get('helper_calls')) or any(
+            charge.get('agent_id') is None for charge in
+            (run.get('task_state') or {}).get('charges', []))
     for key in ('total_in', 'total_out', 'total_cached', 'total_reasoning'):
         values = [(w.get('usage') or {}).get(key) for w in workers]
         usage[key] = (sum(values) if values and all(v is not None for v in values)
@@ -88,4 +91,5 @@ def run_report(store: WorkspaceStore, run_id: str | None = None) -> dict:
         synthesis_notes_current=run.get('synthesis_notes_current'),
         synthesis_notes_historical=run.get('synthesis_notes_historical'),
         research=run.get('research'),
+        task_id=run.get('task_id'), task_state=run.get('task_state'),
     )

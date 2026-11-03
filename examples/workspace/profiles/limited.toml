@@ -1,0 +1,9 @@
+# Model defaults to the selected project's agent model, then [AGENT].default_model.
+# Explicit -m overrides it for a run. Keep local model names in user profiles.
+tools = ["file"]
+calls = 12
+concurrency = 2
+max_sessions = 4
+timeout = 180
+max_tokens = 2048
+writes = "deny"

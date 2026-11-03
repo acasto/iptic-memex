@@ -12,6 +12,7 @@ class ExecutionScope:
     roots: tuple[tuple[str, str], ...]
     tools: frozenset[str]
     writes: str
+    allowed_models: frozenset[str] | None = None
 
 
 def child_scope(parent, options):
@@ -47,4 +48,13 @@ def child_scope(parent, options):
     tools.difference_update({'memory', 'ragsearch'})
     if parent.get_tools().get('cmd_tool') != 'assistant_docker_tool':
         tools.discard('cmd')
-    return ExecutionScope(str(root), tuple(roots.items()), frozenset(tools), requested_policy)
+    inherited = getattr(parent, 'execution_scope', None)
+    allowed_models = inherited.allowed_models if inherited else None
+    if allowed_models is not None:
+        requested_model = options.get('model') or parent.get_params().get('model')
+        normalize = parent.config.normalize_model_name
+        allowed = {normalize(model) or model for model in allowed_models}
+        if (normalize(requested_model) or requested_model) not in allowed:
+            raise ValueError('Child model is outside the inherited execution profile')
+    return ExecutionScope(str(root), tuple(roots.items()), frozenset(tools), requested_policy,
+                          allowed_models)

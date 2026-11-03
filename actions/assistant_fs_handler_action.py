@@ -226,6 +226,15 @@ class AssistantFsHandlerAction(InteractionAction):
                 return None
 
             op = (operation or "read").strip().lower()
+            if (op in ("write", "rw")
+                    and getattr(self.session, 'execution_scope', None) is not None
+                    and any(policy == 'ro' and os.path.commonpath([resolved_path, root]) == resolved_path
+                            for root, policy in self._root_policies.items())):
+                self.session.add_context('assistant', {
+                    'name': 'fs_error',
+                    'content': f'Path {file_path} contains protected read-only records'
+                })
+                return None
             if op in ("write", "rw") and mode != "rw":
                 self.session.add_context('assistant', {
                     'name': 'fs_error',

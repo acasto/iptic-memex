@@ -206,6 +206,8 @@ class WorkspaceStore:
         result = dict(record, workers=workers, directory=str(directory))
         if (directory / 'research.json').exists():
             result['research'] = read_json(directory / 'research.json')
+        if (directory / 'task-state.json').exists():
+            result['task_state'] = read_json(directory / 'task-state.json')
         return result
 
     def read_notes(self, run_id: str) -> list[dict]:

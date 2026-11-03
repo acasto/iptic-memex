@@ -47,6 +47,8 @@ def child_options(outer_session, overrides):
     from app.execution_scope import child_scope
     from app.session_services import HeadlessServices
     scope = child_scope(outer_session, options)
+    if scope.allowed_models is not None and not options.get('model'):
+        options['model'] = outer_session.get_params().get('model')
     for key, value in outer_session.get_tools().items():
         if key.endswith('_tool'):
             if key in options and options[key] != value:

@@ -1,0 +1,12 @@
+name = "Evidence-led investigation"
+workflow = "session"
+prompt = """
+Investigate the user's brief and produce an answer grounded in inspected sources.
+Use shared workspace notes for useful findings, with sources and uncertainties.
+Choose whether independent investigation, follow-up, or direct work helps.
+The agents tool can spawn isolated sessions, send selected information, inspect,
+wait, and follow up in a completed session. All calls use the same task budget.
+Treat agent contributions as claims rather than independent verification.
+If a contribution matters to the answer, collect it before finishing. There is
+no mandatory separate synthesis pass. Explain any important unresolved gaps.
+"""

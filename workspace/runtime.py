@@ -11,6 +11,16 @@ def build_session(spec, store):
     """Build a scratch worker or tool-free synthesis without editing shared config."""
     synthesis = spec.get('phase') == 'synthesis'
     options = dict(spec.get('overrides') or {})
+    project_snapshot = options.pop('project_snapshot', None)
+    if project_snapshot:
+        from pathlib import Path
+        from app.project import ProjectContext
+        options['project_context'] = ProjectContext(**{
+            **project_snapshot, 'root': Path(project_snapshot['root']),
+            'config_path': Path(project_snapshot['config_path'])
+            if project_snapshot.get('config_path') else None})
+    else:
+        options['project_root'] = spec['repository']
     options.update(prompt=spec['prompt'], base_directory=spec['repository'], stream=False,
                    docker_always_ephemeral=True, agent_writes=spec['writes_policy'],
                    show_context_summary=False, show_context_details=False)
@@ -23,6 +33,10 @@ def build_session(spec, store):
 
     def configure(session):
         session.set_flag('hooks_disabled', True)
+        if synthesis and project_snapshot:
+            from workspace.budget import CallAllowance
+            session.call_allowance = CallAllowance(1)
+            session.before_provider_call = session.call_allowance.before_call
         if not synthesis:
             session.workspace = WorkspaceAccess(store, spec['run_id'], spec['worker'])
             if not spec.get('research'):
@@ -36,7 +50,17 @@ def build_session(spec, store):
             session.register_cleanup_callback(session.research.close)
 
     required = ('workspace', 'research') if spec.get('research') else ('workspace',)
-    services = HeadlessServices(file_memory=False,
+    scope = None
+    if project_snapshot:
+        from app.execution_scope import ExecutionScope
+        selected = str(options.get('active_tools_agent') or '').split(',')
+        allowed = frozenset((*selected, *(() if synthesis else required))) - {
+            '__none__', '', 'memory', 'ragsearch'}
+        from workspace.scope import task_roots
+        scope = ExecutionScope(spec['repository'], task_roots(spec['repository'], store),
+                               frozenset() if synthesis else allowed, spec['writes_policy'],
+                               frozenset({spec['model']}) if spec.get('model') else None)
+    services = HeadlessServices(file_memory=False, execution_scope=scope,
                                 required_tools=() if synthesis else required,
                                 configure=configure)
     session = SessionBuilder(ConfigManager(spec.get('config_file'))).build(

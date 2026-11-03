@@ -31,6 +31,21 @@
   synthesis. HeadlessServices.before_call is inherited by internal helpers; it
   does not carry workflow-specific tool access into them.
 
+- Project-aware assembly: `app/project.py` resolves optional inert
+  `.memex/project.toml` preferences before provider/prompt setup. `--project`
+  selects a root explicitly; project preferences cannot grant permissions.
+  `app/execution_scope.py` enforces inherited helper scope, including optional
+  model ceilings. `app/session_host.py` owns retained live sessions and queued
+  inputs; it does not support process-restart restoration.
+- Task experiments: `workspace/tasks.py` owns task identity/project binding and
+  attempt leases; `task_runner.py` supervises a process group; `task_worker.py`
+  adapts selected workflows; `task_service.py` owns live agents using SessionHost.
+  `experiment.py` separates inert strategy files from user-selected execution
+  profiles. `agent_tool.py` exposes scoped delegation. No mandatory lead/branch
+  or synthesis policy belongs in the shared task service. Task-internal helpers
+  inherit the selected model and shared allowance. Protect host-owned control
+  records even when project writes are enabled. See `docs/workspace-tasks.md`.
+
 ## Build, Run, and Dev
 - Python 3.11+. Use a virtual env.
   - Create env: `python -m venv .venv && source .venv/bin/activate`
@@ -44,7 +59,9 @@
 ### Default Model Selection (Unified Rule)
 - Interactive modes (`chat`, `tui`, `web`) use `[DEFAULT].default_model` unless a model is explicitly provided (CLI `-m/--model` or `/set model`).
 - Non‑interactive modes (`completion`, internal runs via `app.runs`, and Agent Mode) use `[AGENT].default_model` when no explicit model is provided.
-- Explicit model always wins. Application assembly resolves these defaults via
+- Optional project model/agent_model preferences precede the configured defaults;
+  task profiles add explicit experiment selection. Explicit CLI model always wins.
+  Application assembly resolves these defaults via
   `app.session_builder.SessionBuilder`; completion is assembled in `app/completion.py`.
 
 ### Task runtime boundary

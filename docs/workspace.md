@@ -345,3 +345,10 @@ Python-stack resume, recursive delegation, permanent manager persona, or automat
 artifact-building phase. The `single` strategy retains the same goal/state/note
 tools while disabling independent branches. Compare it and fixed workers under
 the same model, tools, sources and aggregate allowance before increasing complexity.
+
+## Selectable task experiments
+
+[Workspace tasks](workspace-tasks.md) add durable task IDs and independent
+strategy/profile selection. `workspace task start` supports prompt-directed
+agent work as well as adapters for these fixed/adaptive experiments. Existing
+run/research commands and their saved artifacts remain available.

@@ -57,6 +57,9 @@ class WorkspaceEngine:
     def __init__(self, store: WorkspaceStore, settings: WorkspaceSettings, *,
                  config_file: str | None = None, overrides: dict | None = None,
                  worker_command: list[str] | None = None, new_process_group: bool = True):
+        bound = read_json(store.root / 'tasks' / 'project.json')
+        if bound and bound.get('root') != str(Path(settings.repository).resolve()):
+            raise ValueError('Workspace belongs to another project; select a separate directory')
         self.store = store
         self.settings = settings
         self.config_file = config_file
