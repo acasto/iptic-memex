@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from typing import Any, Callable
+from app.execution_scope import ExecutionScope
 
 
 @dataclass(frozen=True)
@@ -18,3 +19,5 @@ class HeadlessServices:
     required_tools: tuple[str, ...] = ()
     configure: Callable[[Any], None] | None = None
     before_call: Callable[[Any, int], None] | None = None
+
+    execution_scope: ExecutionScope | None = None

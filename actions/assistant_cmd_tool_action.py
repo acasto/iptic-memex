@@ -235,7 +235,9 @@ class AssistantCmdToolAction(InteractionAction):
                     continue
 
     def run(self, args: Optional[dict] = None, content: str = "") -> None:
-        """Main entry point for command execution"""
+        """Main entry point for command execution."""
+        if getattr(self.session, 'execution_scope', None) is not None:
+            raise ValueError('Local shell execution is unavailable in child scope')
         command = get_str(args or {}, 'command', '') or ''
         raw_args = get_str(args or {}, 'arguments', '') or ''
 

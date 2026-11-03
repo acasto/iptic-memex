@@ -196,8 +196,12 @@ def test_owned_helpers_close_resources_and_inherit_only_the_sandbox(builder, age
     child.register_cleanup_callback(lambda: cleaned.append('callback'))
 
     def build(**options):
-        assert options == {'mode': 'internal' if agent else 'completion',
-                           'base_directory': '/tmp', 'project_context': outer.project}
+        from pathlib import Path
+        assert options['mode'] == ('internal' if agent else 'completion')
+        assert options['base_directory'] == str(Path('/tmp').resolve())
+        assert options['project_context'] == outer.project
+        assert options['services'].file_memory is False
+        assert options['services'].execution_scope.writes == 'deny'
         return child
 
     fn = run_agent if agent else run_completion

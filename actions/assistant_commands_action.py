@@ -211,7 +211,9 @@ class AssistantCommandsAction(InteractionAction):
             active, blocked = resolve()
             dynamic = self.session.get_user_data('__dynamic_tools__') or {}
             tools = {name: spec for name, spec in tools.items()
-                     if name not in blocked and (active is None or name in active or name in dynamic)}
+                     if name not in blocked and (active is None or name in active or name in dynamic)
+                     and (getattr(self.session, 'execution_scope', None) is None
+                          or name in self.session.execution_scope.tools)}
         return tools
 
     # ---- Canonical tool specs for providers ----

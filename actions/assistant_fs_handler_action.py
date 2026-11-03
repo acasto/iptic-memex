@@ -108,6 +108,9 @@ class AssistantFsHandlerAction(InteractionAction):
 
     def _build_root_policies(self) -> Dict[str, str]:
         """Return mapping of root_realpath -> mode ('rw'|'ro')."""
+        scope = getattr(self.session, 'execution_scope', None)
+        if scope is not None:
+            return dict(scope.roots)
         policies: Dict[str, str] = {}
 
         # Base directory is always RW.

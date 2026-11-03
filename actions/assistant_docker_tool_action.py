@@ -76,8 +76,15 @@ class AssistantDockerToolAction(InteractionAction):
             args.extend(['-v', f'{host_path}:{host_path}{suffix}'])
 
         # Compatibility alias: base_dir also available at /workspace.
-        suffix = ':ro' if force_ro else ''
+        base_mode = next((r['mode'] for r in roots if r['path'] == self.base_dir), 'ro')
+        suffix = ':ro' if force_ro or base_mode != 'rw' else ''
         args.extend(['-v', f'{self.base_dir}:/workspace{suffix}'])
+        if getattr(self.session, 'execution_scope', None) is not None:
+            for item in roots:
+                relative = os.path.relpath(item['path'], self.base_dir)
+                if relative != '.' and not relative.startswith('..'):
+                    suffix = ':ro' if force_ro or item['mode'] != 'rw' else ''
+                    args.extend(['-v', f"{item['path']}:/workspace/{relative}{suffix}"])
         return args
 
     # ---- Dynamic tool registry metadata ----
@@ -131,7 +138,8 @@ class AssistantDockerToolAction(InteractionAction):
         self.docker_env = 'ephemeral' if force_ephemeral else desired_env
         env_section = self.docker_env.upper()
         # Load persistence setting from the environment's config
-        self.is_persistent = self.session.get_option(env_section, 'persistent', False)
+        self.is_persistent = (False if getattr(self.session, 'execution_scope', None) is not None
+                              else self.session.get_option(env_section, 'persistent', False))
 
         # Load Docker-specific configuration
         self.docker_image = self.session.get_option(env_section, 'docker_image', 'ubuntu:latest')
@@ -179,6 +187,8 @@ class AssistantDockerToolAction(InteractionAction):
         return self._agent_write_policy() in ('deny', 'dry-run')
 
     def _tmp_mount_args(self) -> list[str]:
+        if getattr(self.session, 'execution_scope', None) is not None:
+            return ['--tmpfs', '/tmp:rw,mode=1777']
         mode = (self.tmp_mount or 'none').lower()
         if mode == 'none':
             return []

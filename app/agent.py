@@ -29,6 +29,12 @@ def configure_agent(session, writes_policy=None):
     configure_runtime(session)
     install_tool_selection(session, 'AGENT')
     policy = writes_policy or session.get_option('AGENT', 'writes_policy', fallback='deny')
+    scope = getattr(session, 'execution_scope', None)
+    if scope is not None:
+        ranks = {'deny': 0, 'dry-run': 1, 'allow': 2}
+        if ranks[session._normalize_write_policy(policy)] > ranks[scope.writes]:
+            raise ValueError('Run write policy exceeds inherited scope')
+        policy = scope.writes
     session.write_policy = session._normalize_write_policy(policy)
     session.ephemeral_commands = bool(get_bool(
         {'value': session.get_option('AGENT', 'docker_always_ephemeral', fallback=True)}, 'value', True))
@@ -101,8 +107,9 @@ def run_agent(*, builder=None, steps, overrides=None, contexts=None, output=None
             if outer_session is not None:
                 from core.context_transfer import copy_contexts
                 from core.runner_seed import build_chat_seed
-                copy_contexts(outer_session, active, include_chat=False)
-                if seed is None:
+                if getattr(active, 'execution_scope', None) is None:
+                    copy_contexts(outer_session, active, include_chat=False)
+                if seed is None and getattr(active, 'execution_scope', None) is None:
                     seed = build_chat_seed(outer_session)
             if seed:
                 from core.runner_seed import apply_chat_seed
@@ -119,7 +126,7 @@ def run_agent(*, builder=None, steps, overrides=None, contexts=None, output=None
                 'value': active.get_option('AGENT', 'use_mcp', fallback=False),
             }, 'value', False)
             active.mcp_autoload_policy = {
-                'enabled': use_mcp,
+                'enabled': use_mcp and getattr(active, 'execution_scope', None) is None,
                 'servers': active.get_option('AGENT', 'available_mcp', fallback=''),
             }
             autoload_mcp(active)

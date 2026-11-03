@@ -39,6 +39,11 @@ def install_tool_selection(session, section):
             raise ValueError('Required tools are blocked: ' + ', '.join(sorted(conflicts)))
         if active is not None:
             active = tuple(dict.fromkeys((*active, *required)))
+        scope = getattr(session, 'execution_scope', None)
+        if scope is not None:
+            if set(required) - scope.tools:
+                raise ValueError('Required tools exceed inherited execution scope')
+            active = tuple(scope.tools if active is None else set(active) & scope.tools)
         return active, denied
 
     session.resolve_tool_selection = resolve

@@ -24,6 +24,7 @@ def build_headless_session(config_manager, options=None, *, builder=None,
     try:
         bind_project(session, project, sources)
         services = services or HeadlessServices()
+        session.execution_scope = services.execution_scope
         session._builder = builder
         session.current_model = options.get('model')
         session.file_memory_enabled = services.file_memory

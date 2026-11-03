@@ -23,6 +23,8 @@ class AssistantMemoryToolAction(InteractionAction):
     """
     def __init__(self, session):
         self.session = session
+        if getattr(session, "execution_scope", None) is not None:
+            return
         # Register the schema for the memories table.
         # The table includes an auto-incrementing ID, memory content, an optional project identifier,
         # and a timestamp that defaults to the current time.
@@ -73,6 +75,8 @@ class AssistantMemoryToolAction(InteractionAction):
         """
         Execute memory operations based on provided arguments.
         """
+        if getattr(self.session, 'execution_scope', None) is not None:
+            return {'ok': False, 'error': 'Global memory is unavailable in child scope'}
         action = (get_str(args or {}, "action", "") or "").lower()
         # Determine memory content from either the "memory" argument or the content parameter
         mem_arg = get_str(args or {}, "memory")

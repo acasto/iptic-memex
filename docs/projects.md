@@ -36,3 +36,32 @@ An explicit `--base-dir` or configured tool root remains independent. Project
 selection is not a new security boundary: enforcing non-expanding delegation
 permissions is the next application phase. Existing workspace process wiring
 will be integrated separately; this slice does not expose agent delegation in chat.
+
+## Nested execution scope
+
+Internal helpers created with an outer session now receive an immutable execution
+scope before provider/prompt setup. A child may narrow its base directory inside
+the parent's canonical sandbox; it cannot switch projects, increase write policy,
+or replace application services/tool handlers through overrides. Further children
+inherit the narrower boundary. Parent call-accounting callbacks and cancellation
+continue to apply.
+
+The child's filesystem policies exclude ambient extra roots and retain nested
+read-only restrictions. Tool exposure is capped at the parent's available names,
+including dynamic registrations. Global database memory and ragsearch are excluded
+until they have explicit retrieval scopes; file memory is disabled. Automatic
+parent context copying/chat seeding is disabled for scoped helpers. Trusted
+application callers can pass selected `contexts` or an explicit `chat_seed`—for
+example a small identity summary—without granting access to the source store.
+Existing hooks that relied on implicit parent history now need explicit context.
+
+Scoped command execution requires the parent's Docker command tool. Local shell
+execution is rejected. Docker uses ephemeral containers, scoped mounts (including
+the /workspace alias), and a private temporary filesystem. These are boundaries
+for built-in tools, not an OS sandbox around arbitrary Python actions or plugins.
+Application-owned sessions and explicitly supplied context remain trusted inputs.
+
+There is no new user-facing memory profile selector or project retrieval index
+in this slice. Workspace subprocess delegation still needs explicit integration;
+these services currently enforce nested application helper execution. The
+existing workspace supervisor continues to own its branch restrictions.

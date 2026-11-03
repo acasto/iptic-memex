@@ -41,19 +41,26 @@ def attach_contexts(session, contexts):
 
 def child_options(outer_session, overrides):
     """Inherit sandbox and service restrictions, keeping model/tool choices separate."""
-    options = {}
-    if outer_session is not None:
-        options['base_directory'] = outer_session.get_option('TOOLS', 'base_directory', fallback='working')
-    project = getattr(outer_session, "project", None)
+    options = dict(overrides or {})
+    if outer_session is None:
+        return options
+    from app.execution_scope import child_scope
+    from app.session_services import HeadlessServices
+    scope = child_scope(outer_session, options)
+    for key, value in outer_session.get_tools().items():
+        if key.endswith('_tool'):
+            if key in options and options[key] != value:
+                raise ValueError('Child runs cannot replace tool implementations')
+            options[key] = value
+    options.update(base_directory=scope.root, agent_writes=scope.writes,
+                   docker_always_ephemeral=True, cmd_tool='assistant_docker_tool')
+    project = getattr(outer_session, 'project', None)
     if project is not None:
-        options["project_context"] = project
-    options.update(overrides or {})
-    memory = getattr(outer_session, 'file_memory_enabled', None)
+        options['project_context'] = project
     boundary = (getattr(outer_session, 'child_call_boundary', None) or
                 getattr(outer_session, 'before_provider_call', None))
-    if memory is False or boundary:
-        from app.session_services import HeadlessServices
-        options['services'] = HeadlessServices(file_memory=memory, before_call=boundary)
+    options['services'] = HeadlessServices(file_memory=False, before_call=boundary,
+                                           execution_scope=scope)
     return options
 
 
