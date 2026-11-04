@@ -126,7 +126,7 @@ The CLI owns a process group and enforces the profile deadline with cancellation
 and bounded cleanup grace. Worker threads use SessionHost for live continuity;
 they do not survive process exit. Interrupted work retains artifacts and gets an
 explicit terminal state. CLI chat attachment, attempt-scoped questions, and one-off
-scheduled repeats are available below. Recurring schedules and checkpoint
+scheduled repeats are available below. Calendar schedules and checkpoint
 continuation remain later increments. See the
 [proposed scheduling and continuation plan](#proposed-next-work-scheduling-and-continuation)
 for the next design increments.
@@ -253,13 +253,12 @@ rejected. Dead attempts do not offer pending questions through chat. Ordinary
 filesystem and command tools cannot write question/reply records, which remain
 inside the host-owned run directory even when project writes are enabled.
 
-## One-off scheduled task repeats
+## Scheduled task repeats
 
-The first scheduling increment is available for directed/session tasks. It runs
-saved tasks once at or after a specified time, when an external timer or a person
-invokes `run-due`. No resident process watches the clock. Recurring intervals,
-calendar schedules, evaluation, notifications, and checkpoint continuation remain
-future work in the design below.
+Scheduling is available for directed/session tasks. It runs saved tasks once
+or on an elapsed-time interval, when an external timer or a person invokes
+`run-due`. No resident process watches the clock. Local calendar schedules,
+evaluation, notifications, and checkpoint continuation remain future work.
 
 ```bash
 memex --project /path/to/project workspace schedule add TASK_ID --at 2026-11-05T06:00:00-05:00
@@ -272,8 +271,8 @@ memex --project /path/to/project workspace schedule run-due --max-runs 1 --max-s
 ```
 
 All commands emit JSON. `--directory` selects a different workspace record store.
-The saved task must belong to the selected project. Add authorizes one unattended
-attempt using that task's saved brief, strategy, and execution profile; it does
+The saved task must belong to the selected project. Without `--every`, add
+authorizes one unattended attempt using the saved brief, strategy, and profile; it does
 not execute immediately. A timestamp must include an explicit offset or `Z` and
 is stored in UTC. Use an absolute project path when invoking from cron or a timer.
 The command does not install or change external timers.
@@ -318,10 +317,50 @@ and 130 for cancellation. JSON distinguishes those cases. Previously consumed
 failures are visible in list/inspect but do not make every later idle poll fail.
 There is no claim of exactly-once external side effects after a crash.
 
+### Recurring intervals and failure limits
+
+```bash
+memex --project /path/to/project workspace schedule add TASK_ID \
+  --at 2026-11-05T06:00:00-05:00 --every 24h --max-failures 3
+```
+
+`--every` accepts positive integer durations with `s`, `m`, `h`, or `d` units,
+from one minute to 366 days. These are elapsed-time intervals anchored at `--at`.
+A 24-hour cadence is not a promise of the same local hour across daylight-saving
+changes. Polling every fifteen minutes still limits when due work is noticed.
+
+Each recurring schedule executes at most once per invocation. Missed slots produce
+one catch-up attempt; the next due time advances to the first slot strictly after
+completion on the original cadence. The completed occurrence records its nominal
+due time and skipped interval count/range. Backward clock changes cannot replay a
+consumed occurrence. A busy task or insufficient tick allowance leaves the current
+occurrence pending without advancing it.
+
+A successful attempt resets the consecutive-failure count. Other terminal outcomes
+increment it; reaching `--max-failures` (default 3) pauses the schedule for attention.
+`needs_input`, cancellation, and interruption pause immediately. Failed occurrences
+are consumed; a later regular slot is a new occurrence, not a retry of the old one.
+Unknown crash outcomes remain `needs_review` and never resume automatically.
+
+A user pause made during execution remains effective after that attempt finishes.
+`resume` can re-enable a recurring schedule paused for a known terminal outcome;
+it resets the failure streak and retains the next pending occurrence. It does not
+replay the failed slot or bypass `needs_review`. An explicit resume after a long
+pause uses the same one-catch-up policy.
+
+Version-1 one-off records remain supported unchanged. Recurring schedules use
+version 2 with a current occurrence and latest completed occurrence in
+`schedule.json`. Each finished occurrence and its next-slot transition is archived
+under `occurrences/OCCURRENCE_ID.json` before advancing the schedule pointer.
+Recovery reuses that transition, preserving occurrence identity and failure counts.
+A tick that reconciles an old occurrence does not also dispatch the new one;
+newly due work waits for the next invocation. Archives currently have no automatic
+retention pruning. No worker/evaluator can reset these host-owned limits.
+
 ## Proposed next work: scheduling and continuation
 
 Design draft, 2026-11-04. This section describes the broader target design;
-the one-off scheduling subset documented above is now implemented.
+the one-off and elapsed-interval scheduling subset above is now implemented.
 The Phase E baseline is commit `bbddb9f`. These are incremental work
 packages, not a commitment to build a resident service or restore live processes.
 
@@ -621,5 +660,5 @@ Before each increment, settle only its relevant choices: CLI names and exit code
 minimum interval and tick defaults; failure threshold; record version/migration
 rules; calendar/time-zone support; checkpoint size and retention; evaluator schema
 and budget split; notification destinations and delivery guarantees. Full live-
-session restoration and an always-on runner remain outside this plan. The one-off subset of the first increment is available;
-the remaining increments are still planned.
+session restoration and an always-on runner remain outside this plan. The one-off and interval scheduling increments are available;
+state evaluation and continuation remain planned.

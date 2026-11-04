@@ -1,4 +1,4 @@
-"""CLI trigger for one-off schedules; safe to invoke from an external timer."""
+"""CLI trigger for schedules; safe to invoke from an external timer."""
 import json
 import signal
 
@@ -11,7 +11,7 @@ from workspace.schedules import ScheduleStore, Scheduler
 def register_schedule_commands(workspace, paths):
     @workspace.group('schedule')
     def schedule():
-        """Register one-off task repeats and run due work without a resident service."""
+        """Register scheduled task repeats and run due work without a resident service."""
 
     def selected(ctx, directory):
         if ctx.obj.get('MESSAGE') or ctx.obj.get('FILES') or ctx.obj.get('STDIN_MESSAGE'):
@@ -27,12 +27,15 @@ def register_schedule_commands(workspace, paths):
     @schedule.command('add')
     @click.argument('task_id')
     @click.option('--at', required=True, help='ISO timestamp with explicit offset or Z.')
+    @click.option('--every', default=None, help='Elapsed interval, e.g. 15m, 6h, or 1d (minimum 1m).')
+    @click.option('--max-failures', default=3, type=click.IntRange(min=1), show_default=True,
+                  help='Pause recurring work after this many consecutive unsuccessful attempts.')
     @click.option('--directory', default=None)
     @click.pass_context
-    def add(ctx, task_id, at, directory):
-        """Authorize one unattended execution of a saved directed/session task."""
+    def add(ctx, task_id, at, every, max_failures, directory):
+        """Authorize unattended executions of a saved directed/session task."""
         try:
-            output(selected(ctx, directory).add(task_id, at))
+            output(selected(ctx, directory).add(task_id, at, every=every, max_failures=max_failures))
         except (ValueError, OSError) as exc:
             raise click.ClickException(str(exc)) from exc
 
@@ -76,7 +79,7 @@ def register_schedule_commands(workspace, paths):
     @click.option('--directory', default=None)
     @click.pass_context
     def resume(ctx, schedule_id, directory):
-        """Re-enable an unconsumed schedule; never retry an uncertain occurrence."""
+        """Re-enable pending work, resetting the failure streak; never replay uncertain work."""
         toggle(ctx, schedule_id, directory, True)
 
     @schedule.command('run-due')

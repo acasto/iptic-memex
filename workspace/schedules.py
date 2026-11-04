@@ -1,9 +1,10 @@
-"""One-off due-work dispatch; no resident loop or model-directed scheduling."""
+"""Externally triggered due-work dispatch; no resident loop or model-directed scheduling."""
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import math
+import re
 import time
 import uuid
 
@@ -29,6 +30,17 @@ def timestamp(value):
     return parsed.astimezone(timezone.utc)
 
 
+def interval_seconds(value):
+    """Parse elapsed intervals, with a one-minute minimum and one-year maximum."""
+    match = re.fullmatch(r'([1-9][0-9]*)(s|m|h|d)', str(value))
+    if not match:
+        raise ValueError('Interval must be a positive integer followed by s, m, h, or d')
+    seconds = int(match[1]) * {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}[match[2]]
+    if not 60 <= seconds <= 366 * 86400:
+        raise ValueError('Interval must be between one minute and 366 days')
+    return seconds
+
+
 def task_digest(task):
     data = json.dumps({'brief': task['brief'], 'spec': task['spec']},
                       sort_keys=True, ensure_ascii=False)
@@ -36,7 +48,7 @@ def task_digest(task):
 
 
 class ScheduleStore:
-    """Host-owned one-off schedules, each with one stable occurrence record."""
+    """Host-owned schedules with a stable current occurrence and archived outcomes."""
 
     def __init__(self, workspace, project_root):
         from pathlib import Path
@@ -71,7 +83,7 @@ class ScheduleStore:
         record = read_json(self.directory(schedule_id) / 'schedule.json')
         if not record:
             raise ValueError(f'Unknown schedule: {schedule_id}')
-        if record.get('version') != 1 or record.get('kind') != 'once':
+        if (record.get('version'), record.get('kind')) not in ((1, 'once'), (2, 'interval')):
             raise ValueError('Unsupported schedule version or kind')
         try:
             if record['id'] != schedule_id or record['project_root'] != self.project_root:
@@ -79,6 +91,14 @@ class ScheduleStore:
             identifier(record['task_id'])
             identifier(record['occurrence']['id'])
             timestamp(record['due_at'])
+            if record['kind'] == 'interval':
+                if type(record['interval_seconds']) is not int:
+                    raise ValueError('Invalid interval seconds')
+                interval_seconds(f"{record['interval_seconds']}s")
+                if (type(record['max_failures']) is not int or record['max_failures'] < 1
+                        or type(record['consecutive_failures']) is not int
+                        or record['consecutive_failures'] < 0):
+                    raise ValueError('Invalid recurrence failure limits')
             if (type(record['enabled']) is not bool or not isinstance(record['task_digest'], str)
                     or record['status'] not in (
                         'scheduled', 'claimed', 'completed', 'needs_attention', 'needs_review')
@@ -104,7 +124,10 @@ class ScheduleStore:
             raise ValueError('Scheduling currently supports directed/session tasks only')
         return task
 
-    def add(self, task_id, at):
+    def add(self, task_id, at, *, every=None, max_failures=3):
+        seconds = interval_seconds(every) if every is not None else None
+        if type(max_failures) is not int or max_failures < 1:
+            raise ValueError('max_failures must be a positive integer')
         due = timestamp(at).isoformat()
         task = self.task(task_id)
         self.tasks.bind_project(self.project_root)
@@ -115,12 +138,19 @@ class ScheduleStore:
                       project_root=self.project_root, task_digest=task_digest(task),
                       due_at=due, enabled=True, status='scheduled', created_at=now(),
                       occurrence={'id': 'occ-' + uuid.uuid4().hex, 'status': 'pending'})
+        if seconds is not None:
+            record.update(version=2, kind='interval', interval_seconds=seconds,
+                          max_failures=max_failures, consecutive_failures=0)
         self.save(record)
         return self.read(schedule_id)
 
     def set_enabled(self, schedule_id, enabled):
         with self.lock(self.directory(schedule_id) / 'edit.lock'):
             record = self.read(schedule_id)
+            if (enabled and record['kind'] == 'interval'
+                    and record['status'] == 'needs_attention'
+                    and record['occurrence']['status'] == 'pending'):
+                record.update(status='scheduled', consecutive_failures=0)
             if enabled and record['status'] != 'scheduled':
                 raise ValueError('Only an unconsumed schedule can resume; inspect or create a new one')
             record['enabled'] = enabled
@@ -145,15 +175,50 @@ class Scheduler:
             if result:
                 record['occurrence'].update(status='finished', run_id=result['run_id'],
                                             outcome=result['status'], finished_at=now())
-                record['status'] = ('completed' if result['status'] == 'completed'
-                                    else 'needs_attention')
                 if result.get('error'):
                     record['occurrence']['error'] = result['error']
+                if record['kind'] == 'interval':
+                    self._advance_interval(record, result)
+                else:
+                    record.update(enabled=False, status=(
+                        'completed' if result['status'] == 'completed' else 'needs_attention'))
             else:
-                record['status'] = 'needs_review'
+                record.update(status='needs_review', enabled=False)
                 record['occurrence'].update(status='uncertain', error=error)
-            record['enabled'] = False
             self.schedules.save(record)
+
+    def _advance_interval(self, record, result):
+        # Archive the transition before replacing the current occurrence. Reconciliation
+        # reuses this transition after a crash, rather than counting failure twice or
+        # assigning another identity to the next slot.
+        path = (self.schedules.directory(record['id']) / 'occurrences' /
+                (identifier(record['occurrence']['id']) + '.json'))
+        transition = read_json(path)
+        if not transition:
+            due = timestamp(record['due_at'])
+            seconds = record['interval_seconds']
+            skipped = max(0, int((self.clock() - due).total_seconds() // seconds))
+            next_due = due + timedelta(seconds=(skipped + 1) * seconds)
+            failures = (0 if result['status'] == 'completed' else
+                        record['consecutive_failures'] + 1)
+            pause = (result['status'] in ('cancelled', 'needs_input', 'interrupted') or
+                     failures >= record['max_failures'])
+            transition = dict(
+                occurrence=dict(record['occurrence'], due_at=record['due_at'],
+                                skipped_count=skipped,
+                                skipped_from=(due + timedelta(seconds=seconds)).isoformat()
+                                if skipped else None,
+                                skipped_through=(next_due - timedelta(seconds=seconds)).isoformat()
+                                if skipped else None),
+                next_due_at=next_due.isoformat(), consecutive_failures=failures, pause=pause,
+                next_occurrence={'id': 'occ-' + uuid.uuid4().hex, 'status': 'pending'})
+            write_json(path, transition)
+        record.update(last_occurrence=transition['occurrence'],
+                      occurrence=transition['next_occurrence'], due_at=transition['next_due_at'],
+                      consecutive_failures=transition['consecutive_failures'],
+                      status='needs_attention' if transition['pause'] else 'scheduled')
+        # A user pause during execution remains effective after completion.
+        record['enabled'] = record['enabled'] and not transition['pause']
 
     def _reconcile(self, record):
         """Only conclusive final artifacts allow reconciliation; never replay a claim."""
@@ -214,7 +279,8 @@ class Scheduler:
         for record in records:
             if token.is_cancelled() or len(runs) >= max_runs:
                 break
-            if not record['enabled'] or record['status'] != 'scheduled':
+            if (record['id'] in reconciled or not record['enabled']
+                    or record['status'] != 'scheduled'):
                 continue
             if timestamp(record['due_at']) > cutoff:
                 continue
@@ -257,8 +323,11 @@ class Scheduler:
                 token.cancel('Scheduled attempt cancelled')
             runs.append({'schedule_id': sid, 'task_id': task_id,
                          'run_id': result['run_id'], 'status': result['status']})
-        attention = (any(r['status'] != 'completed' for r in runs) or
-                     any(self.schedules.read(sid)['status'] != 'completed' for sid in reconciled))
+        attention = any(r['status'] != 'completed' for r in runs)
+        for sid in reconciled:
+            record = self.schedules.read(sid)
+            outcome = (record.get('last_occurrence') or record['occurrence']).get('outcome')
+            attention = attention or record['status'] == 'needs_review' or outcome != 'completed'
         status = ('cancelled' if token.is_cancelled() else 'needs_attention' if attention else
                   'completed' if runs or reconciled else 'deferred' if deferred else 'idle')
         return {'status': status, 'runs': runs, 'deferred': deferred, 'reconciled': reconciled}

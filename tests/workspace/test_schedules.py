@@ -237,3 +237,151 @@ def test_cli_roundtrip_without_models(setup, monkeypatch, tmp_path):
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)['status'] == 'completed'
     assert cli.invoke(main.cli, base + ['inspect', record['id']] + args).exit_code == 0
+
+
+def test_interval_catches_up_once_and_retains_cadence(setup):
+    schedules, scheduler, task = setup
+    record = schedules.add(task['id'], '2026-11-04T06:00:00Z', every='1h')
+    assert len(scheduler.run_due(max_runs=10)['runs']) == 1
+    saved = schedules.read(record['id'])
+    assert saved['due_at'] == '2026-11-04T13:00:00+00:00'
+    assert saved['last_occurrence']['due_at'] == '2026-11-04T06:00:00+00:00'
+    assert saved['last_occurrence']['skipped_count'] == 6
+    assert saved['last_occurrence']['skipped_from'] == '2026-11-04T07:00:00+00:00'
+    assert saved['last_occurrence']['skipped_through'] == '2026-11-04T12:00:00+00:00'
+    assert scheduler.run_due()['status'] == 'idle'
+    scheduler.clock = lambda: timestamp('2026-11-04T13:07:00Z')
+    assert scheduler.run_due()['status'] == 'completed'
+    saved = schedules.read(record['id'])
+    assert saved['due_at'] == '2026-11-04T14:00:00+00:00'
+    assert saved['last_occurrence']['skipped_count'] == 0
+    history = list((schedules.directory(record['id']) / 'occurrences').glob('*.json'))
+    assert len(history) == 2
+    assert len(schedules.tasks.read(task['id'])['attempts']) == 2
+
+
+@pytest.mark.parametrize('value', ['0m', '-1h', '1.5h', '59s', '367d', 'hour'])
+def test_interval_validation_has_no_side_effects(setup, value):
+    schedules, scheduler, task = setup
+    with pytest.raises(ValueError):
+        schedules.add(task['id'], '2026-11-04T06:00:00Z', every=value)
+    assert not schedules.root.exists()
+
+
+def test_recurring_failures_pause_and_resume_future_slot(setup):
+    schedules, scheduler, task = setup
+    record = schedules.add(task['id'], '2026-11-04T12:00:00Z', every='1h', max_failures=2)
+    scheduler.runner.worker_command = [sys.executable, '-c', WORKER.replace("'completed'", "'failed'")]
+    assert scheduler.run_due()['status'] == 'needs_attention'
+    assert schedules.read(record['id'])['enabled'] is True
+    scheduler.clock = lambda: timestamp('2026-11-04T13:00:00Z')
+    assert scheduler.run_due()['status'] == 'needs_attention'
+    saved = schedules.read(record['id'])
+    assert saved['status'] == 'needs_attention' and not saved['enabled']
+    assert saved['consecutive_failures'] == 2
+    assert saved['due_at'] == '2026-11-04T14:00:00+00:00'
+    next_id = saved['occurrence']['id']
+    scheduler.clock = lambda: timestamp('2026-11-04T15:00:00Z')
+    assert scheduler.run_due()['status'] == 'idle'
+    schedules.set_enabled(record['id'], True)
+    assert schedules.read(record['id'])['occurrence']['id'] == next_id
+    assert schedules.read(record['id'])['consecutive_failures'] == 0
+    scheduler.runner.worker_command = [sys.executable, '-c', WORKER]
+    assert scheduler.run_due()['status'] == 'completed'
+    assert len(schedules.tasks.read(task['id'])['attempts']) == 3
+
+
+@pytest.mark.parametrize('outcome', ['needs_input', 'cancelled', 'interrupted'])
+def test_recurring_attention_outcomes_pause_immediately(setup, outcome):
+    schedules, scheduler, task = setup
+    record = schedules.add(task['id'], '2026-11-04T12:00:00Z', every='1h', max_failures=10)
+    scheduler.runner.worker_command = [sys.executable, '-c', WORKER.replace("'completed'", repr(outcome))]
+    scheduler.run_due()
+    saved = schedules.read(record['id'])
+    assert not saved['enabled'] and saved['status'] == 'needs_attention'
+    assert saved['consecutive_failures'] == 1
+
+
+def test_backward_clock_and_pause_during_run(setup, monkeypatch):
+    schedules, scheduler, task = setup
+    record = schedules.add(task['id'], '2026-11-04T12:00:00Z', every='1h')
+    original = scheduler.runner.run
+    def run(*args, **kwargs):
+        result = original(*args, **kwargs)
+        schedules.set_enabled(record['id'], False)
+        scheduler.clock = lambda: timestamp('2026-11-04T10:00:00Z')
+        return result
+    monkeypatch.setattr(scheduler.runner, 'run', run)
+    assert scheduler.run_due()['status'] == 'completed'
+    saved = schedules.read(record['id'])
+    assert not saved['enabled']
+    assert saved['due_at'] == '2026-11-04T13:00:00+00:00'
+    schedules.set_enabled(record['id'], True)
+    assert scheduler.run_due()['status'] == 'idle'
+
+
+def test_recurring_transition_survives_crash_without_double_count(setup, monkeypatch):
+    schedules, scheduler, task = setup
+    record = schedules.add(task['id'], '2026-11-04T12:00:00Z', every='1h')
+    scheduler.runner.worker_command = [sys.executable, '-c', WORKER.replace("'completed'", "'failed'")]
+    original = schedules.save
+    def crash_after_archive(value):
+        if 'last_occurrence' in value:
+            raise OSError('Simulated crash before pointer update')
+        return original(value)
+    monkeypatch.setattr(schedules, 'save', crash_after_archive)
+    with pytest.raises(OSError, match='crash'):
+        scheduler.run_due()
+    transition = read_json(next((schedules.directory(record['id']) / 'occurrences').glob('*.json')))
+    monkeypatch.setattr(schedules, 'save', original)
+    scheduler.clock = lambda: timestamp('2026-11-05T12:00:00Z')
+    assert scheduler.run_due(max_runs=10)['status'] == 'needs_attention'
+    saved = schedules.read(record['id'])
+    assert saved['consecutive_failures'] == 1
+    assert saved['occurrence'] == transition['next_occurrence']
+    assert len(schedules.tasks.read(task['id'])['attempts']) == 1
+    # The newly due pending slot can run only on a separate invocation.
+    scheduler.run_due()
+    assert len(schedules.tasks.read(task['id'])['attempts']) == 2
+
+
+def test_cli_registers_interval(setup, tmp_path):
+    import main
+    from click.testing import CliRunner
+    schedules, scheduler, task = setup
+    result = CliRunner().invoke(main.cli, [
+        '--project', str(tmp_path), 'workspace', 'schedule', 'add', task['id'],
+        '--at', '2026-11-04T12:00:00Z', '--every', '15m', '--max-failures', '4',
+        '--directory', str(schedules.workspace.root)])
+    assert result.exit_code == 0, result.output
+    record = json.loads(result.output)
+    assert record['kind'] == 'interval' and record['interval_seconds'] == 900
+    assert record['max_failures'] == 4
+
+
+def test_uncertain_recurring_claim_does_not_hide_behind_previous_success(setup):
+    schedules, scheduler, task = setup
+    record = schedules.add(task['id'], '2026-11-04T12:00:00Z', every='1h')
+    assert scheduler.run_due()['status'] == 'completed'
+    saved = schedules.read(record['id'])
+    saved['status'] = 'claimed'
+    saved['occurrence']['status'] = 'claimed'
+    schedules.save(saved)
+    assert scheduler.run_due()['status'] == 'needs_attention'
+    assert schedules.read(record['id'])['status'] == 'needs_review'
+    with pytest.raises(ValueError, match='unconsumed'):
+        schedules.set_enabled(record['id'], True)
+    assert len(schedules.tasks.read(task['id'])['attempts']) == 1
+
+
+def test_success_resets_failure_streak_without_manual_resume(setup):
+    schedules, scheduler, task = setup
+    record = schedules.add(task['id'], '2026-11-04T12:00:00Z', every='1h')
+    scheduler.runner.worker_command = [sys.executable, '-c', WORKER.replace("'completed'", "'failed'")]
+    scheduler.run_due()
+    assert schedules.read(record['id'])['consecutive_failures'] == 1
+    scheduler.runner.worker_command = [sys.executable, '-c', WORKER]
+    scheduler.clock = lambda: timestamp('2026-11-04T13:00:00Z')
+    scheduler.run_due()
+    assert schedules.read(record['id'])['consecutive_failures'] == 0
+    assert schedules.read(record['id'])['enabled']
