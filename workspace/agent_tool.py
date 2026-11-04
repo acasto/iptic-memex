@@ -25,10 +25,11 @@ class WorkspaceAgentsToolAction(StepwiseAction):
             'lists IDs, results and remaining resources; send queues selected text for a future '
             'call; wait waits up to 30 seconds without model polling; followup continues a finished '
             'descendant session; cancel stops a descendant. Shared task limits apply to all calls. '
+            'ask requests user input with message and waits for a reply. '
             'No directories, permissions, or budgets can be supplied. Results are unverified claims.',
             'schema': {'properties': {
                 'operation': {'type': 'string', 'enum': [
-                    'spawn', 'status', 'send', 'wait', 'followup', 'cancel']},
+                    'spawn', 'status', 'send', 'wait', 'followup', 'cancel', 'ask']},
                 'target': {'type': 'string'}, 'message': {'type': 'string'},
                 'seconds': {'type': 'number', 'minimum': 0, 'maximum': 30},
             }}, 'auto_submit': True,
@@ -46,7 +47,11 @@ class WorkspaceAgentsToolAction(StepwiseAction):
             service, caller = access.service, access.agent_id
             operation, target = get_str(args, 'operation'), get_str(args, 'target')
             message = get_str(args, 'message') or content or ''
-            if operation == 'spawn':
+            if operation == 'ask':
+                if not message.strip():
+                    raise ValueError('Question must be nonempty')
+                result = {'reply': self.session.ui.ask_text(message)}
+            elif operation == 'spawn':
                 result = {'agent_id': service.start(message, parent_id=caller)}
             elif operation == 'status':
                 result = service.status(target)
@@ -63,3 +68,6 @@ class WorkspaceAgentsToolAction(StepwiseAction):
             return Completed({'ok': True, **result})
         except (ValueError, RuntimeError) as exc:
             return Completed({'ok': False, 'error': str(exc)})
+
+    def resume(self, state_token, response):
+        return Completed({'ok': True, 'reply': response})

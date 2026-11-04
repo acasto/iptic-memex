@@ -61,6 +61,30 @@ class TaskStore:
             raise ValueError(f'Unknown task: {task_id}')
         return record
 
+    def inspect(self, task_id):
+        """Report abandoned execution without modifying records or claiming new work."""
+        import fcntl
+        record = self.read(task_id)
+        if record['status'] != 'running':
+            return record
+        try:
+            stream = (self.directory(task_id) / 'owner.lock').open('r')
+        except FileNotFoundError:
+            stream = None
+        if stream is not None:
+            with stream:
+                try:
+                    fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    return self.read(task_id)
+                record = self.read(task_id)
+        if record['status'] == 'running':
+            record.update(status='interrupted', recorded_status='running',
+                          error='Execution owner exited without final status')
+            if record['attempts']:
+                record['attempts'][-1].update(status='interrupted')
+        return record
+
     def save(self, record):
         record = dict(record, updated_at=now())
         write_json(self.directory(record['id']) / 'task.json', record)
@@ -69,7 +93,7 @@ class TaskStore:
     def list(self):
         if not self.root.exists():
             return []
-        return [self.read(path.parent.name) for path in sorted(self.root.glob('*/task.json'))]
+        return [self.inspect(path.parent.name) for path in sorted(self.root.glob('*/task.json'))]
 
     @contextmanager
     def lease(self, task_id):

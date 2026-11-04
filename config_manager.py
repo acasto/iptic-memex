@@ -11,6 +11,7 @@ class ConfigManager:
     """
     
     def __init__(self, config_file: Optional[str] = None):
+        self.config_file = None
         self.base_config = self._load_configs(config_file)
         self.models = self._load_models()
         
@@ -40,7 +41,8 @@ class ConfigManager:
             file = self.resolve_file_path(config_file)
             if file is None:
                 raise FileNotFoundError(f'Could not find the custom config file at {config_file}')
-            config.read(config_file)
+            self.config_file = file
+            config.read(file)
             
         return config
 

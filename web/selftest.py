@@ -263,9 +263,12 @@ def run_selftest() -> int:
 
     # 7) Expired token should be rejected (manually age a token)
     # Start a new interaction to get a token
-    r4 = client.post("/api/chat", json={"message": "fake:ask"})
-    j4 = r4.json()
+    r4 = client.post("/api/action/start", json={"action": "fake_step", "args": {"argv": []}})
+    j4 = to_json(r4) or {}
     token2 = j4.get("state_token")
+    if not token2:
+        check(False, "Expiry setup yields a fresh interaction token")
+        return failures
     # Age state
     st = app._states.get(token2)
     if st:

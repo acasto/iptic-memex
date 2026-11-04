@@ -203,6 +203,11 @@ class UserCommandsRegistryAction(InteractionAction):
         for name, cfg in list(reg.items()):
             for alias in cfg.get('aliases', ()):
                 reg[alias] = cfg
+        reg['workspace'] = {
+            'help': 'Attach CLI chat to durable workspace tasks',
+            'sub': {name: {'type': 'action', 'name': 'chat_workspace', 'args': [name]}
+                    for name in ('attach', 'start', 'detach', 'list', 'inspect', 'import', 'reply', 'cancel')},
+        }
         return reg
 
     def _merge_user_commands(self) -> None:

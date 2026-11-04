@@ -11,6 +11,8 @@ from app.session_host import SessionHost
 from app.session_services import HeadlessServices
 from core.cancellation import CancellationToken
 from core.runtime import RunRequest
+from core.runtime.interaction import InteractionService
+from workspace.questions import Questions
 from core.runtime.contracts import RunStopped
 from workspace.state import atomic_write, now, write_json
 from workspace.tools import WorkspaceAccess
@@ -31,7 +33,8 @@ class TaskService:
     hard timeout enforcement outside these cooperatively cancelled threads.
     """
 
-    def __init__(self, store, run_id, builder, project, profile, prompt, *, deadline=None):
+    def __init__(self, store, run_id, builder, project, profile, prompt, *, deadline=None, user_input=False):
+        self.user_input = user_input
         self.store, self.run_id, self.builder = store, run_id, builder
         from workspace.tasks import TaskStore
         TaskStore(store).bind_project(project.root)
@@ -120,7 +123,7 @@ class TaskService:
         if active >= self.profile.concurrency:
             raise ValueError('Task concurrency ceiling reached; inspect or wait for existing work')
 
-    def start(self, message, *, parent_id=None):
+    def start(self, message, *, parent_id=None, contexts=()):
         """Start isolated work in the same project and shared task allowance."""
         if not isinstance(message, str) or not message.strip() or len(message) > 32000:
             raise ValueError('Agent task must contain 1–32000 characters')
@@ -141,6 +144,9 @@ class TaskService:
         session = None
         try:
             session = self._build(agent_id, parent_id)
+            for kind, data in contexts:
+                if session.add_context(kind, data) is None:
+                    raise ValueError('Could not attach task input context')
             host = SessionHost(session)
             with self._lock:
                 self._agents[agent_id]['host'] = host
@@ -212,6 +218,8 @@ class TaskService:
                 RunRequest(message=message, execute_tools=True, max_calls=self.profile.calls,
                            input_limit=limit),
                 on_event=lambda event: self._observe(agent_id, generation, event),
+                interactions=InteractionService(Questions(self.store, self.run_id).handler(
+                    owner_token, self.deadline)) if self.user_input else None,
                 parent_run_id=(parent_handle.snapshot()['run_id'] if parent_handle else None),
                 parent_cancellation=owner_token)
             node['handle'] = handle

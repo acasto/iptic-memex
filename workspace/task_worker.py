@@ -20,9 +20,11 @@ def run_session(spec, store, builder):
                                'config_path': Path(spec['project']['config_path'])
                                if spec['project'].get('config_path') else None})
     service = TaskService(store, spec['run_id'], builder, project, profile, strategy.prompt,
-                          deadline=spec['deadline_monotonic'])
+                          deadline=spec['deadline_monotonic'], user_input=spec.get('user_input', False))
     try:
-        root = service.start(spec['brief'])
+        from workspace.chat_snapshot import as_context
+        contexts = ([as_context(spec['chat_snapshot'])] if spec.get('chat_snapshot') else [])
+        root = service.start(spec['brief'], contexts=contexts)
         while True:
             state = service.status()
             if all(n['status'] not in ('starting', 'running') for n in state['agents']):

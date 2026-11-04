@@ -105,7 +105,7 @@ def register_task_commands(workspace, paths, task_message):
         """Show task inputs, attempts, and latest saved state without model calls."""
         try:
             _, store = paths(ctx, directory)
-            record = TaskStore(store).read(task_id)
+            record = TaskStore(store).inspect(task_id)
             if record['attempts']:
                 run_id = record['attempts'][-1]['run_id']
                 record['latest_state'] = read_json(store.run_dir(run_id) / 'task-state.json')

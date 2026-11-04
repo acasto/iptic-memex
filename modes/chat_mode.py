@@ -10,7 +10,10 @@ from utils.output_utils import format_cli_label
 class ChatMode(InteractionMode):
     def __init__(self, session, builder=None):
         self.session = session
+        self.session.cli_workspace_enabled = True
         self.builder = builder  # For model switching
+        self.session.chat_config_file = getattr(
+            getattr(builder, "config_manager", None), "config_file", None)
         
         # Don't cache params - get them fresh each time
         self.utils = self.session.utils
@@ -87,6 +90,16 @@ class ChatMode(InteractionMode):
             pass
 
     def start(self):
+        """Own attached tasks until the chat exits, including exceptions and /quit."""
+        try:
+            return self._loop()
+        finally:
+            attachment = getattr(self.session, 'chat_workspace', None)
+            if attachment is not None:
+                attachment.close()
+            self.session.cli_workspace_enabled = False
+
+    def _loop(self):
         """Start the chat interaction loop"""
         self.utils.tab_completion.run('chat')
         self.utils.tab_completion.set_session(self.session)
@@ -100,6 +113,10 @@ class ChatMode(InteractionMode):
                 self.process_contexts.process_contexts_for_user(auto_submit=False)
 
             try:
+                attachment = getattr(self.session, 'chat_workspace', None)
+                if attachment is not None:
+                    for message in attachment.notifications():
+                        self.output.write(message)
                 user_input = self.get_user_input()
 
                 self.utils.output.write()

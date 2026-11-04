@@ -123,6 +123,9 @@ def test_writable_project_does_not_allow_editing_control_records(builder, tmp_pa
             (service.store.root / directory).mkdir(exist_ok=True)
             assert fs.validate_path(str(service.store.root / directory / 'record.json'),
                                     operation='write') is None
+        assert fs.validate_path(str(service.store.run_dir(service.run_id) /
+                                    'questions' / 'question-1' / 'reply.json'),
+                                operation='write') is None
         assert not fs.delete_directory(str(service.store.root), recursive=True, force=True)
         assert not fs.rename(str(service.store.root), str(tmp_path / 'moved'), force=True)
         docker = session.get_action('assistant_docker_tool')
@@ -195,3 +198,61 @@ def test_task_helpers_inherit_selected_model_and_cannot_switch_profiles(builder,
             child_options(service._agents[root]['host'].session, {'model': 'worker-model'})
     finally:
         service.close()
+
+
+def test_agent_question_reaches_user_and_continues(builder, tmp_path, monkeypatch):
+    from workspace.questions import Questions
+    class AskingProvider(DelegatingProvider):
+        def chat(self):
+            self.calls += 1
+            self.tools = []
+            if self.calls == 1:
+                self.tools = [{'id': 'ask-1', 'name': 'agents', 'arguments': {
+                    'operation': 'ask', 'message': 'Which source?'}}]
+                return ''
+            return 'Answer after user reply'
+    monkeypatch.setattr(ComponentRegistry, 'load_provider_class', lambda self, name: AskingProvider)
+    service = make_service(builder, tmp_path)
+    service.user_input = True
+    try:
+        root = service.start('Investigate')
+        questions = Questions(service.store, service.run_id)
+        until = time.monotonic() + 3
+        while not questions.pending():
+            assert time.monotonic() < until
+            time.sleep(.01)
+        question = questions.pending()[0]
+        questions.reply(question['id'], 'Primary sources')
+        state = finish(service, root)
+        assert state['agents'][0]['status'] == 'completed', state
+        chat = service._agents[root]['host'].session.get_context('chat').get('all')
+        assert 'Primary sources' in str(chat)
+    finally:
+        service.close()
+
+
+def test_chat_workspace_commands_dispatch_and_remain_opt_in(builder, tmp_path, monkeypatch):
+    from workspace.chat import ChatWorkspace
+    session = builder.build(mode='internal', project_context=resolve_project(tmp_path))
+    try:
+        from types import SimpleNamespace
+        session.ui = SimpleNamespace(emit=lambda *args: None)
+        action = session.get_action('chat_workspace')
+        assert not action.run(['attach', str(tmp_path / 'records')]).payload['ok']
+        session.cli_workspace_enabled = True
+        session.chat_config_file = None
+        commands = session.get_action('chat_commands')
+        assert commands.run('/workspace attach ' + str(tmp_path / 'records'))
+        assert session.chat_workspace.project.root == tmp_path
+        started = []
+        def start(self, brief, **kwargs):
+            started.append((brief, kwargs))
+            return 'task-example'
+        monkeypatch.setattr(ChatWorkspace, 'start', start)
+        assert commands.run('/workspace start --profile local.toml Check retries')
+        assert started == [('Check retries', {'detached': False, 'profile': 'local.toml'})]
+        assert commands.run('/workspace detach --chat-last 4 --profile local.toml Check again')
+        assert started[-1] == ('Check again', {
+            'detached': True, 'profile': 'local.toml', 'chat_last': 4})
+    finally:
+        session.close()

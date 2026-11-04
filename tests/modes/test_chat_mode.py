@@ -135,3 +135,18 @@ def test_chat_mode_single_turn_non_stream_captures_output():
     out = "".join(m + e for (m, e) in mode.output.lines)
     assert "> Assistant:" in out
     assert "assistant reply" in out
+
+
+def test_chat_closes_attachment_on_quit(monkeypatch):
+    from types import SimpleNamespace
+    session = Session()
+    mode = ChatMode(session)
+    closed = []
+    session.chat_workspace = SimpleNamespace(close=lambda: closed.append(True))
+    def quit_loop():
+        raise SystemExit()
+    monkeypatch.setattr(mode, '_loop', quit_loop)
+    with pytest.raises(SystemExit):
+        mode.start()
+    assert closed == [True]
+    assert session.cli_workspace_enabled is False
