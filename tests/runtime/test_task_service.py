@@ -119,8 +119,8 @@ def test_writable_project_does_not_allow_editing_control_records(builder, tmp_pa
         session = service._agents[root]['host'].session
         fs = session.get_action('assistant_fs_handler')
         assert fs.validate_path(str(tmp_path / 'site.html'), operation='write')
-        for directory in ('tasks', 'runs', 'notes'):
-            (service.store.root / directory).mkdir(exist_ok=True)
+        for directory in ('tasks', 'runs', 'notes', 'schedules'):
+            assert (service.store.root / directory).is_dir()
             assert fs.validate_path(str(service.store.root / directory / 'record.json'),
                                     operation='write') is None
         assert fs.validate_path(str(service.store.run_dir(service.run_id) /
@@ -131,6 +131,7 @@ def test_writable_project_does_not_allow_editing_control_records(builder, tmp_pa
         docker = session.get_action('assistant_docker_tool')
         mounts = docker._mount_args()
         assert f'{service.store.root / "runs"}:/workspace/records/runs:ro' in mounts
+        assert f'{service.store.root / "schedules"}:/workspace/records/schedules:ro' in mounts
         assert service.store.publish(service.run_id, root, 'Finding', 'Host-owned publication', [])
     finally:
         service.close()
@@ -256,3 +257,26 @@ def test_chat_workspace_commands_dispatch_and_remain_opt_in(builder, tmp_path, m
             'detached': True, 'profile': 'local.toml', 'chat_last': 4})
     finally:
         session.close()
+
+
+def test_unattended_task_question_stops_without_waiting(builder, tmp_path, monkeypatch):
+    from dataclasses import asdict
+    from workspace.task_worker import run_session
+    class AskingProvider(DelegatingProvider):
+        def chat(self):
+            self.tools = [{'id': 'ask-user', 'name': 'agents', 'arguments': {
+                'operation': 'ask', 'message': 'Needs human choice'}}]
+            return ''
+    monkeypatch.setattr(ComponentRegistry, 'load_provider_class', lambda *args: AskingProvider)
+    project = asdict(resolve_project(tmp_path))
+    project['root'] = str(project['root'])
+    store = WorkspaceStore(tmp_path / 'records')
+    run = store.create_run('Task', {})
+    start = time.monotonic()
+    result = run_session({
+        'profile': asdict(ExecutionProfile(model='worker-model', timeout=30)),
+        'strategy': asdict(Strategy()), 'project': project, 'run_id': run['id'],
+        'brief': 'Ask the user', 'deadline_monotonic': time.monotonic() + 30,
+        'user_input': False}, store, builder)
+    assert result['status'] == 'needs_input', result
+    assert time.monotonic() - start < 5

@@ -45,6 +45,11 @@
   or synthesis policy belongs in the shared task service. Task-internal helpers
   inherit the selected model and shared allowance. Protect host-owned control
   records even when project writes are enabled. See `docs/workspace-tasks.md`.
+- One-off schedules: `workspace/schedules.py` owns due-time checks and durable
+  occurrence claims; `modes/workspace_schedule_commands.py` exposes the external
+  `run-due` trigger. No resident scheduler or core policy. Task leases arbitrate
+  manual/scheduled attempts; uncertain claims never replay automatically. Scheduled
+  execution is unattended. Prepare read-only control roots before Docker mounts.
 
 ## Build, Run, and Dev
 - Python 3.11+. Use a virtual env.

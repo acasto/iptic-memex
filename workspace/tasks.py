@@ -7,6 +7,10 @@ import uuid
 from workspace.state import identifier, now, read_json, write_json
 
 
+class TaskBusy(ValueError):
+    """Another execution owns the task lease."""
+
+
 class TaskStore:
     """A task survives executions; an exclusive local lease owns each attempt."""
 
@@ -104,7 +108,7 @@ class TaskStore:
             try:
                 fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
-                raise ValueError('Task already has a live execution owner') from exc
+                raise TaskBusy('Task already has a live execution owner') from exc
             # Closing this descriptor releases our reference; do not explicitly
             # unlock a lease still inherited by a worker after a supervisor crash.
             yield stream.fileno()

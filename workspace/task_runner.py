@@ -31,11 +31,17 @@ class TaskRunner:
         project_data['config_path'] = str(project.config_path) if project.config_path else None
         return self.tasks.create(brief, dict(experiment, project=project_data, config_file=config_file))
 
-    def run(self, task_id, *, on_started=None, cancellation=None):
+    def run(self, task_id, *, on_started=None, cancellation=None, before_start=None,
+            execution_origin=None, unattended=False):
         """Persist failures only while holding this task's exclusive ownership lease."""
         with self.tasks.lease(task_id) as lease_fd:
+            # Caller admission/claim runs under task ownership, before any attempt
+            # mutation. A declined claim must not mark the task failed.
+            if before_start:
+                before_start()
             try:
-                return self._run_owned(task_id, lease_fd, on_started, cancellation)
+                return self._run_owned(task_id, lease_fd, on_started, cancellation,
+                                       execution_origin, unattended)
             except Exception as exc:
                 task = self.tasks.read(task_id)
                 task.update(status='failed', error=str(exc))
@@ -47,11 +53,14 @@ class TaskRunner:
                 self.tasks.save(task)
                 raise
 
-    def _run_owned(self, task_id, lease_fd, on_started, cancellation):
+    def _run_owned(self, task_id, lease_fd, on_started, cancellation,
+                   execution_origin=None, unattended=False):
         task = self.tasks.read(task_id)
         if task['attempts']:
             (self.tasks.directory(task_id) / 'cancel').unlink(missing_ok=True)
         spec = dict(task['spec'])
+        if unattended:
+            spec['user_input'] = False
         self.tasks.bind_project(spec['project']['root'])
         strategy, profile = Strategy(**spec['strategy']), ExecutionProfile(**spec['profile'])
         validate_experiment(strategy, profile)
@@ -65,6 +74,7 @@ class TaskRunner:
             self.store.update_run(prior['run_id'], status='interrupted', phase='finished')
         record = self.store.create_run(task['brief'], dict(
             kind='task', task_id=task_id, repository=spec['project']['root'],
+            execution_origin=execution_origin,
             strategy=spec['strategy'], profile=spec['profile'],
             run_timeout_seconds=profile.timeout, synthesis_timeout_seconds=0))
         run_id = record['id']
@@ -72,7 +82,7 @@ class TaskRunner:
         task.update(status='running', owner_pid=os.getpid())
         self.tasks.save(task)
         spec.update(task_id=task_id, run_id=run_id, directory=str(self.store.root),
-                    brief=task['brief'], deadline_monotonic=time.monotonic() + profile.timeout)
+                    brief=task['brief'], execution_origin=execution_origin, deadline_monotonic=time.monotonic() + profile.timeout)
         write_json(self.store.run_dir(run_id) / 'experiment.json', spec)
         cleanup = WorkspaceEngine(self.store, WorkspaceSettings(repository=spec['project']['root']))
         process, result, reason = None, {}, None

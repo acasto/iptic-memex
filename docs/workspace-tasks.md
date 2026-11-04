@@ -125,8 +125,11 @@ the same task and is inherited by the worker if its supervisor exits.
 The CLI owns a process group and enforces the profile deadline with cancellation
 and bounded cleanup grace. Worker threads use SessionHost for live continuity;
 they do not survive process exit. Interrupted work retains artifacts and gets an
-explicit terminal state. CLI chat attachment and attempt-scoped questions are available below. Scheduling
-and restart restoration remain later phases.
+explicit terminal state. CLI chat attachment, attempt-scoped questions, and one-off
+scheduled repeats are available below. Recurring schedules and checkpoint
+continuation remain later increments. See the
+[proposed scheduling and continuation plan](#proposed-next-work-scheduling-and-continuation)
+for the next design increments.
 
 Task stores bind to one canonical project root. A workspace already bound to a
 different root, or containing legacy runs for another repository, is rejected;
@@ -249,3 +252,374 @@ Question replies and closure share a lock; a reply arriving after closure is
 rejected. Dead attempts do not offer pending questions through chat. Ordinary
 filesystem and command tools cannot write question/reply records, which remain
 inside the host-owned run directory even when project writes are enabled.
+
+## One-off scheduled task repeats
+
+The first scheduling increment is available for directed/session tasks. It runs
+saved tasks once at or after a specified time, when an external timer or a person
+invokes `run-due`. No resident process watches the clock. Recurring intervals,
+calendar schedules, evaluation, notifications, and checkpoint continuation remain
+future work in the design below.
+
+```bash
+memex --project /path/to/project workspace schedule add TASK_ID --at 2026-11-05T06:00:00-05:00
+memex --project /path/to/project workspace schedule list
+memex --project /path/to/project workspace schedule inspect SCHEDULE_ID
+memex --project /path/to/project workspace schedule pause SCHEDULE_ID
+memex --project /path/to/project workspace schedule resume SCHEDULE_ID
+memex --project /path/to/project workspace schedule run-due --dry-run
+memex --project /path/to/project workspace schedule run-due --max-runs 1 --max-seconds 600
+```
+
+All commands emit JSON. `--directory` selects a different workspace record store.
+The saved task must belong to the selected project. Add authorizes one unattended
+attempt using that task's saved brief, strategy, and execution profile; it does
+not execute immediately. A timestamp must include an explicit offset or `Z` and
+is stored in UTC. Use an absolute project path when invoking from cron or a timer.
+The command does not install or change external timers.
+
+`run-due` defaults to one attempt and a 600-second tick allowance. It starts only
+an attempt whose complete profile timeout plus ten seconds of cleanup allowance
+fits in the time remaining. Otherwise that schedule remains pending. Due work is
+ordered by timestamp and schedule ID, and the due-time cutoff is frozen at tick
+start. Work becoming due during execution waits for a later invocation. Overdue
+one-off work runs once when next eligible; it is never replayed for each missed poll.
+
+A workspace dispatch lock prevents overlapping ticks. A task lease prevents a
+scheduled attempt from overlapping a manual repeat. Busy tasks are deferred and
+other due tasks may run. Pause prevents a future claim but does not cancel an
+active attempt. Cancelling an attempt stops further dispatch in that invocation.
+The foreground scheduler forwards SIGTERM through bounded task cancellation.
+
+Each schedule has a stable occurrence ID and stores the digest of its authorized
+task inputs. Changed saved inputs require a newly authorized schedule. Claims are
+persisted before launch, and run records contain occurrence provenance. A later
+poll can reconcile a conclusive terminal result after a scheduler crash. If a
+claimed occurrence still has a live owner, the tick returns busy. If its outcome
+is uncertain, it becomes `needs_review` without automatic replay. Inspection and
+dry-run do not perform this reconciliation or otherwise mutate records.
+
+One-off occurrences are consumed whether successful or not. Completed attempts
+set the schedule to `completed`; incomplete, failed, cancelled, or input-requiring
+attempts set it to `needs_attention`. Neither executes again automatically.
+`resume` only re-enables an unconsumed schedule. Inspect uncertain work before
+explicitly creating another schedule; doing so authorizes another attempt and
+could repeat side effects.
+
+Scheduled execution disables live question waiting even when the task originally
+came from chat. A question produces `needs_input`; there is no automatic answer,
+terminal prompt, or replay of a dead action. Saved input settings are not changed.
+Schedule records live under the protected `schedules/` directory and remain
+read-only to worker file/command tools, including with project writes allowed.
+
+Exit status is 0 for idle, dry-run, completed, or deferred ticks; 2 for a busy
+scheduler; 1 for an error or attention-requiring outcome encountered in this tick;
+and 130 for cancellation. JSON distinguishes those cases. Previously consumed
+failures are visible in list/inspect but do not make every later idle poll fail.
+There is no claim of exactly-once external side effects after a crash.
+
+## Proposed next work: scheduling and continuation
+
+Design draft, 2026-11-04. This section describes the broader target design;
+the one-off scheduling subset documented above is now implemented.
+The Phase E baseline is commit `bbddb9f`. These are incremental work
+packages, not a commitment to build a resident service or restore live processes.
+
+The initial use cases are daily briefs, periodic site-change checks, update
+availability checks, and later a task asking to continue at a future time. An
+external cron job, timer, or manual invocation supplies the wakeup. Memex stores
+what is due and performs bounded work when invoked. With a fifteen-minute trigger,
+work due at 10:07 normally becomes eligible at the 10:15 invocation; a stopped
+machine or failed trigger delays it further. There is no timing guarantee between
+invocations and no implicit polling from ordinary chat or completion startup.
+
+### Boundaries to preserve
+
+- Put schedule records, due-time calculation, occurrence claims, observation state,
+  and continuation decisions in `workspace/`. CLI adapters belong in `modes/`.
+- Reuse `TaskRunner`, task leases, execution profiles, and the existing runtime.
+  Do not introduce another provider/tool loop or import workspace from shared core.
+- Keep `SessionHost` an owner of live sessions. Schedule policy, persistence, and
+  restart recovery do not belong in it.
+- Treat prompts and evaluator output as policy suggestions. They cannot grant
+  tools, models, roots, writes, budget, notification destinations, or wake frequency.
+- Inspection and dry runs are passive: no model initialization, claim acquisition
+  that reserves work, schedule advancement, or task execution.
+- Keep new records host-owned. Extend `workspace/scope.py` and its filesystem and
+  Docker tests before exposing any new control directory to worker tools.
+- Preserve explicit `repeat` semantics. Continuing from a checkpoint must be an
+  explicit operation; existing repeat must not silently become continuation.
+
+### Plan 1: an externally triggered due-work command
+
+The first usable increment automates a saved task in the same way a person would
+invoke `workspace task repeat`. It requires no evaluator, observation comparison,
+notification service, or restart restoration.
+
+Proposed interface (names/options remain subject to implementation review):
+
+```text
+memex --project /project workspace schedule add TASK_ID --at ISO_TIMESTAMP
+memex --project /project workspace schedule add TASK_ID --every 24h --at ISO_TIMESTAMP
+memex --project /project workspace schedule list
+memex --project /project workspace schedule inspect SCHEDULE_ID
+memex --project /project workspace schedule pause SCHEDULE_ID
+memex --project /project workspace schedule resume SCHEDULE_ID
+memex --project /project workspace schedule run-due --max-runs 1 --max-seconds 600
+memex --project /project workspace schedule run-due --dry-run
+```
+
+Scheduling is an explicit grant to execute the saved task/profile unattended.
+Registering a schedule does not immediately run it. The first version supports
+one-off timestamps with explicit offsets and elapsed-time intervals anchored to
+a timestamp. Persist timestamps in UTC. A 24-hour interval is not a promise of
+6am local time across daylight-saving changes. Local calendar schedules, IANA
+time zones, and their ambiguous/missing-time rules are a later small increment.
+No arbitrary cron-expression parser is needed for the first slice.
+
+`run-due` checks a single explicitly selected project/store, runs eligible work
+in the foreground, waits for bounded cleanup, writes outcomes, and exits. With
+nothing due, it exits promptly without assembling a model session. First-version
+execution is sequential. The external scheduler only needs this one command;
+Memex does not install or edit system cron/timer configuration automatically.
+
+#### Records and ownership
+
+Use a versioned `schedules/` control directory in the bound workspace. A schedule
+record contains its ID, task ID, enabled/paused state, recurrence definition,
+next due time, revision, selected execution limits, and creation/update timestamps.
+The existing task specification remains the source of its brief, strategy, and
+profile. Record the exact schedule revision and effective task-spec digest for
+each occurrence. Editing execution authority later must be explicit and auditable;
+resuming a schedule does not silently adopt a different task/profile. As with
+manual repeat, source files and installation/provider configuration remain live;
+a saved specification is not a frozen execution environment. Record effective
+configuration provenance without copying credentials into schedule records.
+
+An occurrence is one scheduled opportunity to execute, separate from a task and
+its attempts. Persist an ID, schedule/revision, nominal due time, claim state,
+linked task/run IDs, execution outcome, and any control error. The identity is
+stable for that schedule revision and due slot. A later poll must find the same
+occurrence rather than invent a second one for the same slot.
+
+Use a workspace scheduler lock for overlapping `run-due` invocations and short
+record locks for schedule edits. Do not hold an edit lock during model execution.
+The existing task lease remains authoritative for execution, including manual
+repeat attempts. A busy task is deferred without consuming its due occurrence or
+blocking other eligible schedules. Recheck pause/revision immediately before a
+claim; pausing prevents future claims but does not imply cancelling active work.
+Cancelling an active attempt continues to use the existing task control path.
+
+Persist the occurrence claim before dispatch. Add optional caller provenance to
+`TaskRunner.run` so the occurrence ID is written into the run record at creation,
+not only afterward in a callback. This is workspace bookkeeping, not a new runtime
+policy. It lets a later invocation reconcile a crash between creating the run and
+linking it back to the occurrence. Do not infer ownership from a PID alone.
+
+#### One invocation
+
+1. Resolve the project/store and validate schedule records without loading models.
+2. Obtain the scheduler lock; if another invocation owns it, return a distinct
+   structured `busy` result without launching work.
+3. Reconcile previously claimed occurrences using saved run outcomes and task
+   leases. If an earlier scheduled occurrence still has a live owner, return busy
+   rather than dispatching more work after a supervisor loss. A claim with no
+   conclusive terminal outcome
+   becomes `needs_review`; do not replay it automatically.
+4. Select due, enabled schedules in a stable order, respecting task ownership,
+   tick limits, and schedule limits. Persist each claim before execution.
+5. Start a new ordinary attempt with occurrence provenance. Supervise it with the
+   existing timeout/cancellation behavior. No model call is needed just to decide
+   whether a timestamp is due.
+6. Persist the occurrence outcome and advance its schedule according to the
+   recurrence policy. Release ownership and exit after cleanup.
+
+Freeze the selection cutoff at invocation start. Work newly due during this tick
+waits for a later invocation; an evaluator cannot create a same-tick execution
+loop. Do not start an attempt whose allowed runtime cannot fit in the remaining
+tick allowance, including cleanup grace. Use monotonic time for live deadlines
+and UTC wall time for persisted due times. Define exit codes and JSON output for
+`idle`, `busy`, completed work, and failures before implementing the CLI.
+
+#### Missed runs, failure, and unattended input
+
+The proposed default is one catch-up occurrence for missed intervals, followed by
+the next future slot on the original cadence. Record the skipped range/count;
+do not replay every missed interval or shift the cadence to completion time.
+Occurrence identity prevents a backward wall-clock adjustment from rerunning an
+already consumed slot. A large forward jump follows the catch-up policy.
+
+A failed occurrence is still consumed; the next regular occurrence is distinct
+from retrying it. Permit future regular checks under a configured consecutive-
+failure ceiling, then pause for attention. Unknown side-effect outcomes and
+ambiguous crash windows pause immediately. Default to no automatic same-occurrence
+retry. Cancellation pauses further automatic work until explicitly resumed.
+
+Use fresh unattended interaction policy even when the saved task was created in
+chat with `user_input=True`. A scheduled attempt must not spend its whole allowance
+waiting for a terminal that does not exist. Record `needs_input` and pause for the
+user; do not fabricate a reply or carry forward a stale interaction ID. Later
+continuation support can accept an answer as new input to a new attempt.
+
+First-slice limits include per-attempt profile ceilings, maximum attempts per tick,
+a tick deadline, a minimum allowed interval, and a consecutive-failure ceiling.
+Exact defaults are implementation choices to document before release. Recurrent
+monitoring is intentionally long-lived, but each invocation remains bounded.
+
+#### First-slice acceptance checks
+
+- With a fake clock, idle/dry-run/list/inspect make zero model calls and no changes.
+- Two concurrent invocations cannot dispatch the same occurrence; manual repeat
+  and a scheduled attempt cannot both acquire the same task lease.
+- Simulated crashes before claim, after claim, around run creation, and after a
+  result write either reconcile conclusively or stop for review without replay.
+- Busy tasks defer fairly; pause/revision races cannot launch an obsolete claim.
+- Missed intervals, forward/backward clock changes, one-off completion, failures,
+  cancellation, and an insufficient remaining tick allowance have explicit tests.
+- Chat-created tasks run unattended when scheduled and stop cleanly on input needs.
+- Schedule/occurrence records are read-only to file and command tools, including
+  nested helpers; ordinary chat/completion/agent suites remain unchanged.
+
+### State between runs: execution and task disposition
+
+Reserve a separate representation for what the work means. A successful provider
+run is not proof that a user goal is done, that a site changed, or that another
+attempt is justified. These concepts should not be packed into `RunOutcome.status`.
+
+| Record | Answers |
+| --- | --- |
+| Execution outcome | Did this attempt complete, fail, time out, or need input? |
+| Observation/checkpoint | What was learned, what changed, and what remains? |
+| Task disposition | Should we wait, continue, finish, or ask for attention? |
+| Notification event | Is there something the user requested to hear about? |
+
+Proposed dispositions are `wait_for_schedule`, `continue_after`, `complete`, and
+`needs_attention`, each with a reason and source attempt. Store observations and
+decisions as bounded, versioned artifacts with references to supporting evidence.
+Keep a pointer to the latest accepted state; do not grow an unbounded prompt by
+appending the entire attempt history. A failed fetch is an unknown observation,
+not evidence that a monitored site is unchanged.
+
+For example:
+
+| Use case | Saved observation | Intended decision |
+| --- | --- | --- |
+| Daily brief | Covered period, sources, resulting brief | Publish the brief when due; wait for the next scheduled period |
+| Site monitor | Previous successful content digest and relevant extracted facts | If unchanged, wait quietly; if meaningfully changed, notify |
+| Update check | Last observed release and last notified release | Notify for a newly relevant release once; otherwise wait |
+| Continuing investigation | Progress, unresolved questions, evidence, next action | Continue only when justified and within remaining allowances |
+
+The first scheduling slice records execution outcomes only. It must not claim to
+understand these dispositions yet. A subsequent state/policy slice adds them
+without redesigning occurrence identity or the execution loop.
+
+### Optional evaluation and notification policy
+
+An optional separate evaluation call can consume the previous accepted state,
+current attempt outcome, bounded evidence, and the user's saved policy prompt.
+For example: “If nothing meaningful changed, defer until the next scheduled check
+and stay quiet.” Another task may explicitly request a no-change report. Preserve
+that preference instead of imposing a universal notification behavior.
+
+Prefer deterministic comparisons where sufficient; do not require a judge call
+for every timer event. When evaluation is enabled, give it a separate scratch
+session with no side-effect tools and a strict structured-output schema. Save its
+prompt/version, inputs, result, and validation outcome. Invalid, failed, or
+ambiguous decisions become `needs_attention`, not an automatic rerun.
+
+Reserve evaluation calls inside the occurrence's total call/time allowance before
+starting work. A worker that exhausts its portion cannot cause an unbudgeted judge
+call. Aggregate accounting must include helpers and evaluators; do not add a
+hidden mandatory model pass to ordinary completion or task execution.
+
+The host validates proposed state updates and wake times. A model cannot increase
+its limits, unpause a schedule, or choose a notification destination. Commit the
+accepted observation, disposition, and any notification intent under one state
+revision so a later poll cannot confuse old observations with a new decision.
+
+Notification delivery is a separate adapter. Begin with a local durable outbox
+and inspectable events; no email, push, or other external transport is presumed.
+Deduplicate event creation using the occurrence/decision ID and persist delivery
+receipts separately. Delivery failure must not rerun the investigation. External
+exactly-once delivery requires transport support; otherwise disclose possible
+duplicates at uncertain delivery boundaries. No-change monitoring stays quiet
+unless the user explicitly chose periodic reports; failures and required action
+remain distinguishable from “no change.”
+
+### Plan 2: checkpoint-based continuation and recovery
+
+Build this after scheduled repeat is useful. The same due-work command can dispatch
+both recurring occurrences and explicit one-off wakes. It must not interpret every
+`incomplete` or `failed` outcome as a reason to continue.
+
+A checkpoint should contain a bounded progress summary, evidence/artifact
+references, unresolved work, a concrete next action, known completed side effects,
+uncertain operations, and provenance linking it to its source attempt. Record the
+requested wake time/reason separately from the host-approved wake time and limits.
+The host, not the model, allocates checkpoint IDs and commits accepted revisions.
+
+A continuation starts a new supervised attempt under the existing task identity,
+linked to the parent attempt and checkpoint. Assemble a new session using the
+original brief, explicitly selected context, and the accepted checkpoint as
+background. Revalidate the project, profile, tool restrictions, and available
+artifacts before dispatch. Do not deserialize a Python stack, replay old tool
+calls, reuse old question tokens, or assume native provider continuation state
+can be restored. Missing or incompatible inputs require attention.
+
+Manual continuation should precede automatic continuation in implementation. A
+future `workspace task continue TASK_ID --checkpoint CHECKPOINT_ID` and a scheduled
+wake must use the same application entry point. Keep `repeat` available for a
+fresh execution of the saved brief without automatically using a checkpoint.
+
+Automatic continuation requires an explicit user-enabled policy and host-enforced
+limits across the chain: maximum continuations, cumulative model calls, cumulative
+active runtime, an absolute expiry, and a minimum wake delay. These limits do not
+reset when a new attempt starts. A recurring monitor gets a new bounded allowance
+per regular occurrence; continuation within that occurrence consumes its existing
+chain allowance. Add rolling schedule-level limits if repeated episodes need an
+additional cost/frequency ceiling. Models may request less work, never expand it.
+
+Persist consumed/reserved allowances before dispatch. Where a crash makes usage
+uncertain, retain the reservation rather than refunding it optimistically. Reject
+identical checkpoints that request the same next step repeatedly; also count
+consecutive no-progress decisions, since superficial rewording can defeat exact
+hash comparisons. Model claims of progress are evidence to assess, not a substitute
+for hard chain ceilings. Reaching a limit produces `needs_attention` or a final
+partial result, not a new self-scheduled chain.
+
+Waiting releases the process: the accepted checkpoint and approved wake are durable,
+then execution exits. A later external poll creates the next attempt. A human reply
+after process exit is new input for that attempt, with provenance; it cannot resume
+the old stepwise action. Unknown side effects, interrupted tool execution, or a
+checkpoint produced before the last known action require reconciliation before
+continuation. No generic automatic side-effect retry is part of this design.
+
+#### Continuation acceptance checks
+
+- Manual and scheduled continuation consume the same immutable checkpoint snapshot.
+- Limits survive attempts, crashes, repeated polls, and model requests to reset them.
+- Duplicate wakes, unchanged checkpoints, and repeated no-progress decisions stop
+  without an unbounded chain; normal recurring no-change checks still wait quietly.
+- Stale human replies and provider-specific metadata cannot resurrect dead actions.
+- Interrupted side effects and missing artifacts stop for attention rather than
+  silently replaying operations or inventing successful completion.
+- Existing `repeat`, ordinary task execution, and shared runtime outcomes retain
+  their current meaning.
+
+### Suggested implementation sequence and open choices
+
+1. Implement schedule records and one-shot `run-due` for explicit repeat, including
+   ownership/crash tests, unattended input handling, and execution provenance.
+2. Add recurring intervals, catch-up behavior, failure ceilings, and passive
+   inspection. Review these together as the first usable scheduling release.
+3. Add accepted observation state, configurable disposition policy, and local
+   notification events. Introduce the optional evaluator only where it helps.
+4. Add manual checkpoint continuation, then opt-in scheduled wakes with persistent
+   chain budgets. Review ambiguous side-effect handling before enabling automation.
+
+Before each increment, settle only its relevant choices: CLI names and exit codes;
+minimum interval and tick defaults; failure threshold; record version/migration
+rules; calendar/time-zone support; checkpoint size and retention; evaluator schema
+and budget split; notification destinations and delivery guarantees. Full live-
+session restoration and an always-on runner remain outside this plan. The one-off subset of the first increment is available;
+the remaining increments are still planned.
