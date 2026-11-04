@@ -253,6 +253,113 @@ rejected. Dead attempts do not offer pending questions through chat. Ordinary
 filesystem and command tools cannot write question/reply records, which remain
 inside the host-owned run directory even when project writes are enabled.
 
+## Workspace call metadata and conversation history
+
+Directed/session task agents now receive a factual status context before every
+provider call, including tool follow-ups. The fields are `run_id`, `agent_id`,
+`generation`, `provider_call`, `calls_limit`, `calls_charged`,
+`calls_remaining_after_current`, and `seconds_remaining`. The current call has
+already been charged. The remaining count is a shared-pool snapshot, not a promise
+of future calls for this agent. Helpers consume that same allowance; they do not
+inherit task tools or the task's configurable lifecycle prompts.
+
+These fields are also available to standard prompt templates under
+`{{turn:workspace_FIELD}}`, for example
+`{{turn:workspace_calls_remaining_after_current}}`. They do not replace the user
+message's ID/index or turn metadata. The application callback adds context through
+the existing runtime boundary; the shared runtime has no workspace policy.
+
+A session strategy may optionally define:
+
+```toml
+call_prompt = "Remaining shared calls after this one: {{turn:workspace_calls_remaining_after_current}}"
+final_call_threshold = 1
+final_call_prompt = "If work remains, record progress, evidence, unresolved work, and a next action."
+```
+
+Both prompts default to empty. Sources use the standard prompt resolver and the
+configured template-handler chain; `prompt_template` must be enabled for the
+`turn:` substitutions. The final prompt is added when unallocated calls after the
+current charge are less than `final_call_threshold` (default 1). It may therefore
+appear for more than one agent/call with a larger threshold. No separate evaluator
+or extra model call is introduced. See
+[the handoff experiment](../examples/workspace/strategies/handoff.toml), selectable
+with `workspace task start --strategy examples/workspace/strategies/handoff.toml`.
+
+This is best-effort prompt policy, not guaranteed finalization. A timeout, abrupt
+exit, cancellation, or another agent consuming the shared budget can remove a
+later opportunity to write a report. There is no reserved final call, automatic
+continuation, or budget extension. Existing configured sidecar hooks remain
+disabled for task workers; these prompt callbacks do not turn them on.
+
+### Durable history and explicit retrieval
+
+Each task agent saves a versioned `runs/RUN_ID/AGENT_ID/history.json` snapshot at
+context preparation/update, assistant-message completion, and run completion.
+It preserves application user/assistant/tool/context messages, native tool-call
+IDs and arguments, textual attached context, and session/generation provenance.
+Retained-session follow-ups update the same archive with their accumulated history;
+new task attempts have separate archives. Existing history is not automatically
+injected into the next attempt.
+
+These are portable conversation records, not restorable Python sessions. Opaque
+provider continuation objects, separate reasoning metadata, binary image content,
+and runtime objects are omitted. System prompts are already saved separately per
+agent generation. A hard crash can leave the last complete snapshot behind the
+latest side effect; history is not proof that an uncertain operation did not run.
+Archive write failures cancel the task rather than silently claiming durable state.
+
+The task-scoped `agents` tool adds:
+
+- `history_list`: list available archived agents across this task's attempts,
+  with session IDs, generation, phase, and message counts. `start` defaults to 0;
+  `limit` defaults to 20, maximum 50.
+- `history_read`: read `target` (default self), optionally selecting `run_id` from
+  that list. `start=-10`, `limit=10` selects the last ten message records. A negative
+  start counts backward; nonnegative starts are zero-based. Records include tool
+  exchanges and context updates, so they are not synonymous with user turns.
+- Long selected ranges are returned as JSON text chunks: `max_chars` defaults to
+  12,000 (allowed 256–16,000). Follow `next_offset` using the returned resolved
+  `start` to read the rest of the same range, or `next_start` for the next range.
+  Pass the returned `snapshot_id` on subsequent pages; a concurrently changed
+  snapshot is rejected so callers can restart pagination instead of mixing versions.
+
+Retrieval is restricted to the same durable task ID, including its earlier
+attempts and agents. A run without a durable task ID can access only its own run.
+Histories of other tasks are not exposed by these operations. Explicit retrieval
+can read another agent's history within the task; private histories are never
+copied automatically. Normal tool blocklists and host-owned read-only record
+protections still apply. Older runs without archives remain inspectable through
+their existing artifacts; this feature does not invent missing transcripts.
+
+History retention currently preserves all message records in the latest snapshot
+per agent; there is no automatic pruning. Retrieval bounds, initial context size,
+and retention policy are deliberately separate concerns. This allows experiments
+with recent history, a handoff report, or agent-selected retrieval without imposing
+a summary as the only state available between attempts.
+
+### Interfaces reserved for subsequent experiments
+
+The next building blocks remain separate from the implemented metadata/history
+features:
+
+- A local durable inbox with explicit publish/read/acknowledge operations. A
+  deterministic callback at the chat input boundary can announce unread counts
+  and optionally display a single message. Display, acknowledgement, and model
+  context injection must remain separate choices; no sidecar is required to count
+  messages. Reuse the existing chat safe-input boundary rather than allowing a
+  worker to print into an active terminal prompt.
+- A host-owned continuation request with an agent-supplied disposition/reason and
+  an independently validated effective state. The recurring schedule's enabled
+  flag remains distinct from a request for another attempt within an episode.
+  Only an explicit user-enabled policy can approve wakes, subject to persistent
+  chain budgets, delay limits, and pause state. A prompt report alone cannot start
+  another attempt or reset allowances.
+- Optional evaluation as a configurable policy consumer of history/state. A
+  separate evaluator is not mandatory; the same agent's end-of-allowance report
+  can be evaluated experimentally first. Deterministic checks own authority and
+  bounds regardless of which prompt or agent proposes a decision.
+
 ## Scheduled task repeats
 
 Scheduling is available for directed/session tasks. It runs saved tasks once

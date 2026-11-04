@@ -45,6 +45,10 @@
   or synthesis policy belongs in the shared task service. Task-internal helpers
   inherit the selected model and shared allowance. Protect host-owned control
   records even when project writes are enabled. See `docs/workspace-tasks.md`.
+- Workspace lifecycle: `workspace/call_context.py` adds factual per-call budgets
+  and optional strategy prompts without sidecar calls. `workspace/history.py`
+  archives portable conversations and bounds explicit same-task retrieval. Neither
+  mechanism approves continuation, restores processes, or expands execution scope.
 - Schedules: `workspace/schedules.py` owns due-time checks and durable
   occurrence claims; `modes/workspace_schedule_commands.py` exposes the external
   `run-due` trigger. No resident scheduler or core policy. Task leases arbitrate

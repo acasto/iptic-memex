@@ -17,6 +17,8 @@ from core.runtime.contracts import RunStopped
 from workspace.state import atomic_write, now, write_json
 from workspace.tools import WorkspaceAccess
 from workspace.scope import task_roots
+from workspace.history import TaskHistory
+from workspace.call_context import add_call_context
 
 
 @dataclass(frozen=True)
@@ -33,8 +35,10 @@ class TaskService:
     hard timeout enforcement outside these cooperatively cancelled threads.
     """
 
-    def __init__(self, store, run_id, builder, project, profile, prompt, *, deadline=None, user_input=False):
+    def __init__(self, store, run_id, builder, project, profile, prompt, *, deadline=None, user_input=False, strategy=None):
         self.user_input = user_input
+        self.strategy = strategy
+        self.history = TaskHistory(store, run_id)
         self.store, self.run_id, self.builder = store, run_id, builder
         from workspace.tasks import TaskStore
         TaskStore(store).bind_project(project.root)
@@ -80,6 +84,14 @@ class TaskService:
                                   'agent_id': access.agent_id if access else None,
                                   'call': index, 'time': now()})
             self._save()
+            if access is not None:
+                node = self._agents[access.agent_id]
+                metadata = dict(run_id=self.run_id, agent_id=access.agent_id,
+                                generation=node['generations'], provider_call=index,
+                                calls_limit=self.profile.calls, calls_charged=self._used,
+                                calls_remaining_after_current=self.profile.calls - self._used,
+                                seconds_remaining=round(max(0, self.deadline - time.monotonic()), 3))
+                add_call_context(session, metadata, self.strategy)
 
     def _configure(self, agent_id, root=False):
         def configure(session):
@@ -164,6 +176,9 @@ class TaskService:
     def _observe(self, agent_id, generation, event):
         try:
             with self._lock:
+                if event.type in ('context', 'assistant_message', 'run_finished'):
+                    self.history.save(self._agents[agent_id]['host'].session, agent_id,
+                                      generation, event.type)
                 if event.type != 'assistant_delta':
                     self.store.event(self.run_id, agent_id, event.type, dict(
                         event.data, execution_id=event.run_id, sequence=event.sequence,

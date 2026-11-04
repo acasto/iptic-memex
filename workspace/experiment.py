@@ -26,6 +26,9 @@ class Strategy:
     workflow: str = 'session'
     prompt: str = DEFAULT_PROMPT
     agents: int = 2  # Initial fan-out, used only by the fixed experiment.
+    call_prompt: str = ''
+    final_call_prompt: str = ''
+    final_call_threshold: int = 1
 
     def validate(self):
         if self.workflow not in ('session', 'fixed', 'adaptive', 'single'):
@@ -34,6 +37,13 @@ class Strategy:
             raise ValueError('Strategy name must be nonempty text')
         if not isinstance(self.prompt, str) or not self.prompt.strip():
             raise ValueError('Strategy prompt must be nonempty text')
+        for key in ('call_prompt', 'final_call_prompt'):
+            if not isinstance(getattr(self, key), str):
+                raise ValueError(f'Strategy {key} must be text')
+        if type(self.final_call_threshold) is not int or self.final_call_threshold < 1:
+            raise ValueError('final_call_threshold must be a positive integer')
+        if self.workflow != 'session' and (self.call_prompt or self.final_call_prompt):
+            raise ValueError('Call prompts currently require the session workflow')
         if type(self.agents) is not int or not 1 <= self.agents <= 32:
             raise ValueError('Strategy agents must be between 1 and 32')
 
