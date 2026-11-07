@@ -1,5 +1,7 @@
 """Terminal task presentation shared by completion and CLI chat."""
 
+from utils.tool_args import get_str
+
 
 class CompletionRenderer:
     def __init__(self, write, diagnostic, *, verbose=False):
@@ -16,7 +18,17 @@ class CompletionRenderer:
             self.write('', end='\n', flush=True)
             self._streamed = False
         elif event.type == 'tool_started':
-            self.diagnostic(f"Tool calling: {event.data['name']}")
+            name = event.data['name']
+            args = event.data.get('args') or {}
+            desc = get_str(args, 'desc') or ''
+            if not desc and name == 'cmd':
+                command = get_str(args, 'command')
+                arguments = get_str(args, 'arguments') or ''
+                desc = (f'{command} {arguments}'.strip() if command
+                        else get_str(event.data, 'content') or '')
+            if len(desc) > 120:
+                desc = desc[:117] + '...'
+            self.diagnostic(f"Tool calling: {name}" + (f" — {desc}" if desc else ''))
         elif event.type == 'tool_finished' and event.data.get('status') == 'failed':
             self.diagnostic((event.data.get('result') or {}).get('error') or 'Tool failed')
         elif event.type == 'context' and event.data.get('message'):

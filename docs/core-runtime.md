@@ -84,6 +84,10 @@ completed messages, diagnostics, usage, and unresolved input requests. Ordering
 is local to a run. A completed message is authoritative; deltas are presentation
 updates, not extra transcript entries.
 
+Tool-start events include the call's input `args` and `content`. Terminal renderers
+use `desc` when supplied, falling back to command/arguments or content for `cmd`,
+and limit the displayed description to 120 characters.
+
 RunOutcome carries text, optional raw payload, call count (`turns` at the existing
 adapter boundary), usage/cost, retained events, status, stop reason, error, and
 truncation, plus tool call/failure counts. Deltas reach observers but are not duplicated in the retained event

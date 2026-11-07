@@ -96,7 +96,8 @@ def take_contexts(session):
 
 def run_call(session, call, registry, interactions, emit):
     """Return an explicit payload plus tool-owned contexts, including failures."""
-    emit('tool_started', {'tool_call_id': call.id, 'name': call.name})
+    emit('tool_started', {'tool_call_id': call.id, 'name': call.name,
+                          'args': dict(call.args), 'content': call.content})
     try:
         mapping = getattr(session, 'get_user_data', lambda key: {})('__tool_api_to_cmd__') or {}
         name = mapping.get(call.name, call.name)
