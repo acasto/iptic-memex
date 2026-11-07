@@ -8,6 +8,9 @@ from uuid import uuid4
 from base_classes import Completed, InteractionNeeded, Updates
 
 
+TOOL_EVENT_TEXT_LIMIT = 1024
+
+
 @dataclass
 class ToolCall:
     id: str
@@ -94,10 +97,23 @@ def take_contexts(session):
     return contexts
 
 
+def _tool_started_data(call):
+    """Bound retained input metadata without changing executable tool inputs."""
+    keys = ('desc', 'command', 'arguments') if call.name == 'cmd' else ('desc',)
+    args = {}
+    for key in keys:
+        value = call.args.get(key)
+        if isinstance(value, str):
+            args[key] = value.strip()[:TOOL_EVENT_TEXT_LIMIT]
+    data = {'tool_call_id': call.id, 'name': call.name, 'args': args}
+    if call.name == 'cmd' and isinstance(call.content, str):
+        data['content'] = call.content.strip()[:TOOL_EVENT_TEXT_LIMIT]
+    return data
+
+
 def run_call(session, call, registry, interactions, emit):
     """Return an explicit payload plus tool-owned contexts, including failures."""
-    emit('tool_started', {'tool_call_id': call.id, 'name': call.name,
-                          'args': dict(call.args), 'content': call.content})
+    emit('tool_started', _tool_started_data(call))
     try:
         mapping = getattr(session, 'get_user_data', lambda key: {})('__tool_api_to_cmd__') or {}
         name = mapping.get(call.name, call.name)

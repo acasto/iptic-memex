@@ -101,6 +101,41 @@ def test_pseudo_tools_share_executor_and_expand_labeled_content(builder):
         'user', 'assistant', 'assistant', 'assistant']
 
 
+@pytest.mark.parametrize('mode', ['official', 'pseudo'])
+@pytest.mark.parametrize('name', ['cmd', 'file'])
+def test_tool_start_retains_bounded_metadata_and_executes_full_inputs(builder, mode, name):
+    content = 'Full input content\n' * 2000
+    args = {'desc': 'Describe the operation ' * 200, 'command': 'echo',
+            'arguments': 'argument ' * 2000, 'unrelated': 'private input ' * 2000}
+    if mode == 'official':
+        script = [{'tools': [native(name, args=dict(args, content=content))]}]
+    else:
+        fields = '\n'.join(f'{key}="{value}"' for key, value in args.items())
+        script = [{'text': (f'%%BLOCK:input%%\n{content}%%END%%\n'
+                            f'%%{name}%%\n{fields}\nblock="input"\n%%END%%')}]
+    session, seen = session_with_tools(builder, script)
+    spec = session.get_user_data('__dynamic_tools__')['probe']
+    spec['args'] = [*args, 'block']
+    session.set_user_data('__dynamic_tools__', {name: spec})
+    session.set_option('tool_mode', mode)
+    session.write_policy = None
+    result = execute(session, RunRequest(execute_tools=True, max_calls=1))
+
+    assert result.tool_calls == 1 and result.tool_failures == 0
+    assert len(seen) == 1
+    for key, value in args.items():
+        assert seen[0][1][key] == value
+    assert seen[0][2].strip() == content.strip()
+    started = next(event for event in result.events if event.type == 'tool_started')
+    keys = ('desc', 'command', 'arguments') if name == 'cmd' else ('desc',)
+    assert started.data['args'] == {key: args[key].strip()[:1024] for key in keys}
+    if name == 'cmd':
+        assert started.data['content'] == content.strip()[:1024]
+    else:
+        assert 'content' not in started.data
+    assert len(json.dumps(started.data)) < 5000
+
+
 def test_action_exception_is_not_retried_and_is_a_tool_failure(builder):
     def fail(*args):
         raise RuntimeError('Side effect failed')

@@ -84,9 +84,12 @@ completed messages, diagnostics, usage, and unresolved input requests. Ordering
 is local to a run. A completed message is authoritative; deltas are presentation
 updates, not extra transcript entries.
 
-Tool-start events include the call's input `args` and `content`. Terminal renderers
-use `desc` when supplied, falling back to command/arguments or content for `cmd`,
-and limit the displayed description to 120 characters.
+Tool-start events retain only `desc` in `args` for general tools. For `cmd`, they
+also include `command` and `arguments` in `args`, plus `content`. Only string values
+are included, stripped and capped at 1024 characters per field to bound event
+storage. Execution and conversation history keep the full inputs. Terminal
+renderers use `desc` when supplied, falling back to command/arguments or content
+for `cmd`, and limit the displayed description to 120 characters.
 
 RunOutcome carries text, optional raw payload, call count (`turns` at the existing
 adapter boundary), usage/cost, retained events, status, stop reason, error, and
