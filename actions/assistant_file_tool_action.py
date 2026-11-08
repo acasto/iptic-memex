@@ -69,7 +69,8 @@ class AssistantFileToolAction(StepwiseAction):
         return {
             'args': ['mode', 'file', 'new_name', 'recursive', 'block', 'desc'],
             'description': (
-                "Read or modify files in the workspace. Modes: read, write, append, edit, patch, summarize, delete, "
+                "Read or modify files within allowed filesystem roots, including memory when enabled. "
+                "Modes: read, write, append, edit, patch, summarize, delete, "
                 "rename, copy. Use 'content' for write/append/edit/patch. "
                 "Patch mode expects content with <<<< search ==== replace >>>> blocks. "
                 "Can read any text based file as well as pdf, docx, xlsx, xls, pptx, msg, mp3, wav, jpg, png."
@@ -80,8 +81,21 @@ class AssistantFileToolAction(StepwiseAction):
                     'mode': {"type": "string", "enum": [
                         'read', 'write', 'append', 'edit', 'patch', 'summarize', 'delete', 'rename', 'copy'
                     ], "description": "Operation to perform."},
-                    'file': {"type": "string", "description": "Target file path (relative to workspace)."},
-                    'new_name': {"type": "string", "description": "New name/path for rename or copy."},
+                    'file': {
+                        "type": "string",
+                        "description": (
+                            "Absolute path within an allowed root, or a path relative to the "
+                            "configured workspace (TOOLS.base_directory). Use the absolute memory "
+                            "path supplied in memory instructions for memory files."
+                        ),
+                    },
+                    'new_name': {
+                        "type": "string",
+                        "description": (
+                            "Destination path for rename or copy, absolute within an allowed root "
+                            "or relative to the configured workspace."
+                        ),
+                    },
                     'recursive': {"type": "boolean", "description": "When deleting, remove directories recursively if true."},
                     'block': {"type": "string", "description": "Identifier of a %BLOCK:...% to append to 'content'."},
                     'content': {"type": "string", "description": "Content to write/append, edit instructions, or patch block (<<<< ... ==== ... >>>>)."},
@@ -286,7 +300,10 @@ class AssistantFileToolAction(StepwiseAction):
             # Default: treat as text and add as file context via dict to avoid unrestricted read
             content = self.fs_handler.read_file(resolved_path, binary=False)
             if content is None:
-                self.session.add_context('assistant', {'name': 'file_tool_error', 'content': f'Failed to read file: {filename}'})
+                self.session.add_context('assistant', {
+                    'name': 'file_tool_error',
+                    'content': f'Failed to read file: {resolved_path} (requested path: {filename})',
+                })
                 return
             import os as _os
             display_name = self._display_name(resolved_path)

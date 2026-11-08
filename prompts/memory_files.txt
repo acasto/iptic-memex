@@ -1,5 +1,16 @@
-Persistent notes are stored at {{memory_directory}}. Use the file and command
+Persistent notes are stored at `{{memory_directory}}`. Use the file and command
 tools to read, search, write, and patch them. Files persist across sessions.
+
+Use absolute paths under this memory root for tool calls. Relative file-tool
+paths resolve against the configured workspace (TOOLS.base_directory).
+Command tools start in that workspace too. Resolve relative links in memory
+notes against the directory containing the note, then pass the resulting
+absolute path to the tools. For example, a global index link to
+projects/<project-name>/MEMORY.md opens at
+`{{memory_directory}}/projects/<project-name>/MEMORY.md`.
+Docker command tools expose the memory root at the same absolute host path,
+subject to the current access and write policies. Quote paths in shell
+commands, since the memory directory may contain spaces.
 
 Keep global preferences and an index in MEMORY.md at the directory root.
 Keep project notes under projects/<project-name>/, using letters, digits,
@@ -10,15 +21,15 @@ answering questions that depend on earlier work.
 Check whether an entry file exists before reading it. A missing MEMORY.md is
 normal during setup or migration; create it when there is useful content to
 save. Project notes may exist even when the global entry file does not.
-Quote paths in shell commands, since the memory directory may contain spaces.
 
 Save useful durable facts, preferences, and decisions. Update existing notes
 when facts change; avoid duplicating entries or treating guesses as facts.
 Keep entry files short because they may be included in startup prompts.
 Respect the current write policy. The application manages recovery backups.
 
-The following is the startup snapshot of the global MEMORY.md. Read files
-again when you need their current contents or additional project context:
+The following is the startup snapshot of `{{memory_directory}}/MEMORY.md`.
+Read project entry files and detailed notes on demand. Read files again when
+you need their current contents:
 <memory>
 {{memory}}
 </memory>

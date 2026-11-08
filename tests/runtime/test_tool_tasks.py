@@ -360,6 +360,44 @@ def test_sandbox_read_escape_is_a_failure_not_a_successful_tool(builder, tmp_pat
     assert result.status == 'completed' and result.tool_failures == 1
 
 
+@pytest.mark.parametrize('mode', ['official', 'pseudo'])
+def test_memory_read_reports_workspace_path_and_accepts_absolute_memory_path(builder, tmp_path, mode):
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    memory = tmp_path / 'persistent notes'
+    entry = memory / 'projects' / 'memex' / 'MEMORY.md'
+    entry.parent.mkdir(parents=True)
+    entry.write_text('Project memory contents')
+    builder.config_manager.base_config['MEMORY'] = {'active': 'true', 'directory': str(memory)}
+    relative = 'memory/projects/memex/MEMORY.md'
+    if mode == 'official':
+        script = [
+            {'tools': [native('file', 'relative', {'mode': 'read', 'file': relative})]},
+            {'tools': [native('file', 'absolute', {'mode': 'read', 'file': str(entry)})]},
+            {'text': 'Read project memory'},
+        ]
+    else:
+        script = [
+            {'text': f'%%file%%\nmode="read" file="{relative}"\n%%END%%'},
+            {'text': f'%%file%%\nmode="read" file="{entry}"\n%%END%%'},
+            {'text': 'Read project memory'},
+        ]
+    session, _ = session_with_tools(builder, script, tools='file', base_directory=str(workspace))
+    session.set_option('tool_mode', mode)
+    result = run_completion(session=session)
+
+    assert result.status == 'completed' and result.tool_calls == 2 and result.tool_failures == 1
+    finished = [event for event in result.events if event.type == 'tool_finished']
+    assert finished[0].data['status'] == 'failed'
+    assert str(workspace / relative) in finished[0].data['result']['error']
+    assert f'requested path: {relative}' in finished[0].data['result']['error']
+    assert finished[1].data['status'] == 'completed'
+    history = session.get_context('chat').get('all')
+    assert any(context['context'].get()['content'] == 'Project memory contents'
+               for turn in history for context in turn.get('context', [])
+               if context['type'] == 'file')
+
+
 def test_file_creation_has_no_spurious_read_error(builder, tmp_path):
     session, _ = session_with_tools(builder, [
         {'tools': [native('file', args={'mode': 'write', 'file': 'new.txt', 'content': 'New\n'})]},

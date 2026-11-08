@@ -63,6 +63,13 @@ are rejected. Missing entries are empty; unreadable entries emit a warning.
 be linked from entry files and read on demand. Templates run when a prompt
 is built, so an existing prompt contains a snapshot, not a live view.
 
+Use absolute memory paths in file and command tool calls. Relative file-tool
+paths resolve against `TOOLS.base_directory`, and command tools start in that
+workspace too. Resolve links in memory notes against the directory containing
+the note. For example, `projects/iptic-memex/MEMORY.md` in the global index refers
+to that path under the memory root. Project entry files and detailed notes are
+read on demand unless explicitly included through a template placeholder.
+
 Absolute and `~` paths are expanded on the host. Relative directories resolve
 against `TOOLS.base_directory`, just like extra tool roots. Enabling memory
 adds its root to the shared filesystem policy as writable. Docker consumes
