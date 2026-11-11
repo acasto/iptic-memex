@@ -123,6 +123,8 @@ def register_workspace_commands(cli, task_message, is_image_file) -> None:
 
     from modes.workspace_task_commands import register_task_commands
     register_task_commands(workspace, _paths, task_message)
+    from modes.workspace_watch_commands import register_watch_command
+    register_watch_command(workspace, _paths)
     from modes.workspace_schedule_commands import register_schedule_commands
     register_schedule_commands(workspace, _paths)
 

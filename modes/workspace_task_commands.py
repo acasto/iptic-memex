@@ -117,6 +117,24 @@ def register_task_commands(workspace, paths, task_message):
         except (ValueError, OSError) as exc:
             raise click.ClickException(str(exc)) from exc
 
+    @task.command('cancel')
+    @click.argument('task_id')
+    @click.option('--directory', default=None)
+    @click.pass_context
+    def cancel_task(ctx, task_id, directory):
+        """Request cancellation of a live task from another terminal."""
+        try:
+            _, store = paths(ctx, directory)
+            tasks = TaskStore(store)
+            record = tasks.inspect(task_id)
+            if record['status'] not in ('pending', 'running'):
+                click.echo(f"Task is already {record['status']}; no cancellation needed.")
+                return
+            (tasks.directory(task_id) / 'cancel').touch()
+            click.echo('Cancellation requested; the supervisor will stop the task.')
+        except (ValueError, OSError) as exc:
+            raise click.ClickException(str(exc)) from exc
+
     @task.command('repeat')
     @click.argument('task_id')
     @click.option('--directory', default=None)

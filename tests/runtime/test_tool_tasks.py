@@ -519,3 +519,58 @@ def test_large_tool_result_is_gated_before_the_next_provider_call(builder, tmp_p
     assert result.stop_reason == 'large_input_limit_exceeded' and result.turns == 1
     assert session.provider.calls == 1
     assert session.get_context('chat').get('all')[-1]['tool_call_id'] == 'call-1'
+
+
+@pytest.mark.parametrize('name,args', [
+    ('file', {'mode': 'read', 'file': 'session.py', 'content': 'private body'}),
+    ('websearch', {'query': 'retry behavior', 'api_key': 'not recorded'}),
+    ('agents', {'operation': 'spawn', 'message': 'Investigate retries', 'progress': 'not recorded'}),
+])
+def test_tool_activity_metadata_is_selective_and_bounded(name, args):
+    from core.runtime.tools import ToolCall, _tool_started_data
+    event = _tool_started_data(ToolCall('call-1', name, args))
+    assert event['args']
+    assert not {'content', 'api_key', 'progress'} & event['args'].keys()
+    oversized = _tool_started_data(ToolCall('call-1', name,
+                                           {key: 'x' * 5000 for key in event['args']}))
+    assert all(len(value) == 1024 for value in oversized['args'].values())
+
+
+@pytest.mark.parametrize('confirm,answer,expected_calls', [
+    (True, True, 2), (True, False, 1), (False, None, 2),
+])
+def test_chat_large_tool_followup_uses_interactive_policy(builder, confirm, answer, expected_calls):
+    session, seen = session_with_tools(builder, [
+        {'tools': [native()]}, {'text': 'Done'},
+    ], lambda *args: Completed({'ok': True, 'result': 'evidence ' * 200}))
+    configure_chat(session)
+    session.set_option('large_input_limit', 100)
+    session.set_option('confirm_large_input', confirm)
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return answer
+
+    result = run_chat_turn(session, 'Investigate', interactions=InteractionService(respond))
+    assert session.provider.calls == expected_calls
+    assert len(seen) == 1  # Confirmation never replays the tool.
+    assert len(requests) == int(confirm)
+    assert result.status == ('incomplete' if answer is False else 'completed')
+    assert any(e.type == 'warning' and 'recommended limit' in e.data.get('message', '')
+               for e in result.events)
+    session.close()
+
+
+@pytest.mark.parametrize('window,expect_warning', [('all', True), ('last_1', False)])
+def test_chat_input_threshold_warns_without_blocking_user_turn(builder, window, expect_warning):
+    session = builder.build(mode='agent', stream=False, context_sent=window)
+    configure_chat(session)
+    session.set_option('large_input_limit', 100)
+    session.add_context('chat').add('old history ' * 200, 'user')
+    result = run_chat_turn(session, 'Hi')
+    assert result.status == 'completed' and session.provider.calls == 1
+    warnings = [e for e in result.events if e.type == 'warning'
+                and 'recommended limit' in e.data.get('message', '')]
+    assert bool(warnings) == expect_warning
+    session.close()

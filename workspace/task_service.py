@@ -51,7 +51,34 @@ class TaskService:
         self._charges = []
         self._closed = False
         self._persistence_error = None
+        self.input_needed = None
         self._save()
+
+    def yield_to_user(self, caller, question, progress):
+        """Persist a root agent's handoff before cancelling this entire attempt."""
+        with self._lock:
+            if self._agents[caller]['parent_id'] is not None:
+                raise ValueError('Only the root agent may yield; send the issue to your parent')
+            if not self.user_input:
+                raise ValueError('Yield requires an input-enabled chat task')
+            for name, value, limit in (('question', question, 4000), ('progress', progress, 12000)):
+                if not isinstance(value, str) or not value.strip() or len(value) > limit:
+                    raise ValueError(f'{name} must contain 1–{limit} characters')
+            if self.input_needed:
+                raise ValueError('This attempt has already yielded')
+            record = dict(version=1, run_id=self.run_id, agent_id=caller,
+                          question=question, progress=progress, created_at=now())
+            try:
+                self.history.save(self._agents[caller]['host'].session, caller,
+                                  self._agents[caller]['generations'], 'yield')
+                write_json(self.store.run_dir(self.run_id) / 'input-needed.json', record)
+            except Exception as exc:
+                self._persistence_error = str(exc)
+                self.cancellation.cancel('Could not persist input request')
+                raise
+            self.input_needed = record
+            self.cancellation.cancel('Stopped for user input')
+            return {'status': 'needs_input', 'question': question}
 
     def _save(self):
         write_json(self.store.run_dir(self.run_id) / 'task-state.json', {
@@ -250,6 +277,8 @@ class TaskService:
                 'tool_failures', 'usage', 'cost', 'last_text')}
             with self._lock:
                 node = self._agents[agent_id]
+                if self.input_needed and self.input_needed['agent_id'] == agent_id:
+                    summary.update(status='needs_input', stop_reason='user_input', error=None)
                 response = summary.get('last_text') or ''
                 atomic_write(self.store.run_dir(self.run_id) / agent_id /
                              f'response-{generation}.md', response)

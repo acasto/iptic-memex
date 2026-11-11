@@ -21,12 +21,17 @@ class WorkspaceAgentsToolAction(StepwiseAction):
     def tool_spec(cls, session):
         return {
             'args': ['operation', 'target', 'message', 'seconds', 'run_id',
-                     'start', 'limit', 'offset', 'max_chars', 'snapshot_id'], 'required': ['operation'],
+                     'start', 'limit', 'offset', 'max_chars', 'snapshot_id', 'progress'], 'required': ['operation'],
             'description': 'Task agents in this project: spawn isolated work with message; status '
             'lists IDs, results and remaining resources; send queues selected text for a future '
             'call; wait waits up to 30 seconds without model polling; followup continues a finished '
             'descendant session; cancel stops a descendant. Shared task limits apply to all calls. '
             'ask requests user input with message and waits for a reply. '
+            'yield (root agent only, chat tasks) saves a question in message and a handoff in '
+            'progress, then STOPS the entire task until the user explicitly continues it. '
+            'Use yield when proceeding requires clarification; include completed work, evidence, '
+            'remaining work and uncertain side effects in progress. Workers should send issues '
+            'to their parent. No automatic continuation occurs. '
             'history_list lists archived sessions for this task across attempts (start >= 0, limit <= 50). '
             'history_read reads a target agent (default self) and optional run_id; start defaults to '
             '-10 (last ten messages), limit 1-50, offset pages long text, max_chars 256-16000. '
@@ -35,7 +40,8 @@ class WorkspaceAgentsToolAction(StepwiseAction):
             'No directories, permissions, or budgets can be supplied. Results are unverified claims.',
             'schema': {'properties': {
                 'operation': {'type': 'string', 'enum': [
-                    'spawn', 'status', 'send', 'wait', 'followup', 'cancel', 'ask', 'history_list', 'history_read']},
+                    'spawn', 'status', 'send', 'wait', 'followup', 'cancel', 'ask', 'yield', 'history_list', 'history_read']},
+                'progress': {'type': 'string'},
                 'target': {'type': 'string'}, 'message': {'type': 'string'},
                 'seconds': {'type': 'number', 'minimum': 0, 'maximum': 30},
                 'snapshot_id': {'type': 'string'},
@@ -52,7 +58,7 @@ class WorkspaceAgentsToolAction(StepwiseAction):
             if not self.can_run(self.session):
                 raise ValueError('Agents tool requires task access')
             unknown = set(args) - {'operation', 'target', 'message', 'seconds', 'run_id',
-                                   'start', 'limit', 'offset', 'max_chars', 'snapshot_id'}
+                                   'start', 'limit', 'offset', 'max_chars', 'snapshot_id', 'progress'}
             if unknown:
                 raise ValueError('Unsupported agents arguments: ' + ', '.join(sorted(unknown)))
             access = self.session.agents
@@ -68,6 +74,8 @@ class WorkspaceAgentsToolAction(StepwiseAction):
                     start=get_int(args, 'start', -10), limit=get_int(args, 'limit', 10),
                     offset=get_int(args, 'offset', 0), max_chars=get_int(args, 'max_chars', 12000),
                     snapshot_id=get_str(args, 'snapshot_id'))
+            elif operation == 'yield':
+                result = service.yield_to_user(caller, message, get_str(args, 'progress'))
             elif operation == 'ask':
                 if not message.strip():
                     raise ValueError('Question must be nonempty')

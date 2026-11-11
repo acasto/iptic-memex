@@ -107,9 +107,11 @@ def run_agent(*, builder=None, steps, overrides=None, contexts=None, output=None
             if outer_session is not None:
                 from core.context_transfer import copy_contexts
                 from core.runner_seed import build_chat_seed
-                if getattr(active, 'execution_scope', None) is None:
+                # Every helper has a scope; only a scoped parent's inputs require
+                # explicit selection. Ordinary chat hooks retain their template seed.
+                if getattr(outer_session, 'execution_scope', None) is None:
                     copy_contexts(outer_session, active, include_chat=False)
-                if seed is None and getattr(active, 'execution_scope', None) is None:
+                if seed is None and getattr(outer_session, 'execution_scope', None) is None:
                     seed = build_chat_seed(outer_session)
             if seed:
                 from core.runner_seed import apply_chat_seed

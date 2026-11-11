@@ -2,6 +2,9 @@
 
 from app.runtime_services import configure_runtime, install_tool_selection
 from core.runtime import RunRequest, execute
+from core.runtime.contracts import RunStopped
+from core.runtime.execution import input_tokens
+from utils.tool_args import get_bool
 
 
 def configure_chat(session):
@@ -21,8 +24,20 @@ def run_chat_turn(session, message, *, on_event=None, interactions=None, cancell
         calls = 1
 
     def before_call(active, index):
-        if index != 1:
-            return
+        if index == 1:
+            prepare_hooks(active)
+        tokens = input_tokens(active, active.get_context('chat'))
+        if limit and limit > 0 and tokens > limit:
+            warning = f'Input size ({tokens} tokens) exceeds recommended limit ({limit}).'
+            active.runtime_events.emit('warning', {'message': warning})
+            confirm = get_bool({'value': active.get_option(
+                'TOOLS', 'confirm_large_input', fallback=True)}, 'value', True)
+            if index > 1 and confirm:
+                if not active.interactions.ask_bool(warning + ' Continue tool follow-up?',
+                                                    default=False):
+                    raise RunStopped('input_declined', 'Tool follow-up declined by user')
+
+    def prepare_hooks(active):
         from core.hooks import run_hooks
         if not active.get_user_data('__hooks_session_started__', False):
             active.set_user_data('__hooks_session_started__', True)
@@ -40,6 +55,6 @@ def run_chat_turn(session, message, *, on_event=None, interactions=None, cancell
                                            'last_sanitized': outcome.sanitized or ''})
 
     return execute(session, RunRequest(message=message, stream=bool(session.get_params().get('stream')),
-                                      execute_tools=True, max_calls=max(1, calls), input_limit=limit),
+                                      execute_tools=True, max_calls=max(1, calls)),
                    on_event=on_event, interactions=interactions, cancellation=cancellation,
                    before_call=before_call, after_run=after_run)

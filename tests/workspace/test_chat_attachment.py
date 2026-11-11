@@ -256,3 +256,61 @@ def test_custom_config_path_is_canonical_for_worker(tmp_path, monkeypatch):
     config = ConfigManager('custom.ini')
     assert config.config_file == str(custom)
     assert config.base_config.get('AGENT', 'default_model') == 'test-agent'
+
+
+def test_stopped_task_survives_chat_restart_and_continues_once(tmp_path, monkeypatch):
+    import sys
+    from workspace.state import read_json
+    # Real supervisor/subprocess/leases, with deterministic model output.
+    script = '''
+import json, sys
+from pathlib import Path
+from workspace.state import write_json
+spec = json.load(sys.stdin)
+root = Path(spec['directory']) / 'runs' / spec['run_id']
+if spec.get('continuation'):
+    assert spec['continuation']['answer'] == 'Use blue'
+    assert spec['continuation']['handoff']['progress'] == 'Width is 42'
+    result = {'status': 'completed', 'answer': 'Blue, width 42'}
+else:
+    write_json(root / 'input-needed.json', dict(version=1, run_id=spec['run_id'],
+               agent_id='agent-1', question='Which color?', progress='Width is 42'))
+    write_json(root / 'agent-1' / 'history.json', dict(snapshot_id='snapshot',
+               run_id=spec['run_id'], agent_id='agent-1', session_id='session',
+               updated_at='now', phase='run_finished', messages=[]))
+    result = {'status': 'needs_input', 'answer': ''}
+write_json(root / 'task-result.json', result)
+'''
+    initialize = TaskRunner.__init__
+    monkeypatch.setattr(TaskRunner, '__init__', lambda self, store:
+                        initialize(self, store, worker_command=[sys.executable, '-c', script]))
+    session = SimpleNamespace(project=resolve_project(tmp_path),
+                              get_option=lambda *a, **k: 'offline')
+    first = ChatWorkspace(session, tmp_path / 'records')
+    task_id = first.start('Measure and choose')
+    first.owned[task_id][1].join(timeout=5)
+    assert not first.owned[task_id][1].is_alive()
+    first.close()
+    second = ChatWorkspace(session, tmp_path / 'records')
+    record = second.inspect(task_id)
+    source = record['attempts'][-1]['run_id']
+    assert record['status'] == 'needs_input'
+    assert record['input_needed']['question'] == 'Which color?'
+    assert 'stopped, input needed' in second.notifications()[0]
+    before = second.tasks.read(task_id)
+    with pytest.raises(ValueError):
+        TaskRunner(second.store).run(task_id, unattended=True)
+    assert second.tasks.read(task_id) == before
+    with pytest.raises(ValueError):
+        second.continue_task(task_id, source, ' ')
+    second.continue_task(task_id, source, 'Use blue')
+    second.owned[task_id][1].join(timeout=5)
+    record = second.inspect(task_id)
+    assert record['status'] == 'completed', record
+    assert len(record['attempts']) == 2
+    assert record['attempts'][-1]['continued_from'] == source
+    assert record['result']['answer'] == 'Blue, width 42'
+    with pytest.raises(ValueError):
+        second.continue_task(task_id, source, 'Stale response')
+    assert len(second.tasks.read(task_id)['attempts']) == 2
+    second.close()

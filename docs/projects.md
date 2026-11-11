@@ -50,10 +50,13 @@ The child's filesystem policies exclude ambient extra roots and retain nested
 read-only restrictions. Tool exposure is capped at the parent's available names,
 including dynamic registrations. Global database memory and ragsearch are excluded
 until they have explicit retrieval scopes; file memory is disabled. Automatic
-parent context copying/chat seeding is disabled for scoped helpers. Trusted
+parent context copying/chat seeding is disabled when the parent is scoped.
+Helpers launched from ordinary chat retain copied input contexts and a chat
+template seed without expanding their filesystem or tool permissions. Trusted
 application callers can pass selected `contexts` or an explicit `chat_seed`—for
 example a small identity summary—without granting access to the source store.
-Existing hooks that relied on implicit parent history now need explicit context.
+Hooks in ordinary chat retain implicit parent history; scoped callers must
+select their context explicitly.
 
 Scoped command execution requires the parent's Docker command tool. Local shell
 execution is rejected. Docker uses ephemeral containers, scoped mounts (including

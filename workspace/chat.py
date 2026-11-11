@@ -63,24 +63,39 @@ class ChatWorkspace:
             # Reap the detached owner when possible without coupling its lifetime to chat.
             Thread(target=process.wait, daemon=True).start()
         else:
-            token = CancellationToken()
-            def run():
-                try:
-                    runner.run(task_id, cancellation=token)
-                except Exception as exc:
-                    # The runner persists failures under its lease. Never overwrite
-                    # another execution owner when acquisition itself failed.
-                    self.errors[task_id] = str(exc)
-            thread = Thread(target=run, daemon=True)
-            self.owned[task_id] = (token, thread)
-            thread.start()
+            self._launch(task_id)
         return task_id
+
+    def _launch(self, task_id, **options):
+        existing = self.owned.get(task_id)
+        if existing and existing[1].is_alive():
+            raise ValueError('Task still has a live execution owner')
+        token = CancellationToken()
+        def run():
+            try:
+                TaskRunner(self.store).run(task_id, cancellation=token, **options)
+            except Exception as exc:
+                self.errors[task_id] = str(exc)
+        thread = Thread(target=run, daemon=True)
+        self.owned[task_id] = (token, thread)
+        thread.start()
+
+    def continue_task(self, task_id, source_run_id, answer):
+        """Continue a stopped task with a user answer and a fresh saved-profile allowance."""
+        from workspace.continuation import prepare
+        # Check before launching for immediate feedback; runner rechecks under the lease.
+        prepare(self.store, self.tasks.read(task_id), source_run_id, answer)
+        self._launch(task_id, source_run_id=source_run_id, answer=answer)
+        self.seen.add((source_run_id, 'needs_input'))
+        return f'Continuing {task_id} with a fresh attempt allowance'
 
     def inspect(self, task_id):
         record = self.tasks.inspect(task_id)
         if record['attempts']:
             run_id = record['attempts'][-1]['run_id']
             record['result'] = read_json(self.store.run_dir(run_id) / 'task-result.json')
+            if record['status'] == 'needs_input':
+                record['input_needed'] = read_json(self.store.run_dir(run_id) / 'input-needed.json')
             record['questions'] = (Questions(self.store, run_id).pending()
                                    if record['status'] == 'running' else [])
         return record
@@ -160,8 +175,14 @@ class ChatWorkspace:
             if record['status'] != 'running':
                 key = (run_id, record['status'])
                 if key not in self.seen:
-                    messages.append(f"Workspace {task_id}: {record['status']}. "
-                                    f"Use /workspace inspect {task_id} for the result.")
+                    if record['status'] == 'needs_input':
+                        request = read_json(self.store.run_dir(run_id) / 'input-needed.json')
+                        messages.append(f"Workspace {task_id}: stopped, input needed.\n"
+                                        f"{request.get('question', 'Inspect the saved request')}\n"
+                                        f"Use /workspace continue {task_id} to answer and continue.")
+                    else:
+                        messages.append(f"Workspace {task_id}: {record['status']}. "
+                                        f"Use /workspace inspect {task_id} for the result.")
                     self.seen.add(key)
             else:
                 for question in Questions(self.store, run_id).pending():

@@ -191,6 +191,92 @@ profile timeout, including when nobody answers a question. Replies do not restor
 a terminated process or resume a Python stack after restart.
 
 
+### Watch activity from a second terminal
+
+For a directed/session task, run this from the same project (or select it with
+`--project` before `workspace`):
+
+```bash
+python main.py workspace watch TASK_ID
+python main.py workspace watch TASK_ID --once --verbose --tail 50
+python main.py workspace task cancel TASK_ID
+```
+
+Use `--directory PATH` when chat attached a nondefault records directory. The
+watcher shows the original brief, current agent assignments, the latest 30 activity
+lines, then newly recorded activity. It reports commands and arguments, file
+operations and paths, search queries, delegation, tool results/errors, and emitted
+assistant text. Status changes show call usage and agent phases; a heartbeat every
+15 seconds updates elapsed time even when the model is silent. Event timestamps
+are recorded in UTC. `--tail 0` skips earlier events; `--once` prints and exits.
+
+This is a read-only view of recorded evidence, with no model calls. Ctrl-C stops
+only the watcher. To stop the task itself, use `workspace task cancel TASK_ID`
+from another terminal, or `/workspace cancel TASK_ID` in chat. Cancellation is a
+request to the supervisor, not a rollback of completed actions.
+
+The watcher exits when the task completes, stops for input, or otherwise ends.
+Running it again after `/workspace continue` follows the new attempt; running it
+on a finished task reviews its latest attempt. Legacy fixed/adaptive workflows
+continue to use `workspace status` and `workspace report`.
+
+Output is a bounded excerpt, not a raw shell stream or private reasoning trace.
+`--verbose` expands displayed excerpts to 4000 characters; tool-start fields are
+recorded up to 1024 characters each. It cannot recover details absent from older
+logs. Tool output may appear only on completion, and some tools supply content
+through saved conversation contexts instead of their result payload. The printed
+records directory contains the full available event/history artifacts. Commands
+and search queries can themselves contain sensitive text; this local view does
+not claim to redact secrets embedded in those values.
+
+### Stop for input and continue after restarting chat
+
+For an input-enabled chat task, the root agent can call
+`agents(operation="yield", message="Which option should I use?", progress="Completed work, evidence, remaining work, and uncertain side effects")`.
+This saves the question and handoff, then cancels the attempt, including its other
+agents. Later calls in the same tool batch are skipped. Already-running external
+operations cannot be undone. Workers must send their issues to the root; they
+cannot yield the entire task themselves. Existing `ask` still waits within the
+live attempt's timeout; use `yield` when the answer may arrive much later.
+
+Chat shows **stopped, input needed** at its next input boundary. No process or
+model polling remains once the attempt has stopped. You can quit and later use:
+
+```text
+/workspace attach
+/workspace list
+/workspace inspect TASK_ID
+/workspace continue TASK_ID
+```
+
+`continue` displays the saved progress and question, then prompts for your answer.
+It starts a new attached attempt under the same task identity, with the original
+brief, saved execution profile, question, handoff, answer, and a bounded recent
+history excerpt. Full earlier histories remain explicitly retrievable with the
+agents history operations. Old tool calls and Python sessions are never replayed.
+The answer is saved in the new attempt's `experiment.json`, and the attempt records
+`continued_from`. A stale answer cannot restart a different attempt.
+
+Each explicit continuation gets a fresh allowance from the saved profile. There
+is no automatic continuation or cumulative chain budget in this experiment.
+Scheduled repeats cannot advance a task while it is stopped for input. Explicit
+`task repeat` still means a fresh execution of the original brief, without the
+handoff. Closing chat while a continuation is actively running still cancels it;
+wait for **stopped, input needed** before quitting if you want to continue later.
+
+A small single-agent profile is available at
+`examples/workspace/profiles/clarification.toml`. From chat:
+
+```text
+/workspace attach
+/workspace start --profile examples/workspace/profiles/clarification.toml Plan a small experiment. If an important choice needs my input, yield with your progress and question so I can continue later.
+```
+
+This tests the model's judgment about when to yield. For a mechanical round-trip
+test, explicitly instruct it to yield once with a known fact in its handoff, then
+use your answer and that fact to finish on continuation. Set the profile's model
+to a configured alias; the example selects `glm-5.3`.
+
 ### Bringing a result into the conversation
 
 `/workspace import TASK_ID [ATTEMPT_ID]` loads the latest finished attempt's answer

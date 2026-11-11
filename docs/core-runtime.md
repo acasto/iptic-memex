@@ -43,6 +43,14 @@ maps `[TOOLS].auto_submit_max_turns` (default 6) to the call ceiling. Hitting it
 preserves completed tool results and returns incomplete/call_limit. The runtime
 does not read auto_submit flags or invent empty user turns for follow-up.
 
+CLI chat treats `[TOOLS].large_input_limit` as a recommended threshold: explicit
+user turns warn and proceed. Oversized automatic tool follow-ups request
+confirmation through the interaction service when `confirm_large_input = true`;
+declining preserves the tool results and ends the run. With confirmation disabled,
+they warn and proceed. Completion and agents retain their hard `[AGENT]` limit.
+Token checks respect `context_sent`, including the pending user turn and system
+prompt, rather than counting excluded saved history.
+
 ## Ownership
 
 - `app/session_builder.py` resolves application profiles. Completion assembles a

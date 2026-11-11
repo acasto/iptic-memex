@@ -99,7 +99,14 @@ def take_contexts(session):
 
 def _tool_started_data(call):
     """Bound retained input metadata without changing executable tool inputs."""
-    keys = ('desc', 'command', 'arguments') if call.name == 'cmd' else ('desc',)
+    keys = {
+        'cmd': ('desc', 'command', 'arguments'),
+        'file': ('desc', 'mode', 'file', 'new_name'),
+        'websearch': ('desc', 'query'),
+        'ragsearch': ('desc', 'query'),
+        'agents': ('operation', 'target', 'message'),
+        'workspace': ('operation', 'title'),
+    }.get(call.name, ('desc',))
     args = {}
     for key in keys:
         value = call.args.get(key)

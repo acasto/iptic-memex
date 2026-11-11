@@ -58,6 +58,16 @@ class ChatWorkspaceAction(StepwiseAction):
                               for r in attachment.tasks.list()]
                 elif operation == 'inspect' and len(args) == 1:
                     result = attachment.inspect(args[0])
+                elif operation == 'continue' and len(args) == 1:
+                    record = attachment.inspect(args[0])
+                    request = record.get('input_needed')
+                    if record['status'] != 'needs_input' or not request:
+                        raise ValueError('Task is not stopped for input; inspect it first')
+                    self.session.ui.emit('status', {'message': request['progress']})
+                    value = CLIInteractionHandler(self.session.utils.input, self.session.utils.output)(
+                        InteractionRequest(request['run_id'], 'text', {
+                            'prompt': request['question'] + ' ', 'allow_empty': False}))
+                    result = attachment.continue_task(args[0], request['run_id'], value)
                 elif operation == 'import' and 1 <= len(args) <= 2:
                     result = attachment.import_result(*args)
                 elif operation == 'cancel' and len(args) == 1:
@@ -74,7 +84,7 @@ class ChatWorkspaceAction(StepwiseAction):
                     result = 'Reply delivered'
                 else:
                     raise ValueError('Use attach, start, detach, list, inspect TASK, '
-                                     'import TASK [ATTEMPT], reply TASK QUESTION, or cancel TASK')
+                                     'continue TASK, import TASK [ATTEMPT], reply TASK QUESTION, or cancel TASK')
             self.session.ui.emit('status', {'message': result if isinstance(result, str) else
                                            json.dumps(result, ensure_ascii=False, indent=2)})
             return Completed({'ok': True})

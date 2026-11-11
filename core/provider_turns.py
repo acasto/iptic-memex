@@ -28,3 +28,19 @@ def provider_turns(turns):
         yield turn
     if pending:
         yield media()
+
+
+def select_turn_window(turns, context_sent='all'):
+    """Apply the configured history window to actual or prospective turns."""
+    if context_sent in ('none', 'last_1'):
+        return turns[-1:]
+    if context_sent == 'all':
+        return turns
+    parts = context_sent.split('_')
+    if len(parts) == 2 and parts[1].isdigit():
+        count = int(parts[1])
+        if parts[0] == 'first':
+            return turns[:count]
+        if parts[0] == 'last':
+            return turns[-count:]
+    return turns

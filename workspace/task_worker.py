@@ -25,6 +25,9 @@ def run_session(spec, store, builder):
     try:
         from workspace.chat_snapshot import as_context
         contexts = ([as_context(spec['chat_snapshot'])] if spec.get('chat_snapshot') else [])
+        if spec.get('continuation'):
+            from workspace.continuation import as_context as continuation_context
+            contexts.append(continuation_context(spec['continuation']))
         root = service.start(spec['brief'], contexts=contexts)
         while True:
             state = service.status()
@@ -44,12 +47,16 @@ def run_session(spec, store, builder):
         status = outcome.get('status', 'failed')
         if service._persistence_error:
             status = 'failed'
+        elif service.input_needed:
+            status = 'needs_input'
         elif time.monotonic() >= service.deadline:
             status = 'timed_out'
         elif status == 'completed' and any(
                 n['status'] != 'completed' or n['pending_inputs'] for n in state['agents']):
             status = 'partial'
-        return {'status': status, 'answer': answer, 'error': service._persistence_error or outcome.get('error') or root_node.get('error'),
+        return {'status': status, 'answer': answer, 'input_needed': service.input_needed,
+                'error': None if status == 'needs_input' else
+                service._persistence_error or outcome.get('error') or root_node.get('error'),
                 'calls_used': state['calls_used'], 'agents': state['agents']}
     finally:
         service.close()

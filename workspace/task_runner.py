@@ -32,16 +32,24 @@ class TaskRunner:
         return self.tasks.create(brief, dict(experiment, project=project_data, config_file=config_file))
 
     def run(self, task_id, *, on_started=None, cancellation=None, before_start=None,
-            execution_origin=None, unattended=False):
+            execution_origin=None, unattended=False, source_run_id=None, answer=None):
         """Persist failures only while holding this task's exclusive ownership lease."""
         with self.tasks.lease(task_id) as lease_fd:
             # Caller admission/claim runs under task ownership, before any attempt
             # mutation. A declined claim must not mark the task failed.
             if before_start:
                 before_start()
+            continuation = None
+            if source_run_id is not None or answer is not None:
+                if unattended:
+                    raise ValueError('Continuation requires an explicit user answer')
+                from workspace.continuation import prepare
+                continuation = prepare(self.store, self.tasks.read(task_id), source_run_id, answer)
+            elif unattended and self.tasks.read(task_id)['status'] == 'needs_input':
+                raise ValueError('Task is stopped for user input; continue it explicitly in chat')
             try:
                 return self._run_owned(task_id, lease_fd, on_started, cancellation,
-                                       execution_origin, unattended)
+                                       execution_origin, unattended, continuation)
             except Exception as exc:
                 task = self.tasks.read(task_id)
                 task.update(status='failed', error=str(exc))
@@ -54,11 +62,13 @@ class TaskRunner:
                 raise
 
     def _run_owned(self, task_id, lease_fd, on_started, cancellation,
-                   execution_origin=None, unattended=False):
+                   execution_origin=None, unattended=False, continuation=None):
         task = self.tasks.read(task_id)
         if task['attempts']:
             (self.tasks.directory(task_id) / 'cancel').unlink(missing_ok=True)
         spec = dict(task['spec'])
+        if continuation:
+            spec['continuation'] = continuation
         if unattended:
             spec['user_input'] = False
         self.tasks.bind_project(spec['project']['root'])
@@ -79,6 +89,8 @@ class TaskRunner:
             run_timeout_seconds=profile.timeout, synthesis_timeout_seconds=0))
         run_id = record['id']
         task['attempts'].append({'run_id': run_id, 'status': 'running', 'started_at': now()})
+        if continuation:
+            task['attempts'][-1]['continued_from'] = continuation['source_run_id']
         task.update(status='running', owner_pid=os.getpid())
         self.tasks.save(task)
         spec.update(task_id=task_id, run_id=run_id, directory=str(self.store.root),

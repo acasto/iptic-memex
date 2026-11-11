@@ -271,3 +271,13 @@ def test_cancellation_cleanup_can_register_cleanup_and_cancel_again():
     assert not thread.is_alive()
     token.cancel()
     assert calls == ['first', 'late']
+
+
+@pytest.mark.parametrize('window,expected_calls', [('all', 0), ('last_1', 1)])
+def test_hard_input_limit_counts_pending_provider_window(builder, window, expected_calls):
+    session = builder.build(mode='completion', context_sent=window)
+    session.add_context('chat').add('old history ' * 200, 'user')
+    result = execute(session, RunRequest(message='Hi', input_limit=100))
+    assert session.provider.calls == expected_calls
+    assert result.status == ('completed' if expected_calls else 'failed')
+    session.close()

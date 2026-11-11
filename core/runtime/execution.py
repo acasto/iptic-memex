@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from base_classes import InteractionNeeded
 from core.cancellation import CancellationToken
+from core.provider_turns import select_turn_window
 from core.input_limits import compute_context_tokens, count_text_tokens
 from core.runtime.contracts import RunEvent, RunOutcome, RunRequest, RunStopped
 from core.runtime.provider import invoke, optional
@@ -47,7 +48,7 @@ def _record_input(session, request):
         if context is None:
             raise ValueError('Could not create turn prompt context')
         contexts.append({'type': 'assistant', 'context': context})
-    tokens = _input_tokens(session, chat, contexts, message)
+    tokens = input_tokens(session, chat, contexts, message)
     if request.input_limit and request.input_limit > 0 and tokens > request.input_limit:
         raise InputLimitExceeded(tokens, request.input_limit)
     chat.add(message, 'user', contexts, extra={'meta': meta})
@@ -58,10 +59,15 @@ def _record_input(session, request):
     return chat
 
 
-def _input_tokens(session, chat, contexts=(), message=''):
+def input_tokens(session, chat, contexts=None, message=''):
+    """Count the selected provider window, including an optional pending user turn."""
     prompt = session.get_context('prompt')
-    tokens = compute_context_tokens(session, contexts) + count_text_tokens(session, message)
-    for turn in chat.get('all'):
+    turns = chat.get('all')
+    if contexts is not None:
+        turns = [*turns, {'role': 'user', 'message': message, 'context': contexts}]
+    turns = select_turn_window(turns, session.get_params().get('context_sent', 'all'))
+    tokens = 0
+    for turn in turns:
         tokens += count_text_tokens(session, turn.get('message', ''))
         if turn.get('role') != 'tool':
             tokens += compute_context_tokens(session, turn.get('context'))
@@ -178,7 +184,7 @@ def execute(session, request: RunRequest, *, on_event=None, cancellation=None,
                     else:
                         chat.add('', 'context', updates, extra={'meta': {'kind': 'context_update'}})
                     emit('context', {'action': 'updated', 'count': len(updates)})
-                tokens = _input_tokens(session, chat)
+                tokens = input_tokens(session, chat)
                 if request.input_limit and request.input_limit > 0 and tokens > request.input_limit:
                     raise InputLimitExceeded(tokens, request.input_limit)
                 if token.is_cancelled():

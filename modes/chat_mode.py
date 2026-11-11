@@ -13,7 +13,8 @@ class ChatMode(InteractionMode):
         self.session.cli_workspace_enabled = True
         self.builder = builder  # For model switching
         self.session.chat_config_file = getattr(
-            getattr(builder, "config_manager", None), "config_file", None)
+            getattr(getattr(session, '_builder', builder), 'config_manager', None),
+            'config_file', None)
         
         # Don't cache params - get them fresh each time
         self.utils = self.session.utils

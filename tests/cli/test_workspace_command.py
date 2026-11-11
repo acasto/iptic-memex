@@ -179,3 +179,76 @@ def test_explicit_model_wins_over_configured_synthesis_default(monkeypatch, tmp_
     assert runner.invoke(main.cli, ['-m', 'glm-5.3', 'workspace', 'run', 'Question',
                                     '--synthesis-model', 'other-model']).exit_code == 0
     assert captured['settings'].synthesis_model == 'other-model'
+
+
+def test_watch_once_and_cancel_are_model_free(monkeypatch, tmp_path):
+    from workspace.state import WorkspaceStore, now
+    from workspace.tasks import TaskStore
+    configure(monkeypatch, tmp_path)
+    store = WorkspaceStore(tmp_path / '.memex-workspace')
+    tasks = TaskStore(store)
+    task = tasks.create('Inspect retries', {'strategy': {'workflow': 'session'}})
+    run = store.create_run('Inspect retries', {'task_id': task['id']})
+    task.update(status='running', attempts=[{'run_id': run['id'], 'started_at': now()}])
+    tasks.save(task)
+    store.event(run['id'], 'agent-1', 'tool_started', {
+        'name': 'cmd', 'args': {'command': 'rg', 'arguments': 'retry'}})
+    with tasks.lease(task['id']):
+        result = CliRunner().invoke(main.cli, ['workspace', 'watch', task['id'], '--once'])
+        assert result.exit_code == 0, result.output
+        assert 'Tool cmd: command=rg arguments=retry' in result.output
+        assert not (tasks.directory(task['id']) / 'cancel').exists()
+        result = CliRunner().invoke(main.cli, ['workspace', 'task', 'cancel', task['id']])
+        assert result.exit_code == 0, result.output
+        assert (tasks.directory(task['id']) / 'cancel').exists()
+
+
+def test_watch_ctrl_c_does_not_cancel_task(monkeypatch, tmp_path):
+    from workspace.state import WorkspaceStore
+    from workspace.tasks import TaskStore
+    configure(monkeypatch, tmp_path)
+    tasks = TaskStore(WorkspaceStore(tmp_path / '.memex-workspace'))
+    task = tasks.create('Waiting for launch', {})
+    def interrupt(_):
+        raise KeyboardInterrupt()
+    monkeypatch.setattr('modes.workspace_watch_commands.time.sleep', interrupt)
+    result = CliRunner().invoke(main.cli, ['workspace', 'watch', task['id']])
+    assert result.exit_code == 0, result.output
+    assert 'task execution was not changed' in result.output
+    assert tasks.read(task['id'])['status'] == 'pending'
+    assert not (tasks.directory(task['id']) / 'cancel').exists()
+
+
+def test_watch_follows_new_events_and_exits_after_completion(monkeypatch, tmp_path):
+    from workspace.state import WorkspaceStore, now, write_json
+    from workspace.tasks import TaskStore
+    configure(monkeypatch, tmp_path)
+    store = WorkspaceStore(tmp_path / '.memex-workspace')
+    tasks = TaskStore(store)
+    task = tasks.create('Inspect retries', {})
+    run = store.create_run(task['brief'], {'task_id': task['id']})
+    task.update(status='running', attempts=[{'run_id': run['id'], 'started_at': now()}])
+    tasks.save(task)
+    count = 0
+    def advance(_):
+        nonlocal count
+        count += 1
+        if count == 1:
+            store.event(run['id'], 'agent-2', 'tool_started', {
+                'name': 'websearch', 'args': {'query': 'retry guidance'}})
+        elif count == 2:
+            store.event(run['id'], 'agent-2', 'tool_finished', {
+                'name': 'websearch', 'status': 'completed', 'result': {'ok': True}})
+            task['status'] = 'completed'
+            tasks.save(task)
+            write_json(store.run_dir(run['id']) / 'task-result.json', {'answer': 'Done'})
+        else:
+            raise AssertionError('Watcher failed to exit')
+    monkeypatch.setattr('modes.workspace_watch_commands.time.sleep', advance)
+    with tasks.lease(task['id']):
+        result = CliRunner().invoke(main.cli, ['workspace', 'watch', task['id'], '--tail', '0'])
+    assert result.exit_code == 0, result.output
+    assert result.output.count('query=retry guidance') == 1
+    assert 'Tool websearch: completed' in result.output
+    assert 'Result: Done' in result.output
+    assert count == 2

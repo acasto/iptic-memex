@@ -419,3 +419,45 @@ def test_nested_helpers_cannot_exceed_a_workers_reserved_calls(builder):
     result = run_agent(session=session, steps=5)
     assert result.status == 'incomplete' and result.turns == 0
     assert allowance.used == 2
+
+
+@pytest.mark.parametrize('scoped_parent', [False, True])
+def test_assembled_internal_helper_transfers_only_unscoped_parent_inputs(
+        builder, monkeypatch, tmp_path, scoped_parent):
+    from app.run_helpers import child_options
+    outer = builder.build(mode='agent', stream=False, base_directory=str(tmp_path))
+    if scoped_parent:
+        restricted = builder.build(mode='internal', **child_options(outer, {}))
+        outer.close()
+        outer = restricted
+    outer.add_context('chat').add('Remember marmalade', 'user')
+    source = outer.add_context('file', {'name': 'evidence', 'content': 'Selected evidence'})
+    children = []
+    build = builder.build
+
+    def capture(*args, **kwargs):
+        child = build(*args, **kwargs)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(builder, 'build', capture)
+    result = outer.run_internal_agent(steps=1, overrides={
+        'stream': False, 'prompt': 'Conversation: {{chat:last}}',
+        'template_handler': 'prompt_template_chat',
+    })
+    child = children[0]
+    assert result.status == 'completed'
+    assert child.execution_scope is not None
+    assert child.file_memory_enabled is False
+    prompt = child.get_context('prompt').get()['content']
+    assert ('Remember marmalade' in prompt) == (not scoped_parent)
+    seed = child.get_user_data('__chat_seed__')
+    assert bool(seed) == (not scoped_parent)
+    turns = child.get_context('chat').get('all')
+    assert all(t['message'] != 'Remember marmalade' for t in turns)
+    files = [c['context'] for t in turns for c in t.get('context', []) if c['type'] == 'file']
+    assert len(files) == int(not scoped_parent)
+    if files:
+        files[0].get()['content'] = 'Changed child copy'
+        assert source.get()['content'] == 'Selected evidence'
+    outer.close()

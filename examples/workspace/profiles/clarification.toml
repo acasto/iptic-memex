@@ -1,0 +1,9 @@
+# Small single-agent stop/continue experiment. Requires a configured model alias.
+model = "glm-5.3"
+tools = ["file"]
+calls = 8
+concurrency = 1
+max_sessions = 1
+timeout = 300
+max_tokens = 4096
+writes = "deny"
