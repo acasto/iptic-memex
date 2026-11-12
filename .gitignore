@@ -7,9 +7,6 @@ venv
 temp
 *.backup
 user-config
-uv.lock
-pyproject.toml
-.python-version
 CLAUDE.md
 .aiexclude
 PLAN.md
@@ -17,3 +14,5 @@ logs/*
 .assistant-tmp
 .memex-workspace/
 .claude
+
+.venv/

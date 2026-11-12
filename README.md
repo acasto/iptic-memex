@@ -30,14 +30,13 @@ The name is a reference to the Memex, a device described by Vannevar Bush in his
 
 ## Quickstart
 
-Requirements: Python 3.11+.
+Requirements: Python 3.11+ and [uv](https://docs.astral.sh/uv/getting-started/installation/).
+uv manages the project’s isolated `.venv` and locked dependencies.
 
 ```bash
 git clone https://github.com/acasto/iptic-memex.git
 cd iptic-memex
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync --locked
 ```
 
 Set API keys in `config.ini` (or `~/.config/iptic-memex/config.ini`) or via env vars like `OPENAI_API_KEY`.
@@ -45,16 +44,19 @@ Set API keys in `config.ini` (or `~/.config/iptic-memex/config.ini`) or via env 
 Run chat mode:
 
 ```bash
-python main.py chat
+uv run --locked python main.py chat
 ```
 
 One-shot (completion) example:
 
 ```bash
-echo "What is PI?" | python main.py -f -
+echo "What is PI?" | uv run --locked python main.py -f -
 ```
 
-Tip: See `docs/getting-started.md` for platform-specific dependencies.
+Prefer pip? See [Getting started](docs/getting-started.md) for the venv/pip fallback,
+platform requirements, wrapper commands, and dependency updates.
+The `LlamaCpp` provider uses the installed Python bindings; `LlamaCppServer` uses
+your separately installed `llama-server` at its configured path.
 
 ---
 

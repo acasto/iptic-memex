@@ -1,3 +1,13 @@
 #!/bin/bash
+set -e
 
-memex -s chat
+# Resolve links so these wrappers also work when symlinked into a PATH directory.
+script_path="${BASH_SOURCE[0]}"
+while [ -L "$script_path" ]; do
+    script_dir="$(cd -P "$(dirname "$script_path")" && pwd)"
+    script_path="$(readlink "$script_path")"
+    [[ "$script_path" = /* ]] || script_path="$script_dir/$script_path"
+done
+script_dir="$(cd -P "$(dirname "$script_path")" && pwd)"
+
+exec "$script_dir/memex" -s chat "$@"

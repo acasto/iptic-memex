@@ -1,3 +1,21 @@
 #!/bin/bash
+set -e
 
-python /home/adam/projects/iptic-memex/main.py "$@"
+# Resolve links so these wrappers also work when symlinked into a PATH directory.
+script_path="${BASH_SOURCE[0]}"
+while [ -L "$script_path" ]; do
+    script_dir="$(cd -P "$(dirname "$script_path")" && pwd)"
+    script_path="$(readlink "$script_path")"
+    [[ "$script_path" = /* ]] || script_path="$script_dir/$script_path"
+done
+script_dir="$(cd -P "$(dirname "$script_path")" && pwd)"
+
+project_dir="$(cd "$script_dir/.." && pwd)"
+python_bin="$project_dir/.venv/bin/python"
+if [ ! -x "$python_bin" ]; then
+    printf 'Memex environment missing. Run uv sync --locked in %s (or follow the pip setup).\n' "$project_dir" >&2
+    exit 1
+fi
+
+# Preserve the caller's working directory for project and sandbox resolution.
+exec "$python_bin" "$project_dir/main.py" "$@"

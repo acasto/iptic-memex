@@ -58,9 +58,11 @@
   control roots before Docker mounts.
 
 ## Build, Run, and Dev
-- Python 3.11+. Use a virtual env.
-  - Create env: `python -m venv .venv && source .venv/bin/activate`
-  - Install deps: `pip install -r requirements.txt`
+- Python 3.11+. Use `uv sync --locked` to prepare the project `.venv`.
+  - Run through `uv run --locked python ...` or activate `.venv` first.
+  - `pyproject.toml` declares dependencies; commit `uv.lock` and `.python-version`.
+  - `requirements.txt` is generated: run `make export-requirements` after lock changes.
+  - A pip/venv fallback is documented in `docs/getting-started.md`.
 - Run CLI:
   - Help: `python main.py --help` and `python main.py <subcommand> --help`
   - Chat mode: `python main.py chat`

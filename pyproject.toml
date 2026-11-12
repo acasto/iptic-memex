@@ -1,0 +1,41 @@
+[project]
+name = "iptic-memex"
+version = "0.1.0"
+description = "A command-line LLM workbench with chat, agents, tools, and local model providers"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "openai",
+    "anthropic",
+    "google-genai>=1.55.0",
+    "click",
+    "Pygments",
+    "gnureadline; sys_platform == 'linux' or sys_platform == 'darwin'",
+    "requests",
+    "beautifulsoup4",
+    "tiktoken",
+    "reportlab",
+    "trafilatura",
+    "llama-cpp-python",
+    "pytz",
+    "mlx; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "mlx-lm; sys_platform == \"darwin\" and platform_machine == \"arm64\"",
+    "starlette",
+    "uvicorn",
+    "python-multipart",
+    "textual",
+    "httpx",
+    "rich",
+    "pypdf",
+    "python-docx",
+    "openpyxl",
+    "jsonschema",
+    "numpy",
+]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.uv]
+# Run from the checkout; this repository is not an installable Python distribution.
+package = false
