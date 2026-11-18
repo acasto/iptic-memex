@@ -5,6 +5,8 @@ import sys
 import json
 import pytest
 
+from web.selftest import FakeSession
+
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -35,55 +37,13 @@ class ProviderABC:
         return 0.0
 
 
-class SessionABC:
-    def __init__(self):
-        from ui.web import WebUI
-        self._params = {"stream": True}
-        self._flags = {}
-        self._actions = {}
-        self._contexts = {"chat": type("C", (), {"add": lambda *a, **k: None, "get": lambda *a, **k: None})()}
-        self._provider = ProviderABC()
-        self.utils = type("U", (), {"output": type("O", (), {"write": lambda *a, **k: None})(), "replace_output": lambda self2, out: None})()
-        self.ui = WebUI(self)
-
-    def get_params(self):
-        return dict(self._params)
-
-    def set_option(self, key, value):
-        self._params[key] = value
-
-    def get_option(self, section, key, fallback=None):
-        return fallback
-
-    def get_flag(self, name):
-        return self._flags.get(name)
-
-    def set_flag(self, name, value):
-        self._flags[name] = value
-
-    def get_context(self, name):
-        return self._contexts.get(name)
-
-    def add_context(self, name, value=None):
-        self._contexts[name] = value
-        return value
-
-    def remove_context_type(self, name):
-        self._contexts.pop(name, None)
-
-    def get_action(self, name):
-        return self._actions.get(name)
-
-    def get_provider(self):
-        return self._provider
-
-
 def test_stream_emits_tokens_and_done_text():
     _require_starlette()
     from starlette.testclient import TestClient
     from web.app_factory import create_app
 
-    sess = SessionABC()
+    sess = FakeSession()
+    sess.provider = ProviderABC()
     app = create_app(sess)
     client = TestClient(app)
 

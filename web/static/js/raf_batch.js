@@ -6,6 +6,10 @@ export class RafTextAppender {
     this._scheduled = false;
   }
 
+  finish() {
+    this._buf = '';
+  }
+
   append(text) {
     if (text == null) return;
     this._buf += String(text);

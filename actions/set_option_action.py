@@ -60,6 +60,7 @@ class SetOptionAction(StepwiseAction):
                 if len(tokens) > 1:
                     value = ' '.join(tokens[1:])
 
+        self._pending_args = {'mode': mode, 'option': option, 'value': value}
         # Interactive prompts as needed
         if mode == 'tools':
             self.tc.run('tools')
@@ -107,11 +108,11 @@ class SetOptionAction(StepwiseAction):
         mode = 'params'
         option = None
         value = None
-        state_args = None
+        state_args = getattr(self, '_pending_args', None)
 
         # Normalize response and extract state
         if isinstance(response, dict):
-            state_args = (response.get('state') or {}).get('args') or response.get('args')
+            state_args = (response.get('state') or {}).get('args') or response.get('args') or state_args
             if 'response' in response:
                 response = response['response']
 
@@ -141,6 +142,7 @@ class SetOptionAction(StepwiseAction):
                     pass
                 self.tc.run('chat')
                 return Completed({'ok': False, 'error': 'not_found', 'option': option, 'mode': mode})
+            self._pending_args = {'mode': mode, 'option': option, 'value': None}
             # Ask for value now (may raise again)
             value = self.session.ui.ask_text(f"Enter value for {option}:")
         else:

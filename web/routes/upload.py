@@ -1,76 +1,65 @@
-from __future__ import annotations
+"""Stage browser attachments until the owning submission takes them."""
 
-from typing import Any, Dict, Optional
-import os
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
-from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from web.routes.chat import error
 
-async def api_upload(request: Request):
-    """Handle file uploads to a temp dir under web/uploads.
 
-    Matches the previous inline handler in web/app.py for backward compatibility.
-    """
+async def api_upload(request, state):
     try:
-        form = await request.form()
-    except Exception as e:
-        msg = str(e) or "Invalid form"
-        if "python-multipart" in msg.lower():
-            return JSONResponse(
-                {
-                    "ok": False,
-                    "error": {
-                        "recoverable": True,
-                        "message": "Missing dependency 'python-multipart' for file uploads.",
-                    },
-                },
-                status_code=400,
-            )
-        return JSONResponse(
-            {"ok": False, "error": {"recoverable": True, "message": msg}},
-            status_code=400,
-        )
+        async with request.form() as form:
+            files = form.getlist('files')
+            if not files:
+                return error('No files in form', 400)
+            root = Path(__file__).resolve().parents[1] / 'uploads'
+            root.mkdir(exist_ok=True)
+            batch = TemporaryDirectory(dir=root)
+            saved = []
+            try:
+                for index, upload in enumerate(files):
+                    name = ''.join(c for c in upload.filename if c.isalnum() or c in '-_. ')
+                    if not name.strip('. '):
+                        return error('A filename is required', 400)
+                    folder = Path(batch.name) / str(index)
+                    folder.mkdir()
+                    path = folder / name
+                    with path.open('xb') as output:
+                        while chunk := await upload.read(1024 * 1024):
+                            output.write(chunk)
+                    saved.append({'name': name, 'path': str(path), 'size': path.stat().st_size})
+                token = state.issue_token('upload', 1, 'upload', {
+                    'batch': batch, 'paths': [item['path'] for item in saved],
+                })
+                batch = None  # The token owns cleanup from here.
+            finally:
+                if batch:
+                    batch.cleanup()
+    except (ValueError, AttributeError, OSError) as exc:
+        return error(str(exc), 400)
+    return JSONResponse({'ok': True, 'files': saved, 'upload_token': token})
 
-    files = form.getlist("files") if hasattr(form, "getlist") else []
-    if not files:
-        return JSONResponse(
-            {
-                "ok": False,
-                "error": {"recoverable": True, "message": "No files in form"},
-            },
-            status_code=400,
-        )
 
-    # Save uploads to a temp dir under web/uploads
-    upload_dir = os.path.join(os.path.dirname(__file__), "..", "uploads")
-    upload_dir = os.path.abspath(upload_dir)
-    os.makedirs(upload_dir, exist_ok=True)
-    saved = []
-    for up in files:
+class Upload:
+    def __init__(self, state, token):
+        self.directory, self.paths = state.take_upload(token)
+
+    def load(self, session):
+        # Load all contexts before the same run takes its transcript snapshot.
+        existing = {kind: list(contexts) for kind, contexts in session.context.items()}
         try:
-            filename = getattr(up, "filename", "upload.bin")
-            # Basic sanitization
-            safe = "".join(
-                ch for ch in filename if ch.isalnum() or ch in ("-", "_", ".", " ")
-            ) or "upload.bin"
-            # Ensure unique name
-            base, ext = os.path.splitext(safe)
-            path = os.path.join(upload_dir, safe)
-            i = 1
-            while os.path.exists(path):
-                path = os.path.join(upload_dir, f"{base}_{i}{ext}")
-                i += 1
-            # Write content
-            content = await up.read()  # type: ignore[attr-defined]
-            with open(path, "wb") as f:
-                f.write(content)
-            saved.append({"name": filename, "path": path, "size": len(content)})
-        except Exception as e:
-            return JSONResponse(
-                {"ok": False, "error": {"recoverable": True, "message": str(e)}},
-                status_code=500,
-            )
+            result = session.get_action('load_file').run({'files': self.paths})
+            if result.payload.get('loaded') != self.paths:
+                raise ValueError('Could not load every attachment')
+            return result
+        except BaseException:
+            session.context.clear()
+            session.context.update(existing)
+            raise
+        finally:
+            self.close()
 
-    return JSONResponse({"ok": True, "files": saved})
-
+    def close(self):
+        self.directory.cleanup()

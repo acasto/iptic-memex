@@ -187,7 +187,7 @@ class ChatCommandsAction(InteractionAction):
                 'kind': 'builtin',
                 'path': [cmd, sub],
                 'argv': argv,
-                'method': 'handle_' + (cmd if cmd != 'help' else 'help'),
+                'method': handler['action'],
                 'args': list(argv),
             }
         return {'kind': 'error', 'message': 'Invalid command handler configuration.'}

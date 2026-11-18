@@ -12,8 +12,7 @@ Usage:
   python web/selftest.py
 """
 
-import json
-import time
+from configparser import ConfigParser
 from typing import Any, Dict, List, Optional
 
 try:
@@ -31,41 +30,10 @@ if _root not in sys.path:
 
 from web.app import WebApp
 from ui.web import WebUI
-from base_classes import InteractionNeeded, Completed, Updates
-
-
-class FakeOutput:
-    def __init__(self) -> None:
-        self._buf: List[str] = []
-
-    def write(self, message: Any = "", **kwargs: Any) -> None:
-        self._buf.append(str(message))
-
-    def pop(self) -> str:
-        s = "".join(self._buf)
-        self._buf.clear()
-        return s
-
-
-class FakeUtils:
-    def __init__(self) -> None:
-        self.output = FakeOutput()
-
-    def replace_output(self, out) -> None:
-        self.output = out
-
-
-class ChatContext:
-    def __init__(self) -> None:
-        self._msgs: List[Dict[str, Any]] = []
-
-    def add(self, content: str, role: str, contexts: Optional[list] = None) -> None:
-        self._msgs.append({"role": role, "content": content, "contexts": contexts or []})
-
-    def get(self, kind: str) -> Any:
-        if kind == "all":
-            return list(self._msgs)
-        return None
+from base_classes import InteractionNeeded, Completed
+from component_registry import ComponentRegistry
+from config_manager import SessionConfig
+from session import Session
 
 
 class FakeProvider:
@@ -85,27 +53,6 @@ class FakeProvider:
 
     def get_cost(self) -> float:
         return self._cost
-
-
-class FakeProcessContexts:
-    def get_contexts(self, session) -> list:
-        return []
-
-
-class FakeAssistantCommands:
-    def parse_commands(self, text: str) -> list:
-        return []
-
-
-class FakeUserCommands:
-    def __init__(self) -> None:
-        # Map a simple command to the fake stepwise action
-        self.commands = {
-            "fake:ask": {
-                "description": "Trigger fake stepwise ask",
-                "function": {"type": "action", "name": "fake_step"},
-            }
-        }
 
 
 class FakeStepwiseAction:
@@ -136,58 +83,23 @@ class FakeStepwiseAction:
         return Completed({"echo": resp})
 
 
-class FakeSession:
-    def __init__(self) -> None:
-        self.utils = FakeUtils()
-        self._contexts: Dict[str, Any] = {"chat": ChatContext()}
-        self._actions: Dict[str, Any] = {}
-        self._flags: Dict[str, Any] = {}
-        self._params: Dict[str, Any] = {"stream": False, "model": "fake-model", "provider": "fake"}
-        # UI is WebUI; the server will intercept emit for capture
+class FakeSession(Session):
+    """A real interactive session with isolated configuration and an offline provider."""
+
+    def __init__(self):
+        settings, models = ConfigParser(), ConfigParser()
+        settings.read_dict({'DEFAULT': {'default_model': 'fake-model'},
+                                      'TOOLS': {'tool_mode': 'official'}})
+        models.read_dict({'fake-model': {'provider': 'fake'}})
+        config = SessionConfig(settings, models)
+        super().__init__(config, ComponentRegistry(config), private=True)
         self.ui = WebUI(self)
+        self.provider = FakeProvider()
+        self._actions = {'fake_step': FakeStepwiseAction(self)}
+        self.add_context('chat')
 
-        # Install known actions
-        self._actions["process_contexts"] = FakeProcessContexts()
-        self._actions["assistant_commands"] = FakeAssistantCommands()
-        self._actions["user_commands"] = FakeUserCommands()
-        self._actions["fake_step"] = FakeStepwiseAction(self)
-
-    def get_params(self) -> Dict[str, Any]:
-        return dict(self._params)
-
-    def set_option(self, key: str, value: Any) -> None:
-        self._params[key] = value
-
-    def get_option(self, section: str, key: str, fallback: Any = None) -> Any:
-        # Only TOOLS.allow_auto_submit in runner path; return fallback
-        return fallback
-
-    def get_flag(self, name: str) -> Any:
-        return self._flags.get(name)
-
-    def set_flag(self, name: str, value: Any) -> None:
-        self._flags[name] = value
-
-    def get_context(self, name: str):
-        return self._contexts.get(name)
-
-    def add_context(self, name: str, value: Optional[Any] = None):
-        if name == "chat":
-            ctx = self._contexts.get("chat") or ChatContext()
-            self._contexts["chat"] = ctx
-            return ctx
-        self._contexts[name] = value
-        return value
-
-    def remove_context_type(self, name: str) -> None:
-        if name in self._contexts and name not in ("prompt", "chat"):
-            self._contexts.pop(name, None)
-
-    def get_action(self, name: str):
-        return self._actions.get(name)
-
-    def get_provider(self):
-        return FakeProvider()
+    def get_action(self, name):
+        return self._actions.get(name) or super().get_action(name)
 
 
 def run_selftest() -> int:

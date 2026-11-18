@@ -25,12 +25,18 @@ class WebState:
     reusable helper that route handlers (or a lightweight app builder) can use.
     """
 
+    ttl = 900
+
     def __init__(self, session) -> None:
+        from app.chat import configure_chat
+        from app.session_host import SessionHost
+        configure_chat(session)
+        self.host = SessionHost(session, owns_session=False)
+        self.active = None
+        self.command_token = None
         self.session = session
         self._secret = secrets.token_bytes(32)
         self._states: Dict[str, ActionState] = {}
-        # Optional: cooperative cancellation per issued token
-        self._cancel_events: Dict[str, Any] = {}
 
     def sign(self, payload: bytes) -> str:
         return hmac.new(self._secret, payload, hashlib.sha256).hexdigest()
@@ -39,6 +45,11 @@ class WebState:
         self, action_name: str, step: int, phase: str, data: Dict[str, Any]
     ) -> str:
         issued_at = time.time()
+        for key in [key for key, value in self._states.items()
+                    if issued_at - value.issued_at > self.ttl]:
+            expired = self._states.pop(key)
+            if expired.phase == 'upload' and expired.data.get('batch'):
+                expired.data['batch'].cleanup()
         payload = f"{action_name}|{step}|{phase}|{issued_at}".encode()
         sig = self.sign(payload)
         token = f"{sig}:{issued_at}:{action_name}:{step}:{phase}"
@@ -75,28 +86,28 @@ class WebState:
             return None, "Token expired"
         return st, None
 
-    # ---- Cancellation helpers (optional) ----
-    def register_cancel_event(self, token: str, event: Any) -> None:
-        try:
-            self._cancel_events[token] = event
-        except Exception:
-            pass
+    def take_upload(self, token):
+        """Claim a batch once; the caller owns its temporary files until loading ends."""
+        st, reason = self.verify_token(token)
+        if not st or st.phase != 'upload':
+            raise ValueError(reason or 'Invalid upload token')
+        st.used = True
+        return st.data.pop('batch'), st.data.pop('paths')
 
-    def trigger_cancel(self, token: str) -> bool:
-        ev = self._cancel_events.get(token)
-        try:
-            if ev is not None:
-                # Support threading.Event-like objects
-                if hasattr(ev, 'set') and callable(getattr(ev, 'set')):
-                    ev.set()
-                    return True
-        except Exception:
-            pass
-        return False
+    def busy(self):
+        if self.command_token and not self.verify_token(self.command_token)[0]:
+            self.command_token = self.active = None
+        handle = getattr(self.active, 'handle', None)
+        if handle and handle.done():
+            self.active = None
+        return self.active is not None
 
-    def clear_cancel_event(self, token: str) -> None:
-        try:
-            if token in self._cancel_events:
-                del self._cancel_events[token]
-        except Exception:
-            pass
+    def close(self):
+        if getattr(self.active, 'handle', None):
+            self.active.cancel()
+        self.host.close()
+        self.active = None
+        for state in self._states.values():
+            if state.phase == 'upload' and state.data.get('batch'):
+                state.data['batch'].cleanup()
+        self._states.clear()

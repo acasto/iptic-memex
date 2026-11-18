@@ -57,7 +57,8 @@ class WebApp:
                 except Exception:
                     pass
         try:
-            uvicorn.run(self._app, host=str(bind_host), port=int(bind_port), log_level='info')
+            uvicorn.run(self._app, host=str(bind_host), port=int(bind_port), log_level='info',
+                        access_log=not self.session.private)
         finally:
             try:
                 self.session.handle_exit(confirm=False)

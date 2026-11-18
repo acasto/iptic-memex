@@ -31,7 +31,7 @@ on('controller:chat:send', async (ev) => {
     if (res && res.needs_interaction && res.state_token) {
       emit('action:needs', { needs: res.needs_interaction, stateToken: res.state_token, updates: res.updates || [], text: res.text || '' });
     } else {
-      emit('chat:response', { text: (res && res.text) || '', updates: (res && res.updates) || [], handled: !!(res && res.handled), command: (res && res.command) || null });
+      emit('chat:response', { text: [res.text, res.error].filter(Boolean).join('\n'), updates: (res && res.updates) || [], handled: !!(res && res.handled), command: (res && res.command) || null });
     }
   } catch (e) {
     emit('chat:error', { message: e && e.message ? e.message : String(e) });
@@ -48,14 +48,13 @@ on('controller:stream:start', async (ev) => {
   const messageId = d.messageId;
   if (!text) return;
   try {
-    const init = await apiStreamStart(text);
+    const init = await apiStreamStart(text, d.stream, d.uploadToken);
     const token = init && init.token; if (!token) throw new Error('No stream token');
     const es = openEventSource(token, { messageId });
     _streams.set(messageId, { es, token });
     _currentStreamId = messageId;
   } catch (e) {
-    // Fallback to non-stream
-    emit('controller:chat:send', { text });
+    emit('sse:error', { messageId, message: e.message });
   }
 });
 
@@ -80,12 +79,9 @@ on('controller:stream:stop', async () => {
   const rec = _streams.get(id);
   if (!rec) return;
   try {
-    try { rec.es.close(); } catch {}
-    try { await apiStreamCancel(rec.token); } catch {}
-  } finally {
-    _streams.delete(id);
-    _currentStreamId = null;
-    emit('stream:stopped', { messageId: id });
+    await apiStreamCancel(rec.token);
+  } catch (error) {
+    emit('action:error', { message: error.message });
   }
 });
 
@@ -118,8 +114,10 @@ on('controller:action:resume', async (ev) => {
   if (!token) return;
   try {
     const res = await actionResume(token, response);
-    if (res && res.done) {
-      emit('action:done', { action: d.action || null, args: d.args || null, payload: res.payload, updates: res.updates || [], text: res.text || '' });
+    if (res.accepted) {
+      emit('action:accepted', {});
+    } else if (res && res.done) {
+      emit('action:done', { action: res.command || d.action || null, args: d.args || null, payload: res.payload, updates: res.updates || [], text: res.text || '' });
     } else if (res && res.needs_interaction && res.state_token) {
       emit('action:needs', { action: d.action || null, args: d.args || null, needs: res.needs_interaction, stateToken: res.state_token, updates: res.updates || [], text: res.text || '' });
     } else {

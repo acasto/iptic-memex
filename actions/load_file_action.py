@@ -155,10 +155,12 @@ class LoadFileAction(StepwiseAction):
                             loaded.append(path)
                             continue
                         ctx = self.session.add_context('file', path)
+                        if ctx is None:
+                            continue
                         existing.add(abs_path)
                         # If this came from a web upload, adjust metadata and remove temp file
                         try:
-                            if uploads_dir_abs and os.path.abspath(path).startswith(uploads_dir_abs):
+                            if uploads_dir_abs and os.path.commonpath([os.path.abspath(path), uploads_dir_abs]) == uploads_dir_abs:
                                 original_name = os.path.basename(path)
                                 try:
                                     if hasattr(ctx, 'file') and isinstance(ctx.file, dict):
@@ -176,7 +178,7 @@ class LoadFileAction(StepwiseAction):
                     else:
                         # If processed and was a web upload, remove the temp file
                         try:
-                            if uploads_dir_abs and os.path.abspath(path).startswith(uploads_dir_abs):
+                            if uploads_dir_abs and os.path.commonpath([os.path.abspath(path), uploads_dir_abs]) == uploads_dir_abs:
                                 _ = self.session.utils.fs.delete_file(path)
                         except Exception:
                             pass

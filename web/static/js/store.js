@@ -83,6 +83,5 @@ export function updateMessage(id, patch) {
 }
 
 export function clearMessages() {
-  state = { ...state, messages: [] };
-  emit('store:change', { state, patch: { messages: state.messages } });
+  setState({ messages: [] });
 }

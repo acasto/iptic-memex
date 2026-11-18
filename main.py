@@ -366,15 +366,15 @@ def tui(ctx, file, resume):
 @cli.command()
 @click.pass_context
 @click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
-@click.option('--resume', default=None, is_flag=False, flag_value='__last__',
-              help='Resume session (most recent if no value)')
+@interactive_session_options
 @click.option('--host', default=None, help='Host interface to bind (overrides config)')
 @click.option('--port', type=int, default=None, help='Port to bind (overrides config)')
-def web(ctx, file, resume, host, port):
+def web(ctx, file, resume, latest, private, host, port):
     """Start Web mode (local browser UI)"""
     # Get builder and options from context
     builder = ctx.obj['BUILDER']
-    options = ctx.obj.get('OPTIONS', {})
+    resume = _interactive_resume(resume, latest, private)
+    options = {**ctx.obj.get('OPTIONS', {}), 'private': private}
 
     # Build session for Web mode
     try:
@@ -383,13 +383,7 @@ def web(ctx, file, resume, host, port):
         raise click.ClickException(str(e))
     ctx.obj['SESSION'] = session
 
-    _maybe_resume_session(session, resume=resume)
-
-    # Add file contexts if provided
-    file = _command_files(ctx, file)
-    if file:
-        for f in file:
-            session.add_context('file', f)
+    _prepare_frontend_session(session, resume, _command_files(ctx, file))
 
     # Start Web mode
     try:
@@ -651,6 +645,15 @@ def is_image_file(filename: str) -> bool:
     """Check if a file is an image based on the extension"""
     image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif')
     return filename.lower().endswith(image_extensions)
+
+
+def _prepare_frontend_session(session, resume, files):
+    from app.chat import attach_startup_files
+    session.pick_session_on_start = resume == '__pick__'
+    session.startup_files = files
+    if not session.pick_session_on_start:
+        _maybe_resume_session(session, resume=resume)
+        attach_startup_files(session)
 
 
 def _maybe_resume_session(session, *, resume: str | None) -> None:

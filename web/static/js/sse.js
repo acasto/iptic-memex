@@ -10,6 +10,13 @@ export function openEventSource(token, { onToken, onDone, onError, onUpdate, mes
     // Bus path
     emit('sse:token', { ...(data || {}), messageId });
   });
+  es.addEventListener('interaction', ev => {
+    const data = JSON.parse(ev.data);
+    emit('action:needs', { needs: data.needs_interaction, stateToken: data.state_token });
+  });
+  es.addEventListener('message', ev => {
+    try { emit('sse:message', { ...JSON.parse(ev.data), messageId }); } catch {}
+  });
   es.addEventListener('update', ev => {
     let data = null; try { data = JSON.parse(ev.data); } catch {}
     if (onUpdate) { try { onUpdate(data); } catch {} }

@@ -1,4 +1,4 @@
-import { apiStatus, apiParams, actionStart } from './api.js';
+import { getJSON, apiStatus, apiParams, actionStart, uploadFiles } from './api.js';
 import './controller.js';
 import { on, emit } from './bus.js';
 import { RafTextAppender } from './raf_batch.js';
@@ -168,55 +168,40 @@ function showToast(message) {
   }, 2000);
 }
 
-function processMarkdown(text) {
-  if (typeof marked === 'undefined') {
-    return text;
+// Copy only presentation elements from an inert template. No source attributes,
+// event handlers, embedded media, or raw HTML are inserted into the page.
+function renderMarkdown(target, text) {
+  target.textContent = text;
+  if (typeof marked === 'undefined') return;
+  const allowed = new Set('p br strong em del blockquote ul ol li pre code h1 h2 h3 h4 h5 h6 hr table thead tbody tr th td a'.split(' '));
+  const template = document.createElement('template');
+  template.innerHTML = marked.parse(text);
+  function copy(node) {
+    if (node.nodeType === Node.TEXT_NODE) return document.createTextNode(node.data);
+    const tag = node.localName;
+    if (!allowed.has(tag) || node.namespaceURI !== 'http://www.w3.org/1999/xhtml') {
+      return document.createTextNode(node.textContent || '');
+    }
+    const el = document.createElement(tag);
+    if (tag === 'a') {
+      try {
+        const url = new URL(node.getAttribute('href'));
+        if (['https:', 'http:', 'mailto:'].includes(url.protocol)) el.href = url.href;
+      } catch {}
+    }
+    if (tag === 'code' && /^language-[a-z0-9_-]+$/i.test(node.className)) el.className = node.className;
+    el.append(...Array.from(node.childNodes, copy));
+    return el;
   }
-  
-  try {
-    // First convert markdown to HTML
-    let html = marked.parse(text);
-    
-    // Post-process to add copy buttons to code blocks
-    html = html.replace(/<pre><code class="language-(\w+)">([\s\S]*?)<\/code><\/pre>/g, (match, lang, code) => {
-      const cleanCode = code.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-      return `
-        <pre>
-          <div class="code-block-header">
-            <span class="code-language">${lang || 'text'}</span>
-            <button class="code-copy-btn" onclick="copyCodeBlock(this)">Copy</button>
-          </div>
-          <code class="language-${lang}">${code}</code>
-        </pre>
-      `;
-    });
-    
-    // Handle code blocks without language specification
-    html = html.replace(/<pre><code>([\s\S]*?)<\/code><\/pre>/g, (match, code) => {
-      return `
-        <pre>
-          <div class="code-block-header">
-            <span class="code-language">text</span>
-            <button class="code-copy-btn" onclick="copyCodeBlock(this)">Copy</button>
-          </div>
-          <code>${code}</code>
-        </pre>
-      `;
-    });
-    
-    return html;
-  } catch (e) {
-    console.warn('Markdown processing failed:', e);
-    return text;
+  target.replaceChildren(...Array.from(template.content.childNodes, copy));
+  for (const block of target.querySelectorAll('pre > code')) {
+    const button = document.createElement('button');
+    button.className = 'code-copy-btn';
+    button.textContent = 'Copy';
+    button.onclick = () => copyToClipboard(block.textContent);
+    block.before(button);
   }
 }
-
-// Global function for code block copy buttons
-window.copyCodeBlock = function(button) {
-  const codeBlock = button.closest('pre').querySelector('code');
-  const text = codeBlock.textContent;
-  copyToClipboard(text);
-};
 
 function clearMessagesDOM() {
   log.innerHTML = ''; // Clear all children
@@ -282,7 +267,7 @@ function renderMessageNode(msg) {
         contentSpan.classList.remove('scope-content');
         const text = msg.text || '';
         if (text.includes('```') || text.includes('`') || text.includes('##') || text.includes('**')) {
-          contentSpan.innerHTML = processMarkdown(text);
+          renderMarkdown(contentSpan, text);
           if (typeof Prism !== 'undefined') {
             Prism.highlightAllUnder(contentSpan);
           }
@@ -325,7 +310,7 @@ function renderMessageNode(msg) {
   } else {
     const text = msg.text || '';
     if (text.includes('```') || text.includes('`') || text.includes('##') || text.includes('**')) {
-      content.innerHTML = processMarkdown(text);
+      renderMarkdown(content, text);
       if (typeof Prism !== 'undefined') {
         Prism.highlightAllUnder(content);
       }
@@ -493,13 +478,22 @@ function partitionUpdatesForScopes(updates) {
   return { scopeUpdates, panelUpdates };
 }
 
+async function refreshHistory() {
+  const data = await getJSON('/api/history');
+  clearMessages();
+  clearMessagesDOM();
+  for (const row of data.messages) addAndRenderMessage(row.role, row.text);
+  if (data.pending) renderInteraction(data.pending.needs_interaction, data.pending.state_token);
+  else if (data.pick_session) sendNonStream('/load session');
+}
+
 async function refreshStatus() {
   try {
     const d = await apiStatus();
     const model = d && d.model ? d.model : 'unknown';
     const provider = d && d.provider ? d.provider : '';
     const text = model + (provider ? ` (${provider})` : '');
-    setState({ status: text });
+    setState({ status: d.private ? text + ' · Private' : text });
   } catch {
     setState({ status: 'Ready' });
   }
@@ -514,15 +508,28 @@ function sendNonStream(text) {
   emit('controller:chat:send', { text }); 
 }
 
-function sendStream(text) {
-  // Create an empty message bubble immediately for streaming
-  const msgId = addAndRenderMessage('assistant', '');
-  const node = _nodes.get(msgId);
-  const target = node.el.querySelector('.content');
-  node.el.classList.add('streaming');
-  
-  const appender = new RafTextAppender(target);
+function sendStream(text, uploadToken) {
+  let msgId, node, target, appender;
+  function newBubble() {
+    msgId = addAndRenderMessage('assistant', '');
+    node = _nodes.get(msgId);
+    target = node.el.querySelector('.content');
+    node.el.classList.add('streaming');
+    appender = new RafTextAppender(target);
+  }
+  newBubble();
+  sendBtn.disabled = true;
+  let nextMessage = false;
   const messageId = Math.random().toString(36).slice(2);
+  const offMessage = on('sse:message', ev => {
+    const data = ev.detail;
+    if (data.messageId !== messageId) return;
+    if (nextMessage && data.text) newBubble();
+    appender.finish();
+    updateMessage(msgId, { text: data.text || '' });
+    renderMessageNode(getState().messages.find(m => m.id === msgId));
+    nextMessage = data.intermediate && Boolean(data.text);
+  });
 
   // Wire bus listeners scoped by messageId
   const offToken = on('sse:token', (ev) => {
@@ -538,6 +545,10 @@ function sendStream(text) {
       });
       appendScopeStreamingChunk(scopeMessageId, d.text || '');
       return;
+    }
+    if (nextMessage) {
+      newBubble();
+      nextMessage = false;
     }
     const wasAtBottom = isAtBottom(log);
     appender.append(d && d.text ? d.text : '');
@@ -555,7 +566,6 @@ function sendStream(text) {
     const d = ev && ev.detail;
     if (!d || d.messageId !== messageId) return;
     const origin = (d.origin || '').toLowerCase();
-    console.log('[scope-update-event]', d);
     if (origin !== 'tool' && origin !== 'command') return;
     const scopeMessageId = ensureScopeMessage({
       origin,
@@ -573,6 +583,7 @@ function sendStream(text) {
     const d = ev && ev.detail; if (!d || d.messageId !== messageId) return;
     try {
       node.el.classList.remove('streaming');
+      if (panel.dataset.kind === 'interaction' && d.done) closePanel();
       if (d && d.updates) {
         const { scopeUpdates, panelUpdates } = partitionUpdatesForScopes(d.updates);
         setPanelUpdates(panelUpdates);
@@ -580,24 +591,14 @@ function sendStream(text) {
       }
       if (d && d.needs_interaction && d.state_token) renderInteraction(d.needs_interaction, d.state_token);
       
-      const finalText = target.textContent || '';
-      if (!finalText && d && d.text) {
-        target.textContent = d.text;
-      }
-      
-      // Process final message for markdown/code blocks
-      if (finalText || d.text) {
-        const text = finalText || d.text;
-        if (text.includes('```') || text.includes('`') || text.includes('##') || text.includes('**')) {
-          target.innerHTML = processMarkdown(text);
-          if (typeof Prism !== 'undefined') {
-            Prism.highlightAllUnder(target);
-          }
-        }
-      }
-      
-      appendMessage(msgId, target.textContent || target.innerText || '');
-    } finally { offToken(); offUpdate(); offDone(); offErr(); }
+      appender.finish();
+      const text = d.text || (nextMessage ? target.textContent : d.error) || '';
+      updateMessage(msgId, { text });
+      renderMessageNode(getState().messages.find(m => m.id === msgId));
+      if (d.status && d.status !== 'completed') showToast(d.error || d.status);
+      if (d.command) refreshStatus();
+      if (d.command === 'clear_chat' || d.command === 'manage_sessions') refreshHistory();
+    } finally { sendBtn.disabled = false; offToken(); offMessage(); offUpdate(); offDone(); offErr(); }
   });
   
   const offErr = on('sse:error', (ev) => {
@@ -606,13 +607,13 @@ function sendStream(text) {
       node.el.classList.remove('streaming');
       target.textContent += ' [error] ' + (d && d.message ? d.message : '');
       appendMessage(msgId, target.textContent || '');
-    } finally { offToken(); offUpdate(); offDone(); offErr(); }
+    } finally { sendBtn.disabled = false; offToken(); offMessage(); offUpdate(); offDone(); offErr(); }
   });
 
   // Show Stop while active
   if (stopBtn) stopBtn.style.display = 'inline-block';
 
-  emit('controller:stream:start', { text, messageId });
+  emit('controller:stream:start', { text, messageId, stream: getState().stream, uploadToken });
 }
 
 // Global bus bindings for non-stream responses and actions
@@ -626,6 +627,7 @@ on('chat:response', (ev) => {
     setPanelUpdates(panelUpdates);
     ingestScopeUpdates(scopeUpdates, assistantId);
   }
+  if (d.command === 'manage_sessions') refreshHistory();
   if (d.handled && d.command === 'clear_chat') {
     clearMessages();
     setState({ updates: [] });
@@ -649,6 +651,9 @@ on('action:done', (ev) => {
   hideTypingIndicator();
   // For reprint_chat, prefer rendering the conversation in the chat log,
   // and avoid opening the updates panel.
+  if (panel.dataset.kind === 'interaction') closePanel();
+  if (d.action) refreshStatus();
+  if (d.action === 'manage_sessions') refreshHistory();
   if (d.action === 'reprint_chat') {
     let textOut = d.text || '';
     if (!textOut && Array.isArray(d.updates)) {
@@ -671,6 +676,15 @@ on('action:done', (ev) => {
   }
 });
 
+on('chat:error', ev => {
+  hideTypingIndicator();
+  showToast(ev.detail.message);
+});
+
+on('action:accepted', () => {
+  if (panel.dataset.kind === 'interaction') closePanel();
+});
+
 on('action:error', (ev) => {
   const d = ev && ev.detail; 
   hideTypingIndicator();
@@ -685,14 +699,31 @@ on('upload:error', (ev) => {
 });
 
 // Send button and enter key handling
-function handleSend() {
+let attaching = false;
+async function handleSend() {
+  if (attaching || sendBtn.disabled) return;
   const text = (msg.value || '').trim();
   if (!text && _attachedFiles.length === 0) return;
   
+  let uploadToken;
   // Handle file uploads if any files are attached
   if (_attachedFiles.length > 0) {
-    emit('controller:upload', { files: _attachedFiles });
-    clearPreviews();
+    attaching = true;
+    try {
+      const upload = await uploadFiles(_attachedFiles);
+      if (!upload.ok) throw new Error(upload.error?.message || 'Upload failed');
+      uploadToken = upload.upload_token;
+      if (!text) {
+        const result = await actionStart('load_file', {}, null, uploadToken);
+        if (!result.ok) throw new Error(result.payload?.error || 'Attachment load failed');
+      }
+      clearPreviews();
+    } catch (error) {
+      showToast(error.message);
+      return;
+    } finally {
+      attaching = false;
+    }
   }
   
   if (text) {
@@ -700,10 +731,7 @@ function handleSend() {
     msg.value = '';
     updateTextareaHeight();
     
-    if (getState().stream) sendStream(text); 
-    else {
-      sendNonStream(text);
-    }
+    sendStream(text, uploadToken);
   }
 }
 
@@ -751,6 +779,7 @@ if (streamEl) {
 }
 
 refreshStatus();
+refreshHistory().catch(e => showToast(e.message));
 
 // Jump to latest control
 if (jumpBtn) {
@@ -796,7 +825,11 @@ function closePanel() {
 }
 
 // Close panel when clicking overlay
-panelOverlay?.addEventListener('click', closePanel);
+panelOverlay?.addEventListener('click', () => {
+  if (panel.dataset.kind === 'interaction') {
+    document.getElementById('cancelInteraction')?.click();
+  } else closePanel();
+});
 
 function renderStatus(message, level='info') {
   const d = document.createElement('div'); 
@@ -890,6 +923,7 @@ function renderInteraction(needs, stateToken) {
         const option = document.createElement('option');
         option.value = opt;
         option.textContent = opt;
+        option.selected = opt === spec.default;
         input.appendChild(option);
       }
     }
@@ -897,7 +931,7 @@ function renderInteraction(needs, stateToken) {
     input = document.createElement('input');
     input.type = 'checkbox';
     input.checked = !!spec.default;
-  } else if (kind === 'text' && spec.multiline) {
+  } else if (kind === 'files' || (kind === 'text' && spec.multiline)) {
     input = document.createElement('textarea');
     input.className = 'form-textarea';
     input.value = spec.default || '';
@@ -932,13 +966,14 @@ function renderInteraction(needs, stateToken) {
       response = Array.from(input.querySelectorAll('input[type="checkbox"]:checked')).map(x => x.value);
     } else if (kind === 'choice') {
       response = input.value;
+    } else if (kind === 'files') {
+      response = input.value.split('\n').map(path => path.trim()).filter(Boolean);
     } else if (kind === 'bool') {
       response = !!input.checked;
     } else {
       response = input.value;
     }
     emit('controller:action:resume', { stateToken, response });
-    closePanel();
   };
   
   document.getElementById('cancelInteraction').onclick = async () => {
@@ -1032,17 +1067,6 @@ if (newChatBtn) {
   });
 }
 
-on('upload:done', (ev) => {
-  const files = (ev && ev.detail && ev.detail.files) || [];
-  const paths = files.map(x => x.path);
-  if (!paths.length) { 
-    showToast('No files uploaded');
-    return; 
-  }
-  showToast(`Uploaded ${paths.length} file(s)`);
-  emit('controller:action:start', { action: 'load_file', args: { files: paths }, content: null });
-});
-
 // ---- Chat management panel ----
 if (chatsBtn) {
   chatsBtn.addEventListener('click', async () => {
@@ -1125,7 +1149,7 @@ async function openSaveDialog() {
     </div>
     <div class="form-group">
       <label class="form-label" for="saveFilename">Filename</label>
-      <input class="form-input" id="saveFilename" type="text" value="${defName}" />
+      <input class="form-input" id="saveFilename" type="text" />
     </div>
     <div class="form-group">
       <label class="form-label">Options</label>
@@ -1137,6 +1161,7 @@ async function openSaveDialog() {
     </div>
   `;
   panel.appendChild(container);
+  document.getElementById('saveFilename').value = defName;
   setTimeout(() => document.getElementById('saveFilename')?.select(), 50);
 
   document.getElementById('saveCancel').onclick = () => closePanel();
@@ -1202,7 +1227,7 @@ async function loadChatsList() {
       listEl.innerHTML = '<div class="empty-state">No saved chats found</div>';
     }
   } catch (e) {
-    listEl.innerHTML = '<div class="error-state">Error loading chats: ' + (e.message || e) + '</div>';
+    listEl.textContent = 'Error loading chats: ' + (e.message || e);
   }
 }
 
@@ -1255,16 +1280,7 @@ function renderChatsList(chatsText) {
     return;
   }
   
-  const itemsHtml = chatItems.map(chatFile => `
-    <div class="chat-item">
-      <span class="chat-name">${chatFile}</span>
-      <div class="chat-actions">
-        <button class="btn btn-sm btn-primary" onclick="loadChat('${chatFile}')" title="Load this chat">📂 Load</button>
-      </div>
-    </div>
-  `).join('');
-  
-  listEl.innerHTML = itemsHtml;
+  renderChatsListFromData(chatItems.map(filename => ({filename})));
 }
 
 function renderChatsListFromData(chatsArray) {
@@ -1276,21 +1292,20 @@ function renderChatsListFromData(chatsArray) {
     return;
   }
   
-  const itemsHtml = chatsArray.map(chat => {
-    const displayName = chat.name || chat.filename || chat.path || 'Unknown';
-    const chatFile = chat.filename || chat.name || chat.path || displayName;
-    
-    return `
-      <div class="chat-item">
-        <span class="chat-name">${displayName}</span>
-        <div class="chat-actions">
-          <button class="btn btn-sm btn-primary" onclick="loadChat('${chatFile}')" title="Load this chat">📂 Load</button>
-        </div>
-      </div>
-    `;
-  }).join('');
-  
-  listEl.innerHTML = itemsHtml;
+  listEl.replaceChildren();
+  for (const chat of chatsArray) {
+    const row = document.createElement('div');
+    row.className = 'chat-item';
+    const name = document.createElement('span');
+    name.className = 'chat-name';
+    name.textContent = chat.name || chat.filename || chat.path;
+    const button = document.createElement('button');
+    button.className = 'btn btn-sm btn-primary';
+    button.textContent = 'Load';
+    button.onclick = () => window.loadChat(chat.filename || chat.name || chat.path);
+    row.append(name, button);
+    listEl.append(row);
+  }
 }
 
 // Global function for loading chats
@@ -1300,14 +1315,7 @@ window.loadChat = async function(chatFile) {
     showToast(`Loading chat: ${chatFile}`);
     const res = await (await import('./api.js')).actionStart('manage_chats', { mode: 'load', file: chatFile }, null);
     if (res && res.done && res.payload && res.payload.loaded) {
-      const msgs = Array.isArray(res.payload.messages) ? res.payload.messages : [];
-      clearMessages();
-      clearMessagesDOM();
-      for (const m of msgs) {
-        const role = (m && m.role) === 'assistant' ? 'assistant' : 'user';
-        const text = stripAnsi((m && (m.text || m.message)) || '');
-        addAndRenderMessage(role, text);
-      }
+      await refreshHistory();
     } else {
       showToast('Loaded chat, but no messages found');
     }
@@ -1444,7 +1452,7 @@ function confirmPanel(message) {
       </div>
       
       <div class="form-group">
-        <p>${message || 'Are you sure?'}</p>
+        <p></p>
       </div>
       
       <div class="form-actions">
@@ -1455,6 +1463,7 @@ function confirmPanel(message) {
     
     panel.appendChild(container);
     
+    container.querySelector('p').textContent = message || 'Are you sure?';
     document.getElementById('confirmYes').onclick = () => { closePanel(); resolve(true); };
     document.getElementById('confirmNo').onclick = () => { closePanel(); resolve(false); };
     
@@ -1494,10 +1503,8 @@ async function openStatsPanel() {
     const usageEl = document.getElementById('statsUsage');
     const costEl = document.getElementById('statsCost');
     try {
-      const [u, c] = await Promise.all([
-        actionStart('show', ['usage'], null),
-        actionStart('show', ['cost'], null),
-      ]);
+      const u = await actionStart('show', ['usage'], null);
+      const c = await actionStart('show', ['cost'], null);
       const uLines = (u && Array.isArray(u.updates)) ? u.updates.map(x => x && x.message ? String(x.message) : '').filter(Boolean) : [];
       const cLines = (c && Array.isArray(c.updates)) ? c.updates.map(x => x && x.message ? String(x.message) : '').filter(Boolean) : [];
       usageEl.textContent = uLines.length ? uLines.join('\n') : 'No usage data.';

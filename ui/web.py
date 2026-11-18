@@ -51,5 +51,6 @@ class WebUI(UI):
         self._raise('files', {'prompt': prompt, 'accept': accept, 'multiple': multiple, 'must_exist': must_exist})
 
     def emit(self, event_type: str, data: Dict[str, Any]) -> None:
-        # No-op here; web layer will surface updates through dedicated channels
-        return
+        channel = getattr(self.session, 'runtime_events', None)
+        if channel:
+            channel.emit(event_type, data)

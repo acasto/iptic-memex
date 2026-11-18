@@ -211,7 +211,7 @@ def create_app(session, webstate: WebState | None = None) -> Starlette:
         _st = time.time()
         try:
             if lg: lg.web_event('route_begin', {'path': '/api/upload', 'method': request.method}, component='web.routes')
-            res = await _api_upload(request)
+            res = await _api_upload(request, webstate)
             return res
         finally:
             try:
@@ -220,8 +220,13 @@ def create_app(session, webstate: WebState | None = None) -> Starlette:
             except Exception:
                 pass
 
+    async def api_history(request):
+        from web.routes.meta import handle_api_history
+        return await handle_api_history(ctx, request)
+
     routes = [
         Route('/', _index_handler_factory(os.path.join(os.path.dirname(__file__), 'static', 'index.html'))),
+        Route('/api/history', api_history, methods=['GET']),
         Route('/api/status', api_status, methods=['GET']),
         Route('/api/params', api_params, methods=['GET']),
         Route('/api/models', api_models, methods=['GET']),
@@ -251,6 +256,8 @@ def create_app(session, webstate: WebState | None = None) -> Starlette:
         except Exception:
             pass
         yield
+        import asyncio
+        await asyncio.to_thread(webstate.close)
         # Shutdown: run session teardown (autosave, provider cleanup, etc.)
         try:
             session.handle_exit(confirm=False)
