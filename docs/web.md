@@ -1,30 +1,46 @@
-# Web and TUI notes
+# Web and TUI chat
 
-## Streaming behavior
+Start a local browser session with `python main.py web` or a terminal session with
+`python main.py tui`. Both use the interactive model and project settings, tool
+selection, write policy, hooks, input limits, and provider-call budget used by
+CLI chat. Each session accepts one active operation. A second browser tab shares
+the same conversation and approvals.
 
-Web/TUI streaming is MVP. When actions need input mid-stream, the server emits a terminal `done` SSE with a
-`needs_interaction` token; the client resumes over JSON.
+Use `--private` on either subcommand for a private session. Bare `--resume`
+opens a picker inside the interface. Use `--resume --latest` to load the newest
+session directly, or pass an ID or path. Web reloads the current conversation
+from the server. See [Sessions](sessions.md) for persistence and privacy details.
 
-Some advanced, loop-heavy commands are CLI-only today (for example, `manage_chats`, `save_code`, examples
-`debug_storage`). Web/TUI will display a warning if invoked.
+## Input and cancellation
 
-## Web uploads and file handling
+The TUI displays a modal when a tool requests input. Ctrl+S changes streaming
+between runs. Ctrl+X cancels the active run. In Web, answer in the interaction
+panel or use Stop. An approval continues the same run and action. Cancellation
+is cooperative and can take time while a provider is blocked.
 
-- Attach files via the upload button or drag-and-drop.
-- Files are uploaded to a temp folder and immediately loaded into context.
-- After loading, uploads are deleted; file contexts carry metadata:
-  - `name`: original filename for display
-  - `origin`: `upload`
-  - `server_path`: absolute path where the file landed (ephemeral)
-- Browsers do not expose local absolute paths; the assistant will not see your local path in Web mode.
+Workspace attachment commands are available in CLI chat. Workspace tasks and
+schedules continue to use their own CLI entry points.
 
-## Options panel
+## Browser transport
 
-Click the Options panel to set session params or tools options from a compact form. It includes presets for common keys
-and autocompletes from `/api/params`.
+The browser posts the message to `/api/stream/start` and opens the event stream
+using the returned single-use token. The stream carries text deltas, completed
+messages, tool activity, input requests, and the final outcome. The streaming
+toggle controls provider streaming. Stop targets the active run in either setting.
 
-## Development self-test (Web)
+`POST /api/chat` returns a JSON result. When the run needs input, JSON clients
+receive a `state_token` and can post it with a response to `/api/action/resume`.
+The same route handles standalone stepwise commands. Tokens expire after 15 minutes.
+Pending tool approvals live in memory and end when the server shuts down.
 
-- Quick check: `python web/selftest.py` runs a headless e2e against the Starlette app using a fake session.
-- Covers: `/api/status`, `/api/chat`, SSE `/api/stream`, action `needs_interaction` start -> resume, token reuse/expiry.
-- No external services required.
+An upload is staged in a temporary directory and returns an upload token. Sending
+a question with that token loads the files in the owning run before its first
+provider call. Sending files alone attaches them to the session for the next question.
+The browser options panel reads a limited set of display settings from `/api/params`.
+
+## Offline checks
+
+`python web/selftest.py` exercises JSON chat, SSE, stepwise input, token reuse,
+and expiry with an offline provider. Run `python -m pytest -q tests/web tests/tui`
+for tool continuations, cancellation, uploads, browser route contracts, and
+headless Textual interaction.

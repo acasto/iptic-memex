@@ -1,9 +1,8 @@
 # Shared core runtime
 
-Completion, CLI chat, agents, and internal helpers share requests, ordered events, explicit outcomes, and
+Completion, CLI/Web/TUI chat, agents, and internal helpers share requests, ordered events, explicit outcomes, and
 one provider/tool execution lifecycle. Application/session assembly, workflow
-services, and terminal rendering sit outside execution. Web/TUI still use the
-isolated `legacy/turns.py` executor pending migration. The separate `workspace/`
+services, and terminal rendering sit outside execution. Web and TUI submit interactive chat tasks through SessionHost. The separate `workspace/`
 package owns the current research algorithm, artifacts, and subprocess supervision.
 
 ## Supported behavior
@@ -182,8 +181,8 @@ an action may still include relevant input in its explicit tool result.
 
 Existing actions' ask_*/emit calls pass through one action-service bridge during
 execution; the runtime never inspects UI capability/blocking flags. New actions
-can address `session.interactions` directly. Legacy frontend adapters remain
-outside this contract until migrated.
+can address `session.interactions` directly. Web and TUI answer pending input
+through their live run handles.
 
 Cancellation is cooperative around invocation and between stream items. It
 cannot forcibly interrupt a backend blocked in native/network code. Workspace
@@ -219,8 +218,7 @@ fabricated empty user turns, and provider adapters encode them as context input.
 
 Continued goal pursuit, an asynchronous run handle, durable resume, hard deadlines,
 and research scheduling remain outside this slice. Chat keeps its existing
-memory/MCP/autosave startup and application-owned hooks. Web/TUI have not been
-migrated or rebuilt; their old continuation paths remain until migration.
+memory/MCP/autosave startup and application-owned hooks. Web and TUI reuse these chat callbacks with explicit live input services.
 
 ## Validation
 

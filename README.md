@@ -2,8 +2,8 @@
 
 Iptic Memex is a command-line LLM workbench. It supports CLI chat, completion, agent, TUI, and Web modes, plus a flexible tool system, RAG, and optional hooks for sidecar analysis.
 
-Completion, CLI chat, bounded agents, internal helpers, and workspace workers now
-share the event-based core runtime. Web/TUI retain their legacy executor. See
+Completion, CLI/Web/TUI chat, bounded agents, internal helpers, and workspace workers
+share the event-based core runtime. See
 [the runtime notes](docs/core-runtime.md) for the current boundary and deferred services.
 The experimental research engine is contained in `workspace/`, with a runtime
 adapter that uses the same providers and tools as other headless runs. The

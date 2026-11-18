@@ -199,3 +199,32 @@ def test_save_and_resume_preserve_creation_time_and_title(resume_session, tmp_pa
     assert data['created'] == 100.0
     assert data['updated'] == 300.0
     assert data['title'] == 'A useful name'
+
+
+@pytest.mark.parametrize('mode', ['web', 'tui'])
+def test_frontend_launch_flags_reject_private_resume_before_startup(mode):
+    result = CliRunner().invoke(main.cli, [mode, '--private', '--resume'])
+    assert result.exit_code == 2 and '--private cannot be combined with --resume' in result.output
+
+
+def test_web_startup_picker_preserves_launch_attachment(tmp_path):
+    from starlette.testclient import TestClient
+    from web.app_factory import create_app
+    from web.selftest import FakeSession
+
+    session = FakeSession()
+    session.private = False
+    session.config.base_config['SESSIONS'] = {'session_directory': str(tmp_path)}
+    write_session(tmp_path, 'saved', 100)
+    attachment = tmp_path / 'launch.txt'
+    attachment.write_text('Launch attachment')
+    main._prepare_frontend_session(session, '__pick__', [str(attachment)])
+    with TestClient(create_app(session)) as client:
+        assert client.get('/api/history').json()['pick_session']
+        reply = client.post('/api/chat', json={'message': '/load session'}).json()
+        choice = reply['needs_interaction']['spec']['options'][0]
+        result = client.post('/api/action/resume', json={
+            'state_token': reply['state_token'], 'response': choice}).json()
+        assert result['payload']['ok'] and session.session_uid == 'saved'
+        assert client.get('/api/history').json()['messages'][0]['text'].startswith('saved')
+        assert session.get_context('file').get()['content'] == 'Launch attachment'

@@ -15,7 +15,7 @@
 - Application assembly: `app/session_builder.py`; completion policy/services in
   `app/completion.py`, `app/chat.py`, and `app/agent.py`; isolated helpers in
   `app/runs.py`. Completion, CLI chat, agents, and workspace workers use
-  `core/runtime`. Only Web/TUI retain `legacy/turns.py` pending migration.
+  `core/runtime`. Web/TUI use the same chat policy through SessionHost.
   See `docs/core-runtime.md`.
 - Workspace: `workspace/engine.py` owns process supervision and synthesis;
   `state.py` and `report.py` read/write artifacts without model dependencies;
@@ -357,10 +357,9 @@ Gating and CLI‑only flows
 - Introspection: `show messages` surfaces assistant entries with Tool Calls metadata (name/id) alongside normal message text.
 
 ### Mid‑Turn Interactions (Confirmations)
-- Unified behavior (official + pseudo): When a tool/action requires user input mid‑turn, it raises `InteractionNeeded`. The shared runtime resolves input through InteractionService and resumes the same action instance. Legacy Web/TUI still use their session-scoped broker.
-- TUI broker: the TUI registers an interaction broker on the session; `prompt(need)` displays a modal and blocks the worker thread safely until the user responds.
-- Pseudo‑tools: assistant commands annotate `InteractionNeeded.spec` with `__action__`, `__args__`, `__content__`. The runner rehydrates `_current_args/_current_content` before calling `resume()` so state is preserved.
-- Output scoping: confirmations and resume output render in a tool bubble. The runner sets `__last_tool_scope__` for consistent grouping of auto‑submit summaries.
+- Unified behavior (official + pseudo): When a tool/action requires user input mid‑turn, it raises `InteractionNeeded`. The shared runtime resolves input through InteractionService and resumes the same action instance.
+- TUI modals and Web interaction panels answer the live run handle by request ID.
+- Web keeps standalone command instances across stepwise requests and validates responses.
 
 ### File Tool Confirmations + Diffs
 - Write/Append: the action computes a unified diff and shows it in the confirmation prompt.
@@ -373,7 +372,7 @@ Gating and CLI‑only flows
 
 ### Auto‑Submit (Follow‑up Assistant Turn)
 - Official tools require a `tool` role message with `tool_call_id` (tool result) before the assistant’s follow‑up. The runner emits this and sets `auto_submit`.
-- TUI fallback: if `allow_auto_submit=true`, a tool ran, and the last assistant text was empty, TUI schedules one follow‑up turn and reuses the prior empty assistant bubble for the reply (avoids extra bubbles).
+- Interactive frontends render runtime follow-ups. Explicit command auto-submit starts one chat task.
 
 ### Action Authoring (Prompts vs Exceptions)
 - Blocking UIs (CLI): do not raise `InteractionNeeded`; ask inline via `ui.ask_*`, then proceed (use `force=True` on the second pass to avoid re‑prompting).
@@ -591,14 +590,14 @@ max_completion_tokens = 4096
 - Auto-submit mechanics (centralized):
   - Tools set `session.auto_submit` (with `TOOLS.allow_auto_submit=True`).
   - `core/runtime` records native tool results and owns bounded follow-ups for CLI chat, completion, agents, and workspace workers, without synthetic empty user turns.
-  - Legacy Web/TUI still use their old auto-submit continuation under `legacy/turns.py`.
+  - Web/TUI use the same chat policy and bounded follow-ups through SessionHost.
   - Large-input gate: Interactive runs (Chat/TUI/Web) apply a centralized check during context processing. If combined context tokens exceed `TOOLS.large_input_limit` and `TOOLS.confirm_large_input=True`, auto-submit is cancelled so the user can review contexts before proceeding. Non-interactive runs (Completion/Agent/internal) use a separate `[AGENT].large_input_limit` and abort early with a structured error event when exceeded.
 
 ## Web/TUI Runner Notes
 - Endpoints: `/api/action/start|resume` for stepwise actions; `/api/chat` (non-stream) and `/api/stream` (SSE).
 - Command handling: `/api/chat` first matches `user_commands_action` to run actions/builtins (e.g., `/set model ...`) without contacting the LLM. Only slash-prefixed inputs are considered commands.
 - Interactions: `InteractionNeeded` yields `{needs_interaction, state_token}`; the client renders a widget and resumes via `/api/action/resume`. A cancel endpoint marks the token used.
-- Streaming: `TurnRunner` powers SSE. If a tool requests interaction mid‑stream, the server sends a terminal `done` event with `{needs_interaction, state_token}`; the client resumes via JSON.
+- Streaming: Web projects runtime events into SSE. The browser answers live input without closing the stream. JSON callers and older SSE clients receive a resumable input boundary.
   - Official tools: the provider detects function-call deltas during streaming and the runner executes tools after the stream completes; status updates appear in the updates panel.
 - Secure streaming start: the browser POSTs `/api/stream/start` with `{message}` and receives a short‑lived HMAC token; it then opens `EventSource('/api/stream?token=...')` to avoid logging sensitive content in URLs.
 - UI/UX: Web renders an updates/interaction panel (status/warning/error/progress) separate from the chat log, with Cancel and close controls. Attachments: 📎 button and drag‑and‑drop upload to `/api/upload`, then call `load_file` with server paths to skip prompts. Uploaded files are read into context and deleted immediately; file contexts record `{name, origin:'upload', server_path}`.
@@ -616,9 +615,8 @@ max_completion_tokens = 4096
 - Example user actions under `examples/user_actions` updated: `brave_search`, `brave_summary`, `debug_reload` (emits), and `debug_storage` gated to CLI.
 - CLI-only (for now): `manage_chats`, `save_code`, and `debug_storage` retain richer CLI interactions; Web/TUI will emit a warning if invoked.
 
-## Web/TUI Caveats (MVP)
-- Streaming: When a stepwise action needs input mid-stream, the server sends a terminal `done` event with `{needs_interaction, state_token}`. The client resumes via `/api/action/resume`.
-- Token store: Minimal in-memory store; next steps include TTL/monotonic step and stronger signatures.
+## Web/TUI lifecycle
+- Runs and pending approvals are process-local. Each frontend serializes session changes with active chat tasks.
 
 ## User Actions & Overrides
 - Users can override or extend core behavior without editing repo files:
@@ -747,7 +745,7 @@ Actions and core emit lightweight status signals that UIs render consistently ac
   - TUI suppresses generic “/<command> completed” for context‑modifying commands.
 
 - Where to hook in code:
-  - Tool events: `core/runtime/tools.py`; terminal rendering: `ui/`. Legacy frontend scopes remain in `legacy/turns.py`.
+  - Tool events: `core/runtime/tools.py`; terminal rendering: `ui/`. Web/TUI render shared runtime events.
   - Context emits: `actions/load_file_action.py`, `actions/assistant_file_tool_action.py`, helpers like `actions/markitdown_action.py` (metadata/index only).
   - CLI/Web/TUI sinks and scoping: `utils/output_utils.py` (tool_scope), `tui/output_sink.py`, `web/output_sink.py`, and `web/routes/stream.py` (attach scope on emits).
 

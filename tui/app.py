@@ -18,7 +18,8 @@ except ImportError:  # pragma: no cover - surfaced when textual missing
     TEXTUAL_AVAILABLE = False
 
 from base_classes import Completed, InteractionNeeded
-from legacy.turns import TurnRunner
+from app.chat import attach_startup_files, configure_chat, visible_history
+from app.session_host import SessionHost
 from tui.commands import CommandController
 from tui.input_completion import InputCompletionManager
 from tui.models import CommandItem
@@ -26,7 +27,6 @@ from tui.output_bridge import OutputBridge
 from tui.output_sink import OutputEvent, TuiOutput
 from tui.turn_executor import TurnExecutor
 
-from utils.output_utils import OutputHandler
 
 
 if TEXTUAL_AVAILABLE:
@@ -55,7 +55,7 @@ if TEXTUAL_AVAILABLE:
             Binding("ctrl+s", "toggle_stream", "Toggle stream"),
             Binding("ctrl+k", "open_commands", "Commands"),
             Binding("f8", "show_status", "Status", priority=True),
-            Binding("ctrl+s", "cancel_turn", "Cancel turn", priority=True),
+            Binding("ctrl+x", "cancel_turn", "Cancel turn", priority=True),
             Binding("meta+c", "cancel_turn", "Cancel turn", show=False, priority=True),
             Binding("f7", "open_reader", "Reader", priority=True),
             Binding("ctrl+shift+c", "copy_current_message", "Copy message", show=False, priority=True),
@@ -65,7 +65,6 @@ if TEXTUAL_AVAILABLE:
             super().__init__()
             self.session = session
             self.builder = builder
-            self.turn_runner = TurnRunner(self.session)
 
             self.chat_view: Optional[ChatTranscript] = None
             self.status_log: Optional[StatusPanel] = None
@@ -82,6 +81,8 @@ if TEXTUAL_AVAILABLE:
             self._apply_role_labels(params)
 
             self._stream_enabled: bool = bool((self.session.get_params() or {}).get('stream'))
+            self._frontend_closing = False
+            self._command_prompt = None
             self._pending_tasks: set[asyncio.Task[Any]] = set()
 
             self._ui_adapter = getattr(self.session, 'ui', None)
@@ -104,33 +105,12 @@ if TEXTUAL_AVAILABLE:
                 self._status_max_lines = 200
 
             self._output_bridge = OutputBridge(status_limit=self._status_max_lines)
-            self.turn_executor = TurnExecutor(
-                self.session,
-                self.turn_runner,
-                schedule_task=self._schedule_task,
-                emit_status=self._emit_status,
-                refresh_contexts=self._refresh_context_panel,
-                call_in_app_thread=self.call_from_thread,
-                stream_enabled=self._stream_enabled,
-            )
-
-            # Provide a blocking interaction prompt for tool calls executed inside
-            # TurnRunner so we can pause mid-turn, show a modal, and resume.
-            # Register an interaction broker for mid-turn tool prompts
-            class _TUIBroker:
-                def __init__(self, app_ref: 'MemexTUIApp') -> None:
-                    self._app = app_ref
-                def prompt(self, need: InteractionNeeded) -> Any:
-                    return self._app._prompt_blocking_for_tool(need)
-            try:
-                self.session.set_user_data('__interaction_broker__', _TUIBroker(self))
-                self.session.set_user_data('__interaction_prompt__', self._prompt_blocking_for_tool)
-            except Exception:
-                pass
-
-            self._orig_output: Optional[OutputHandler] = self.session.utils.output
+            self._orig_output = self.session.utils.output
             self._tui_output = TuiOutput(self._handle_output_event)
             self.session.utils.replace_output(self._tui_output)
+            configure_chat(self.session)
+            self.host = SessionHost(self.session, owns_session=False)
+            self.turn_executor = TurnExecutor(self.host, self._emit_status, self._stream_enabled)
 
             self._reader_overlay: Optional[ReaderOverlay] = None
             self._clipboard_helper = ClipboardHelper()
@@ -185,6 +165,8 @@ if TEXTUAL_AVAILABLE:
                 except Exception:
                     pass
 
+            if self.session.private:
+                self._emit_status("Private session. Chat history stays in memory.", "info")
             self._emit_status("Welcome to iptic-memex TUI. Press Ctrl+S to toggle streaming.", 'info')
             try:
                 params = self.session.get_params() or {}
@@ -195,6 +177,8 @@ if TEXTUAL_AVAILABLE:
             self._refresh_context_panel()
             self._render_existing_history()
             self._base_screen = self.screen
+            if getattr(self.session, 'pick_session_on_start', False):
+                self.call_after_refresh(self._handle_user_input, '/load session')
             # No header spinner timer needed
             # Inline suggester disabled; CommandHint drives suggestions
 
@@ -296,6 +280,9 @@ if TEXTUAL_AVAILABLE:
             text = (raw_text or '').strip()
             if not text:
                 return
+            if self._pending_tasks:
+                self._emit_status('Finish or cancel the current operation first.', 'warning')
+                return
             if self.input:
                 self._input_completion.mark_programmatic_update()
                 self.input.clear_and_focus()
@@ -310,16 +297,21 @@ if TEXTUAL_AVAILABLE:
                 self.chat_view.add_message('user', message)
 
             async def _run_and_handle_turn() -> None:
-                result = await self.turn_executor.run(message)
-                self._handle_turn_result(result)
+                await self.turn_executor.run(message)
+                self._refresh_context_panel()
 
             self._schedule_task(_run_and_handle_turn())
 
-        def _handle_turn_result(self, result: Any) -> None:
+        async def _finish_command(self, result: Any) -> None:
+            attach_startup_files(self.session)
+            self._sync_model_settings()
+            if self.session.get_flag('auto_submit'):
+                self.session.set_flag('auto_submit', False)
+                if self.session.get_option('TOOLS', 'allow_auto_submit', fallback=True):
+                    await self.turn_executor.run('')
             if result:
                 self._handle_context_events(result)
             self._refresh_context_panel()
-            self.turn_executor.check_auto_submit()
             # After the user turn (and summaries) have been handled, close the
             # current command group so future statuses start a fresh bubble.
             try:
@@ -394,7 +386,7 @@ if TEXTUAL_AVAILABLE:
             except Exception:
                 pass
             result = await self._execute_command_handler(handler, path, argv)
-            self._handle_turn_result(result)
+            await self._finish_command(result)
 
         # ----- commands ------------------------------------------------
         def _load_commands(self) -> None:
@@ -417,6 +409,8 @@ if TEXTUAL_AVAILABLE:
             self._load_commands()
 
         def action_open_commands(self) -> None:
+            if self._pending_tasks:
+                return
             if self.command_hint:
                 self.command_hint.styles.visibility = "hidden"
             if not self._command_controller.has_commands:
@@ -426,12 +420,12 @@ if TEXTUAL_AVAILABLE:
             self.push_screen(palette, self._on_command_selected)
 
         def _on_command_selected(self, command: Optional[CommandItem]) -> None:
-            if not command:
+            if not command or self._pending_tasks:
                 return
 
             async def _run_and_handle_command() -> None:
                 result = await self._execute_command_item(command)
-                self._handle_turn_result(result)
+                await self._finish_command(result)
 
             self._schedule_task(_run_and_handle_command())
             if self.input:
@@ -475,7 +469,7 @@ if TEXTUAL_AVAILABLE:
                 if scope_cm:
                     with scope_cm:
                         return await self._execute_command_handler({**handler, 'type': 'builtin-inner'}, path, extra_argv)
-                if path and path[0] == 'quit':
+                if path and path[0] in ('quit', 'exit'):
                     self.action_quit()
                     return None
                 try:
@@ -500,7 +494,6 @@ if TEXTUAL_AVAILABLE:
                 # Command gating may have changed (e.g., /mcp on|off)
                 self._reload_commands()
                 self._refresh_context_panel()
-                self.turn_executor.check_auto_submit()
                 self._clear_command_hint()
                 return None
 
@@ -541,7 +534,6 @@ if TEXTUAL_AVAILABLE:
                         self.chat_view.clear_messages()
                         self._render_existing_history()
                     self._refresh_context_panel()
-                    self.turn_executor.check_auto_submit()
                     self._clear_command_hint()
                     return None
 
@@ -567,7 +559,6 @@ if TEXTUAL_AVAILABLE:
                     pass
                 self._handle_command_result(path, result)
                 self._refresh_context_panel()
-                self.turn_executor.check_auto_submit()
                 self._clear_command_hint()
                 return result
 
@@ -593,7 +584,6 @@ if TEXTUAL_AVAILABLE:
                             pass
                     return None
 
-            prev_model = (self.session.get_params() or {}).get('model') if action_name == 'set_model' else None
             # Wrap action in command scope if not system-scoped
             use_system = _is_system_scoped(handler, path)
             scope_cm = self._tui_output.command_scope(_command_label(path)) if not use_system else None
@@ -641,10 +631,6 @@ if TEXTUAL_AVAILABLE:
             self._handle_command_result(path, result)
             # Rebuild command list in case the action changed gates
             self._reload_commands()
-            if action_name == 'set_model':
-                new_model = (self.session.get_params() or {}).get('model')
-                if new_model and new_model != prev_model:
-                    self._on_model_changed(str(new_model))
             should_refresh_chat = False
             if path:
                 primary = (path[0] or '').strip()
@@ -663,7 +649,6 @@ if TEXTUAL_AVAILABLE:
                 self.chat_view.clear_messages()
                 self._render_existing_history()
             self._refresh_context_panel()
-            self.turn_executor.check_auto_submit()
             self._clear_command_hint()
             return result
 
@@ -745,30 +730,6 @@ if TEXTUAL_AVAILABLE:
         async def _prompt_for_interaction(self, need: InteractionNeeded) -> Any:
             return await self._wait_for_screen(InteractionModal(need.kind, dict(need.spec)))
 
-        # Blocking prompt used from worker thread (core.turns tool loop)
-        def _prompt_blocking_for_tool(self, need: InteractionNeeded) -> Any:
-            import threading
-            box = {'res': None}
-            done = threading.Event()
-
-            def _on_close(res: Any) -> None:
-                box['res'] = res
-                done.set()
-
-            def _start() -> None:
-                try:
-                    self.push_screen(InteractionModal(need.kind, dict(need.spec)), _on_close)
-                except Exception:
-                    # If push_screen fails, release waiter so caller can cancel gracefully
-                    done.set()
-
-            try:
-                self.call_from_thread(_start)
-            except Exception:
-                return None
-            done.wait()
-            return box.get('res')
-
         def _clear_command_hint(self) -> None:
             self._input_completion.clear_command_hint()
 
@@ -786,15 +747,21 @@ if TEXTUAL_AVAILABLE:
             )
 
         async def _wait_for_screen(self, screen) -> Any:
+            if self._frontend_closing:
+                return None
             loop = asyncio.get_running_loop()
             future: asyncio.Future[Any] = loop.create_future()
+            self._command_prompt = future
 
             def _on_close(result: Any) -> None:
                 if not future.done():
                     future.set_result(result)
 
             self.push_screen(screen, _on_close)
-            return await future
+            try:
+                return await future
+            finally:
+                self._command_prompt = None
 
 
         def _get_reader_overlay(self) -> ReaderOverlay:
@@ -890,6 +857,10 @@ if TEXTUAL_AVAILABLE:
                 self._emit_status(message, 'error', role='command')
                 return
 
+            if path == ['load', 'session'] and 'path' in payload and self.chat_view:
+                self.chat_view.clear_messages()
+                self._render_existing_history()
+                self._update_status_bar()
             mode = payload.get('mode')
             if mode == 'list' and 'chats' in payload:
                 chats = payload.get('chats') or []
@@ -930,8 +901,6 @@ if TEXTUAL_AVAILABLE:
                 if not context_modifying:
                     label = '/' + ' '.join([seg for seg in (path or []) if seg]) if path else '/command'
                     self._emit_status(f"{label} completed.", 'info', role='command')
-                if payload.get('model'):
-                    self._on_model_changed(str(payload.get('model')))
 
         def _emit_status(
             self,
@@ -1005,7 +974,7 @@ if TEXTUAL_AVAILABLE:
             if self.chat_view:
                 self.chat_view.set_role_customization(titles, styles)
 
-        def _on_model_changed(self, model_name: str) -> None:
+        def _sync_model_settings(self) -> None:
             params = self.session.get_params() or {}
             new_stream = bool(params.get('stream'))
             if new_stream != self._stream_enabled:
@@ -1209,15 +1178,7 @@ if TEXTUAL_AVAILABLE:
             self.context_panel.update_contexts(contexts)
 
         def _render_existing_history(self) -> None:
-            chat_ctx = self.session.get_context('chat')
-            if not chat_ctx or not self.chat_view:
-                return
-            try:
-                history = chat_ctx.get('all') if hasattr(chat_ctx, 'get') else []
-            except Exception:
-                history = []
-            for item in history or []:
-                self._add_chat_entry(item)
+            self._render_messages(visible_history(self.session))
 
         def _render_messages(self, messages: List[Dict[str, Any]]) -> None:
             if not self.chat_view:
@@ -1234,6 +1195,8 @@ if TEXTUAL_AVAILABLE:
 
         # ----- bindings/actions ---------------------------------------
         def action_toggle_stream(self) -> None:
+            if self._pending_tasks:
+                return
             self._stream_enabled = not self._stream_enabled
             self.session.set_option('stream', bool(self._stream_enabled))
             self.turn_executor.set_stream_enabled(self._stream_enabled)
@@ -1246,7 +1209,7 @@ if TEXTUAL_AVAILABLE:
             self._emit_status('Contexts refreshed.', 'debug', display=False)
 
         def action_quit(self) -> None:
-            self._cleanup()
+            self.turn_executor.cancel()
             self.exit()
 
         def action_focus_input(self) -> None:
@@ -1314,26 +1277,7 @@ if TEXTUAL_AVAILABLE:
             self._status_modal = None
 
         def action_cancel_turn(self) -> None:
-            cancelled = False
-            try:
-                self.session.set_flag('turn_cancelled', True)
-                cancelled = True
-            except Exception:
-                pass
-            try:
-                token = getattr(self.session, 'get_cancellation_token', None)
-                if callable(token):
-                    tok = token()
-                else:
-                    tok = self.session.get_user_data('__turn_cancel__')
-                if tok:
-                    tok.cancel('user')
-                    cancelled = True
-            except Exception:
-                pass
-            if cancelled:
-                self._emit_status('Turn cancelled.', 'warning')
-            else:
+            if not self.turn_executor.cancel():
                 self._emit_status('No running turn to cancel.', 'info')
 
         def on_key(self, event: events.Key) -> None:
@@ -1397,12 +1341,15 @@ if TEXTUAL_AVAILABLE:
                 self._scroll_chat('down')
 
         async def on_unmount(self) -> None:
+            self._frontend_closing = True
+            self.turn_executor.cancel()
+            if self._command_prompt and not self._command_prompt.done():
+                self._command_prompt.set_result(None)
+            await asyncio.to_thread(self.host.close)
+            await asyncio.gather(*self._pending_tasks, return_exceptions=True)
             self._cleanup()
 
         def _cleanup(self) -> None:
-            for task in list(self._pending_tasks):
-                task.cancel()
-            # No spinner timer to stop
             try:
                 if hasattr(self._ui_adapter, 'set_event_handler'):
                     self._ui_adapter.set_event_handler(lambda *_: None)  # type: ignore[attr-defined]

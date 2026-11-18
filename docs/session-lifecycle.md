@@ -2,8 +2,7 @@
 
 `app.session_host.SessionHost` owns an already assembled session for successive
 bounded tasks. It calls the existing runtime; it does not implement a research
-strategy or an additional provider/tool loop. No CLI behavior changes in this
-slice. Workspace and chat integrations will consume the service later.
+strategy or an additional provider/tool loop. Web and TUI use the host with interactive chat policy and live input.
 
 ```python
 from app.session_host import SessionHost

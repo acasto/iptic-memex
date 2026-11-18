@@ -323,13 +323,13 @@ def chat(ctx, file, resume, latest, private):
 @cli.command()
 @click.pass_context
 @click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
-@click.option('--resume', default=None, is_flag=False, flag_value='__last__',
-              help='Resume session (most recent if no value)')
-def tui(ctx, file, resume):
+@interactive_session_options
+def tui(ctx, file, resume, latest, private):
     """Start TUI (Terminal User Interface) mode"""
     # Get builder and options from context
     builder = ctx.obj['BUILDER']
-    options = ctx.obj.get('OPTIONS', {})
+    resume = _interactive_resume(resume, latest, private)
+    options = {**ctx.obj.get('OPTIONS', {}), 'private': private}
     
     # Build session for TUI mode
     try:
@@ -338,14 +338,8 @@ def tui(ctx, file, resume):
         raise click.ClickException(str(e))
     ctx.obj['SESSION'] = session
     
-    _maybe_resume_session(session, resume=resume)
+    _prepare_frontend_session(session, resume, _command_files(ctx, file))
 
-    # Add file contexts if provided
-    file = _command_files(ctx, file)
-    if file:
-        for f in file:
-            session.add_context('file', f)
-    
     # Start TUI mode
     try:
         from modes.tui_mode import TUIMode

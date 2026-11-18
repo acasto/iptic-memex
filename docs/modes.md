@@ -44,15 +44,15 @@ python main.py workspace status --watch
 See [workspace.md](workspace.md) for configuration, tool policies, and limitations.
 
 ## TUI mode
-Terminal UI with stepwise interactions, still backed by `legacy/turns.py`.
-It has not migrated to the shared runtime.
+Textual chat supports streamed replies, tool approvals, and cooperative cancellation.
 
 ```bash
 python main.py tui
 ```
 
 ## Web mode
-Local Web UI with the existing action pipeline and legacy executor, pending migration.
+Local browser chat with live tool approvals, file attachments, and session history.
+See [Web and TUI chat](web.md) for controls and launch options.
 
 ```bash
 python main.py web

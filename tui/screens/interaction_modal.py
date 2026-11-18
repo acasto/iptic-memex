@@ -11,7 +11,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, ListItem, ListView, Static, TextArea
+from textual.widgets import Button, Input, ListItem, ListView, SelectionList, Static, TextArea
 
 
 class InteractionModal(ModalScreen[Optional[Any]]):
@@ -35,12 +35,13 @@ class InteractionModal(ModalScreen[Optional[Any]]):
 
     def compose(self) -> ComposeResult:
         prompt = str(self.spec.get("prompt") or self.spec.get("message") or "Input required")
-        self._is_multiline = bool(self.spec.get("multiline"))
+        self._is_multiline = bool(self.spec.get("multiline") or
+                                  (self.kind == "files" and self.spec.get("multiple", True)))
         with Vertical(id="interaction_modal"):
-            yield Static(prompt, id="interaction_prompt")
+            yield Static(Text(prompt), id="interaction_prompt")
             if self.kind in ("text", "files"):
                 default = self.spec.get("default")
-                placeholder = self.spec.get("placeholder") or ""
+                placeholder = self.spec.get("placeholder") or ("One path per line" if self.kind == "files" else "")
                 if self._is_multiline:
                     self.text_area = TextArea(
                         str(default or ""),
@@ -68,6 +69,14 @@ class InteractionModal(ModalScreen[Optional[Any]]):
                 with Horizontal(id="interaction_bool_buttons"):
                     yield self.yes_button
                     yield self.no_button
+            elif self.kind == "choice" and self.spec.get("multi"):
+                defaults = self.spec.get("default") or []
+                self.multi_choices = SelectionList(*[
+                    (Text(str(value)), value, value in defaults)
+                    for value in self.spec.get("options", [])
+                ])
+                yield self.multi_choices
+                yield Button("Submit", id="submit")
             elif self.kind == "choice":
                 options = list(self.spec.get("options") or self.spec.get("choices") or [])
                 self._choice_entries = []
@@ -120,7 +129,7 @@ class InteractionModal(ModalScreen[Optional[Any]]):
     def on_input_submitted(self, event: Input.Submitted) -> None:  # type: ignore[override]
         value = event.value
         if self.kind == "files" and isinstance(value, str):
-            value = value.split()
+            value = [value] if value else []
         self.dismiss(value)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:  # type: ignore[override]
@@ -129,7 +138,10 @@ class InteractionModal(ModalScreen[Optional[Any]]):
         elif event.button.id == "no":
             self.dismiss(False)
         elif event.button.id == "submit":
-            self._submit_multiline()
+            if hasattr(self, "multi_choices"):
+                self.dismiss(self.multi_choices.selected)
+            else:
+                self._submit_multiline()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:  # type: ignore[override]
         choice = getattr(event.item, "choice_value", None)
@@ -202,4 +214,5 @@ class InteractionModal(ModalScreen[Optional[Any]]):
     def _submit_multiline(self) -> None:
         if not self._is_multiline or not hasattr(self, "text_area"):
             return
-        self.dismiss(self.text_area.text)
+        text = self.text_area.text
+        self.dismiss([p for p in text.splitlines() if p.strip()] if self.kind == "files" else text)

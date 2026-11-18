@@ -4,6 +4,8 @@
 
 ```bash
 python main.py chat --private
+python main.py tui --private
+python main.py web --private
 ```
 
 Private chat starts fresh and keeps the conversation in memory until exit. Memex
@@ -49,4 +51,5 @@ inputs, excluding assistant replies, tool results, and automatic follow-ups.
 Existing session files work without migration. Creation time is preserved across
 saves; the displayed date is the last save time, in the local timezone.
 
-Bare `--resume` in TUI/Web mode continues to load the most recent session.
+`tui` and `web` accept the same resume options. Bare `--resume` opens the picker
+inside the interface, and `--resume --latest` selects the most recent session.
