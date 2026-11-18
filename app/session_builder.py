@@ -35,6 +35,7 @@ class SessionBuilder:
 
         from app.project import project_options, bind_project
         project, eff_options, sources = project_options(options, interactive=True)
+        private = eff_options.pop('private', False)
         options = eff_options
         try:
             ui_mode = (mode or 'chat').lower()
@@ -44,7 +45,7 @@ class SessionBuilder:
 
         session_config: SessionConfig = self.config_manager.create_session_config(eff_options)
         registry = ComponentRegistry(session_config)
-        session = Session(session_config, registry)
+        session = Session(session_config, registry, private=private)
         bind_project(session, project, sources)
         try:
             setattr(session, '_builder', self)
@@ -102,7 +103,7 @@ class SessionBuilder:
             log_enabled = bool(session.get_option('LOG', 'active', fallback=False))
         except Exception:
             log_enabled = False
-        if log_enabled:
+        if log_enabled and not private:
             try:
                 # Force logger initialization
                 _ = session.utils.logger
@@ -189,7 +190,7 @@ class SessionBuilder:
 
         # Optional session autosave for interactive modes
         try:
-            if interactive:
+            if interactive and not private:
                 autosave = session.get_option('SESSIONS', 'session_autosave', fallback=False)
                 if isinstance(autosave, str):
                     autosave = autosave.strip().lower() in ('true', '1', 'yes', 'on')

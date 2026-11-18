@@ -12,8 +12,9 @@ class UtilsHandler:
     Container for utility services. Shared across CLI/Web/TUI and core.
     """
 
-    def __init__(self, config):
+    def __init__(self, config, *, private=False):
         self.config = config
+        self._private = private
         self._output = None
         self._input = None
         self._stream = None
@@ -57,6 +58,8 @@ class UtilsHandler:
 
     @property
     def storage(self):
+        if self._private:
+            raise PermissionError('Persistent storage is unavailable in a private session')
         if self._storage is None:
             self._storage = StorageHandler(self.config, self.output)
         return self._storage
@@ -71,5 +74,5 @@ class UtilsHandler:
     def logger(self):
         if self._logger is None:
             # Pass output handler so logger can mirror to console if enabled
-            self._logger = LoggingHandler(self.config, self.output)
+            self._logger = LoggingHandler(self.config, self.output, private=self._private)
         return self._logger

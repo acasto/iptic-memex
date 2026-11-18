@@ -8,12 +8,16 @@ class PromptTemplateMemoryAction(InteractionAction):
     def __init__(self, session):
         self.session = session
         self.memory_pattern = r"\{\{memory(?::([^}]+))?\}\}"
-        self.memory_tool = (None if getattr(session, 'execution_scope', None) is not None
-                            else session.get_action('assistant_memory_tool'))
+        self.memory_tool = (session.get_action('assistant_memory_tool')
+                            if self._memory_available() else None)
+
+    def _memory_available(self):
+        return (not getattr(self.session, 'private', False)
+                and getattr(self.session, 'execution_scope', None) is None)
 
     def _get_memories(self, project=None):
         """Retrieve memories for the given project context and format as bullet list"""
-        if getattr(self.session, 'execution_scope', None) is not None:
+        if not self._memory_available():
             return ''
         query = "SELECT memory FROM memories"
         params = []

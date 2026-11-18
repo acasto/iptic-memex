@@ -29,6 +29,10 @@ class ManageChatsAction(StepwiseAction):
 
     # Stepwise entrypoints
     def start(self, args=None, content=None) -> Completed:
+        if getattr(self.session, 'private', False):
+            message = 'Saved chats are unavailable in a private session.'
+            self.session.ui.emit('warning', {'message': message})
+            return Completed({'ok': False, 'error': message})
         if isinstance(args, dict) and args.get('mode'):
             return Completed(self._handle_headless(dict(args)))
 

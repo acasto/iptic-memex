@@ -102,6 +102,8 @@ class ChatMode(InteractionMode):
 
     def _loop(self):
         """Start the chat interaction loop"""
+        if getattr(self.session, 'private', False):
+            self.output.write('Private session. Memex keeps this conversation in memory.')
         self.utils.tab_completion.run('chat')
         self.utils.tab_completion.set_session(self.session)
 

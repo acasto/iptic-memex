@@ -174,6 +174,8 @@ class OpenAIProvider(OpenAIUsage, APIProvider):
                 api_parms['extra_body'] = extra_body(api_parms['extra_body'])
                 for key in excluded_params:
                     api_parms['extra_body'].pop(key, None)
+                if getattr(self.session, 'private', False):
+                    api_parms['extra_body'].pop('store', None)
 
             if 'stream' in api_parms and api_parms['stream'] is True:
                 # Only include stream_options when the backend supports it

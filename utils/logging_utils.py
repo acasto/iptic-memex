@@ -65,10 +65,11 @@ class LoggingHandler:
         'usage': 'basic',
     }
 
-    def __init__(self, config, output_handler=None, *, base_context: Optional[dict] = None) -> None:
+    def __init__(self, config, output_handler=None, *, base_context: Optional[dict] = None,
+                 private: bool = False) -> None:
         self._config = config
         self._output = output_handler
-        self._active: bool = bool(self._get('active', False))
+        self._active: bool = not private and bool(self._get('active', False))
         self._format: str = (self._get('format', 'json') or 'json').strip().lower()
         if self._format not in ('json', 'text'):
             self._format = 'json'

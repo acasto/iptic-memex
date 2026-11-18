@@ -89,6 +89,8 @@ def build_runner_snapshot(
         for key, val in overrides.items():
             if isinstance(val, _SIMPLE_TYPES):
                 params[key] = val
+    if getattr(session, 'private', False):
+        params['private'] = True
 
     ctx_out: Dict[str, List[Dict[str, Any]]] = {}
     try:

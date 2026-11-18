@@ -472,6 +472,41 @@ def test_untracked_response_id_does_not_minimize_history(monkeypatch):
     assert len(sent['input']) == 3
 
 
+def test_private_session_overrides_response_storage(monkeypatch):
+    mod = load_provider_module()
+
+    def create(client, **kwargs):
+        client.last_params = kwargs
+        return FakeResponse(output_text='ok', output=[{
+            'type': 'message', 'role': 'assistant', 'id': 'msg_1', 'status': 'completed',
+            'content': [{'type': 'output_text', 'text': 'ok', 'annotations': []}],
+        }])
+
+    monkeypatch.setattr(mod, 'OpenAI', FakeOpenAI)
+    monkeypatch.setattr(FakeResponsesClient, 'create', create)
+    session = FakeSession(
+        chat_turns=[{'role': 'user', 'message': 'First question'}],
+        params={'provider': 'OpenAIResponses', 'api_key': 'x', 'model_name': 'gpt-5',
+                'store': True, 'use_previous_response': True, 'extra_body': {'store': True}},
+    )
+    session.private = True
+    provider = mod.OpenAIResponsesProvider(session)
+    assert provider.chat() == 'ok'
+    session._chat._data.extend([
+        {'role': 'assistant', 'message': 'ok', **provider.get_assistant_metadata()},
+        {'role': 'user', 'message': 'Follow-up'},
+    ])
+    assert provider.chat() == 'ok'
+    sent = provider._client.responses.last_params
+    assert sent['store'] is False
+    assert 'store' not in sent['extra_body']
+    assert 'previous_response_id' not in sent
+    first, reply, follow_up = sent['input']
+    assert first['content'] == 'First question'
+    assert reply['content'][0]['text'] == 'ok'
+    assert follow_up['content'] == 'Follow-up'
+
+
 def test_full_history_includes_assistant_when_not_chaining(monkeypatch):
     mod = load_provider_module()
 

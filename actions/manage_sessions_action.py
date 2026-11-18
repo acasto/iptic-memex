@@ -30,6 +30,10 @@ class ManageSessionsAction(StepwiseAction):
         mode = str(args[0]).strip().lower()
         if mode == 'list':
             return Completed(self._list_sessions())
+        if mode in ('resume', 'checkpoint') and getattr(self.session, 'private', False):
+            message = 'Resuming sessions and saving checkpoints are unavailable in a private session.'
+            self.session.ui.emit('warning', {'message': message})
+            return Completed({'ok': False, 'error': message})
         if mode == 'resume':
             target = args[1] if len(args) > 1 else ''
             if not target:

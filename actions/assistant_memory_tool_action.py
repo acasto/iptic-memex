@@ -23,7 +23,7 @@ class AssistantMemoryToolAction(InteractionAction):
     """
     def __init__(self, session):
         self.session = session
-        if getattr(session, "execution_scope", None) is not None:
+        if not self.can_run(session) or getattr(session, 'execution_scope', None) is not None:
             return
         # Register the schema for the memories table.
         # The table includes an auto-incrementing ID, memory content, an optional project identifier,
@@ -48,6 +48,11 @@ class AssistantMemoryToolAction(InteractionAction):
     @classmethod
     def tool_aliases(cls) -> list[str]:
         return []
+
+    @classmethod
+    def can_run(cls, session) -> bool:
+        """Keep persistent memory out of private sessions."""
+        return not getattr(session, 'private', False)
 
     @classmethod
     def tool_spec(cls, session) -> dict:
@@ -75,6 +80,8 @@ class AssistantMemoryToolAction(InteractionAction):
         """
         Execute memory operations based on provided arguments.
         """
+        if not self.can_run(self.session):
+            return {'ok': False, 'error': 'Memory is unavailable in a private session'}
         if getattr(self.session, 'execution_scope', None) is not None:
             return {'ok': False, 'error': 'Global memory is unavailable in child scope'}
         action = (get_str(args or {}, "action", "") or "").lower()

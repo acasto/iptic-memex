@@ -415,6 +415,8 @@ def run_hooks(session, phase: str, extras: Optional[Dict[str, Any]] = None) -> N
     - phase: one of 'session_start', 'pre_turn', 'post_turn', 'session_end'
     - extras: optional dict of additional context (e.g., input_text, last_user)
     """
+    if getattr(session, 'private', False):
+        return
     try:
         if session.get_flag("hooks_disabled", False):
             return

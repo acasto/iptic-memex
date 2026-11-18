@@ -20,8 +20,9 @@ class Session:
     This is what gets passed to actions and other components.
     """
 
-    def __init__(self, config: SessionConfig, registry: ComponentRegistry):
+    def __init__(self, config: SessionConfig, registry: ComponentRegistry, *, private: bool = False):
         self.config = config
+        self.private = private
         self.context = {}  # Dict of context_type -> [context_objects]
         self.provider = None
         self.flags = {}

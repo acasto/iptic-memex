@@ -174,6 +174,8 @@ def autoload_mcp(session) -> None:
 
     No-op unless [MCP].active = true.
     """
+    if getattr(session, 'private', False):
+        return
     global_sec, raw_servers = _get_cfg_sections(session)
     if not global_sec:
         return

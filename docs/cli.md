@@ -11,6 +11,7 @@ python main.py <subcommand> --help
 
 - Type `/help` to see commands.
 - Tab completion shows `/...` suggestions at the prompt.
+- Run `python main.py chat --private` for an in-memory chat. See [Private CLI chat](sessions.md#private-cli-chat).
 
 ### Context loading
 - `/load file` or `/file` - load file content (auto-detects pdf/docx/xlsx/pptx/msg/audio/images)

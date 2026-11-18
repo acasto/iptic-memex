@@ -54,7 +54,7 @@ class PersistStatsAction(InteractionAction):
         """
         Persist current usage statistics to the database
         """
-        if not self.provider:
+        if not self.provider or getattr(self.session, 'private', False):
             return
 
         current_stats = self.provider.get_usage()

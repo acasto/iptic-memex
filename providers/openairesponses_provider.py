@@ -230,7 +230,8 @@ class OpenAIResponsesProvider(OpenAIUsage, APIProvider):
 
     def _chain_input(self, full_input, params):
         """Continue only an unchanged, provider-visible prefix we actually sent."""
-        if not (params.get('store') and params.get('use_previous_response')
+        if getattr(self.session, 'private', False) or not (
+                params.get('store') and params.get('use_previous_response')
                 and self._last_stored and self._last_response_id
                 and self._response_model == params.get('model_name', params.get('model'))):
             return full_input, False
@@ -318,6 +319,10 @@ class OpenAIResponsesProvider(OpenAIUsage, APIProvider):
             api['stream'] = True
         for key in excluded:
             api.pop(key, None)
+        if getattr(self.session, 'private', False):
+            api['store'] = False
+            if 'extra_body' in api:
+                api['extra_body'].pop('store', None)
         return api
 
     def _finish_response(self, response):

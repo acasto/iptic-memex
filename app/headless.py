@@ -12,6 +12,7 @@ def build_headless_session(config_manager, options=None, *, builder=None,
 
     from app.project import project_options, bind_project
     project, options, sources = project_options(options, interactive=False)
+    private = options.pop('private', False)
     if not options.get('model'):
         model = config_manager.base_config.get('AGENT', 'default_model', fallback=None)
         if model:
@@ -20,7 +21,7 @@ def build_headless_session(config_manager, options=None, *, builder=None,
         options['tool_mode'] = 'none'
     config = config_manager.create_session_config(options)
     registry = ComponentRegistry(config)
-    session = Session(config, registry)
+    session = Session(config, registry, private=private)
     try:
         bind_project(session, project, sources)
         services = services or HeadlessServices()

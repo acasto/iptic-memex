@@ -29,7 +29,8 @@ class ComponentRegistry:
         """Lazy load and cache utils"""
         if self._utils is None:
             from core.utils import UtilsHandler
-            self._utils = UtilsHandler(self.config)
+            session = getattr(self, 'session', None)
+            self._utils = UtilsHandler(self.config, private=getattr(session, 'private', False))
         return self._utils
 
     def get_action_class(self, name: str) -> Optional[type]:

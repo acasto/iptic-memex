@@ -47,6 +47,8 @@ Run chat mode:
 uv run --locked python main.py chat
 ```
 
+Add `--private` after `chat` to start a chat without saving local history or usage.
+
 One-shot (completion) example:
 
 ```bash

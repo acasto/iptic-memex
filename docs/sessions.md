@@ -1,5 +1,23 @@
 # Sessions
 
+## Private CLI chat
+
+```bash
+python main.py chat --private
+```
+
+Private chat starts fresh and keeps the conversation in memory until exit. Memex
+skips session autosave, diagnostic logs, usage statistics, persistent memory and
+its backups, configured hooks, and MCP autoload. Session resume, saved chats,
+checkpoints, `/save code`, and workspace attachment are unavailable in private
+chat.
+
+The configured model still receives your messages. Remote providers and tools
+apply their own retention policies. Terminal scrollback and files you explicitly
+write with tools can still contain chat content.
+
+## Saved sessions
+
 Interactive session persistence (autosave/resume/checkpoints) can be enabled via:
 
 ```ini

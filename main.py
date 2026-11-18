@@ -268,21 +268,35 @@ def cli(ctx, conf, model, prompt, message, stdin_message, temperature, max_token
     raise click.UsageError(cli.get_help(ctx))
 
 
-@cli.command()
-@click.pass_context
-@click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
-@click.option('--resume', default=None, is_flag=False, flag_value='__pick__',
-              help='Pick a saved session, or resume an explicit ID/path')
-@click.option('--latest', '--last', is_flag=True,
-              help='With --resume, load the most recently saved session without prompting')
-def chat(ctx, file, resume, latest):
+def interactive_session_options(command):
+    """Common history and privacy options for interactive sessions."""
+    command = click.option('--private', is_flag=True,
+                           help='Keep chat history and usage in memory')(command)
+    command = click.option('--latest', '--last', is_flag=True,
+                           help='With --resume, load the most recent session')(command)
+    return click.option('--resume', default=None, is_flag=False, flag_value='__pick__',
+                        help='Pick a saved session, or resume an explicit ID/path')(command)
+
+
+def _interactive_resume(resume, latest, private):
+    if private and resume is not None:
+        raise click.UsageError('--private cannot be combined with --resume')
     if latest and resume is None:
         raise click.UsageError('--latest/--last requires --resume')
     if latest and resume != '__pick__':
         raise click.UsageError('--latest/--last cannot be combined with a session ID/path')
+    return '__last__' if latest else resume
+
+
+@cli.command()
+@click.pass_context
+@click.option('-f', '--file', multiple=True, help='File to include in prompt (ask questions about file)')
+@interactive_session_options
+def chat(ctx, file, resume, latest, private):
+    resume = _interactive_resume(resume, latest, private)
     # Get builder and options from context
     builder = ctx.obj['BUILDER']
-    options = ctx.obj.get('OPTIONS', {})
+    options = {**ctx.obj.get('OPTIONS', {}), 'private': private}
     
     # Build session for chat mode
     try:
@@ -291,7 +305,7 @@ def chat(ctx, file, resume, latest):
         raise click.ClickException(str(e))
     ctx.obj['SESSION'] = session
     
-    _maybe_resume_session(session, resume='__last__' if latest else resume)
+    _maybe_resume_session(session, resume=resume)
 
     # Add file contexts if provided
     file = _command_files(ctx, file)

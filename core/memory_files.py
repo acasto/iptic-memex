@@ -15,7 +15,7 @@ from utils.tool_args import get_bool, get_int
 def memory_enabled(session) -> bool:
     """Whether the session has opted into file memory."""
     permitted = getattr(session, 'file_memory_enabled', None)
-    if permitted is False:
+    if permitted is False or getattr(session, 'private', False):
         return False
     return bool(get_bool({'active': session.get_option('MEMORY', 'active', False)},
                          'active', False))

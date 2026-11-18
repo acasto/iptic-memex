@@ -56,6 +56,8 @@ def child_options(outer_session, overrides):
             options[key] = value
     options.update(base_directory=scope.root, agent_writes=scope.writes,
                    docker_always_ephemeral=True, cmd_tool='assistant_docker_tool')
+    if getattr(outer_session, 'private', False):
+        options['private'] = True
     project = getattr(outer_session, 'project', None)
     if project is not None:
         options['project_context'] = project

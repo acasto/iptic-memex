@@ -227,6 +227,8 @@ def _resolve_sessions_dir(session, override: Optional[str] = None) -> str:
 
 
 def save_session(session, *, kind: str = "session", title: Optional[str] = None, session_id: Optional[str] = None, directory: Optional[str] = None) -> str:
+    if getattr(session, 'private', False):
+        raise PermissionError('Saving sessions is unavailable in a private session')
     sid = session_id or getattr(session, "session_uid", None)
     if not sid:
         sid = generate_session_id("sess" if kind == "session" else "ckpt")

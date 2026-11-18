@@ -19,6 +19,10 @@ class SaveCodeAction(StepwiseAction):
         self._state = {}
 
     def start(self, args=None, content=None) -> Completed:
+        if getattr(self.session, 'private', False):
+            message = '/save code is unavailable in a private session.'
+            self.session.ui.emit('warning', {'message': message})
+            return Completed({'ok': False, 'error': message})
         # Parse optional preview settings from list args
         if isinstance(args, (list, tuple)) and args:
             try:

@@ -142,8 +142,9 @@ class LlamaCppServerProvider(OpenAIProvider):
 
         # Logging: disabled by default. If 'log_path' or 'log_dir' provided, write there.
         # Otherwise, use DEVNULL to avoid PIPE backpressure.
-        log_path = params.get('log_path')
-        log_dir = params.get('log_dir')
+        private = getattr(self.session, 'private', False)
+        log_path = None if private else params.get('log_path')
+        log_dir = None if private else params.get('log_dir')
         log_flag = params.get('log')
         enable_log = False
         self._log_path = None

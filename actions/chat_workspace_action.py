@@ -14,6 +14,8 @@ class ChatWorkspaceAction(StepwiseAction):
 
     def start(self, args=None, content=None):
         try:
+            if getattr(self.session, 'private', False):
+                raise ValueError('Workspace attachment is unavailable in a private session')
             if not getattr(self.session, 'cli_workspace_enabled', False):
                 raise ValueError('Workspace attachment is available in CLI chat only')
             args = list(args or [])
