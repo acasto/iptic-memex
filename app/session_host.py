@@ -45,6 +45,14 @@ class RunHandle:
         """Wait for the outcome; a wait timeout does not cancel execution."""
         return self._future.result(timeout)
 
+    def done(self):
+        """Return whether the worker has released the session and published its outcome."""
+        return self._future.done()
+
+    def add_done_callback(self, callback):
+        """Notify an observer after the outcome is ready and the session is idle."""
+        self._future.add_done_callback(lambda _: callback(self))
+
     def cancel(self, reason='Cancelled by caller'):
         self.cancellation.cancel(reason)
 

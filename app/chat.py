@@ -10,13 +10,18 @@ from utils.tool_args import get_bool
 def configure_chat(session):
     """Keep terminal services between runs; route execution diagnostics to events."""
     configure_runtime(session, idle_output=session.utils.output)
+    configure_chat_policy(session)
+
+
+def configure_chat_policy(session):
+    """Resolve interactive tool selection and explicit write limits before provider setup."""
     install_tool_selection(session, 'TOOLS')
     if 'agent_writes' in (session.config.overrides or {}):
         session.write_policy = session._normalize_write_policy(session.config.overrides['agent_writes'])
 
 
-def run_chat_turn(session, message, *, on_event=None, interactions=None, cancellation=None):
-    """Submit a chat task with tool continuation owned entirely by execution."""
+def _chat_task(session, message, stream=None):
+    """Build the request and lifecycle callbacks for all interactive clients."""
     limit = session.get_option('TOOLS', 'large_input_limit', fallback=None)
     limit = int(limit) if limit is not None and str(limit).strip() else None
     calls = int(session.get_option('TOOLS', 'auto_submit_max_turns', fallback=6) or 6)
@@ -54,7 +59,46 @@ def run_chat_turn(session, message, *, on_event=None, interactions=None, cancell
             run_hooks(active, 'post_turn', {'last_display': outcome.last_text or '',
                                            'last_sanitized': outcome.sanitized or ''})
 
-    return execute(session, RunRequest(message=message, stream=bool(session.get_params().get('stream')),
-                                      execute_tools=True, max_calls=max(1, calls)),
-                   on_event=on_event, interactions=interactions, cancellation=cancellation,
-                   before_call=before_call, after_run=after_run)
+    if stream is None:
+        stream = bool(session.get_params().get('stream'))
+    request = RunRequest(message=message, stream=stream, execute_tools=True, max_calls=max(1, calls))
+    return request, dict(before_call=before_call, after_run=after_run)
+
+
+def run_chat_turn(session, message, *, on_event=None, interactions=None, cancellation=None):
+    """Run a synchronous interactive chat task."""
+    request, callbacks = _chat_task(session, message)
+    return execute(session, request, on_event=on_event, interactions=interactions,
+                   cancellation=cancellation, **callbacks)
+
+
+def submit_chat_turn(host, message, *, stream, on_event, interactions, before_run=None):
+    """Start an observable chat task on a retained session."""
+    request, callbacks = _chat_task(host.session, message, stream)
+    return host.submit(request, on_event=on_event, interactions=interactions,
+                       before_run=before_run, **callbacks)
+
+
+def visible_history(session):
+    """Project the conversation into displayable messages without provider metadata."""
+    from actions.assistant_output_action import AssistantOutputAction
+    chat = session.get_context('chat')
+    messages = []
+    for turn in chat.get('all') if chat else ():
+        role = turn.get('role')
+        if role not in ('user', 'assistant', 'tool'):
+            continue
+        text = turn.get('message') or ''
+        if role == 'assistant':
+            text = AssistantOutputAction.filter_full_text(text, session)
+        if text:
+            messages.append({'role': role, 'text': text})
+    return messages
+
+
+def attach_startup_files(session):
+    """Attach explicit launch files after an interactive session picker resolves."""
+    paths = getattr(session, 'startup_files', ())
+    session.startup_files = ()
+    for path in paths:
+        session.add_context('file', path)

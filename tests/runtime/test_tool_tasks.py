@@ -574,3 +574,15 @@ def test_chat_input_threshold_warns_without_blocking_user_turn(builder, window, 
                 and 'recommended limit' in e.data.get('message', '')]
     assert bool(warnings) == expect_warning
     session.close()
+
+
+@pytest.mark.parametrize('mode', ['web', 'tui'])
+def test_interactive_frontend_policy_at_assembly(builder, mode):
+    session = builder.build(mode=mode, active_tools_agent='__none__', agent_writes='deny')
+    try:
+        assert session.get_agent_write_policy() == 'deny'
+        session.set_user_data('__dynamic_tools__', {'demo': {
+            'description': 'Dynamic test tool', 'function': {'type': 'action', 'name': 'demo'}}})
+        assert session.get_action('assistant_commands').get_tool_specs() == []
+    finally:
+        session.close()

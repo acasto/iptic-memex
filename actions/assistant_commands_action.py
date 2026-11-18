@@ -48,6 +48,8 @@ class AssistantCommandsAction(InteractionAction):
         resolve = getattr(self.session, 'resolve_tool_selection', None)
         if resolve:
             selected, denied = resolve()
+            if selected == ():
+                return {}
             active, inactive, blocked = list(selected or ()), list(denied), []
             non_interactive = False
         else:
