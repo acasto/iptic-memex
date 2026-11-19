@@ -19,7 +19,7 @@ class WorkspaceAgentsToolAction(StepwiseAction):
 
     @classmethod
     def tool_spec(cls, session):
-        return {
+        spec = {
             'args': ['operation', 'target', 'message', 'seconds', 'run_id',
                      'start', 'limit', 'offset', 'max_chars', 'snapshot_id', 'progress'], 'required': ['operation'],
             'description': 'Task agents in this project: spawn isolated work with message; status '
@@ -52,6 +52,11 @@ class WorkspaceAgentsToolAction(StepwiseAction):
             }}, 'auto_submit': True,
         }
 
+        if getattr(session, 'read_compaction', None):
+            spec['schema']['properties']['operation']['enum'].append('restore_reads')
+            spec['description'] += ' restore_reads restores all compacted file reads to your active view.'
+        return spec
+
     def start(self, args=None, content=None):
         args = args or {}
         try:
@@ -59,18 +64,28 @@ class WorkspaceAgentsToolAction(StepwiseAction):
                 raise ValueError('Agents tool requires task access')
             unknown = set(args) - {'operation', 'target', 'message', 'seconds', 'run_id',
                                    'start', 'limit', 'offset', 'max_chars', 'snapshot_id', 'progress'}
+            # Some native callers repeat the operation as an empty argument label.
+            # Ignore that redundant label only; populated or unrelated keys remain invalid.
+            op = get_str(args, 'operation')
+            if op in unknown and args[op] == '':
+                unknown.remove(op)
             if unknown:
                 raise ValueError('Unsupported agents arguments: ' + ', '.join(sorted(unknown)))
             access = self.session.agents
             service, caller = access.service, access.agent_id
-            operation, target = get_str(args, 'operation'), get_str(args, 'target')
+            operation, target = op, get_str(args, 'target')
             message = get_str(args, 'message') or content or ''
-            if operation == 'history_list':
+            if operation == 'restore_reads':
+                view = getattr(self.session, 'read_compaction', None)
+                if view is None:
+                    raise ValueError('Read compaction is disabled for this session')
+                result = view.restore()
+            elif operation == 'history_list':
                 result = service.history.list(start=get_int(args, 'start', 0),
                                               limit=get_int(args, 'limit', 20))
             elif operation == 'history_read':
                 result = service.history.read(
-                    target or caller, run_id=get_str(args, 'run_id'),
+                    caller if target in (None, 'self') else target, run_id=get_str(args, 'run_id'),
                     start=get_int(args, 'start', -10), limit=get_int(args, 'limit', 10),
                     offset=get_int(args, 'offset', 0), max_chars=get_int(args, 'max_chars', 12000),
                     snapshot_id=get_str(args, 'snapshot_id'))

@@ -18,6 +18,7 @@ from workspace.state import atomic_write, now, write_json
 from workspace.tools import WorkspaceAccess
 from workspace.scope import task_roots
 from workspace.history import TaskHistory
+from workspace.context_view import ReadCompaction, call_metrics
 from workspace.call_context import add_call_context
 
 
@@ -36,6 +37,9 @@ class TaskService:
     """
 
     def __init__(self, store, run_id, builder, project, profile, prompt, *, deadline=None, user_input=False, strategy=None):
+        self.required_tools = ('workspace', 'agents')
+        if profile.compact_reads:
+            self.required_tools += ('compact_reads',)
         self.user_input = user_input
         self.strategy = strategy
         self.history = TaskHistory(store, run_id)
@@ -125,12 +129,15 @@ class TaskService:
             session.set_flag('hooks_disabled', True)
             session.workspace = WorkspaceAccess(self.store, self.run_id, agent_id)
             session.agents = AgentAccess(self, agent_id)
+            if self.profile.compact_reads:
+                session.read_compaction = ReadCompaction()
+                session.project_provider_turns = session.read_compaction.project
             session.before_provider_call = self._charge
             session.child_call_boundary = self._charge
             if root:
                 # Explicit task authority: only the selected project, no ambient
                 # memory/skill roots. Blocklists still apply in the tool registry.
-                allowed = frozenset((*self.profile.tools, 'workspace', 'agents')) - {'memory', 'ragsearch'}
+                allowed = frozenset((*self.profile.tools, *self.required_tools)) - {'memory', 'ragsearch'}
                 session.execution_scope = ExecutionScope(
                     str(self.project.root), task_roots(self.project.root, self.store),
                     allowed, self.profile.writes,
@@ -145,14 +152,14 @@ class TaskService:
                            agent_writes=self.profile.writes, max_tokens=self.profile.max_tokens,
                            cmd_tool='assistant_docker_tool', docker_always_ephemeral=True,
                            use_mcp=False, prompt=self.prompt, stream=False)
-            services = HeadlessServices(file_memory=False, required_tools=('workspace', 'agents'),
+            services = HeadlessServices(file_memory=False, required_tools=self.required_tools,
                                         configure=self._configure(agent_id, root=True),
                                         before_call=self._charge)
         else:
             parent = self._agents[parent_id]['host'].session
             options = child_options(parent, {'prompt': self.prompt, 'model': self.profile.model,
                                              'max_tokens': self.profile.max_tokens})
-            services = replace(options.pop('services'), required_tools=('workspace', 'agents'),
+            services = replace(options.pop('services'), required_tools=self.required_tools,
                                configure=self._configure(agent_id))
         return self.builder.build(mode='internal', services=services, **options)
 
@@ -206,9 +213,12 @@ class TaskService:
                 if event.type in ('context', 'assistant_message', 'run_finished'):
                     self.history.save(self._agents[agent_id]['host'].session, agent_id,
                                       generation, event.type)
+                data = dict(event.data)
+                if event.type in ('provider_started', 'provider_finished'):
+                    data.update(call_metrics(self._agents[agent_id]['host'].session, event))
                 if event.type != 'assistant_delta':
                     self.store.event(self.run_id, agent_id, event.type, dict(
-                        event.data, execution_id=event.run_id, sequence=event.sequence,
+                        data, execution_id=event.run_id, sequence=event.sequence,
                         generation=generation, session_id=event.session_id))
                 self.store.update_worker(self.run_id, agent_id, phase=event.type,
                                          execution_id=event.run_id, generation=generation)

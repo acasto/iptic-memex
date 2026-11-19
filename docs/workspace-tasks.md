@@ -229,6 +229,33 @@ records directory contains the full available event/history artifacts. Commands
 and search queries can themselves contain sensitive text; this local view does
 not claim to redact secrets embedded in those values.
 
+### Context usage and optional read compaction
+
+For each session agent call, `workspace watch` shows the local text-token estimate,
+the configured model window when available, and up to three large visible tool
+results by character count. The estimate uses the same view as the input guard.
+API schemas, encodings, images and native provider metadata can make the actual
+request size differ. After a successful call, watch shows input and cached input
+tokens when the provider exposes per-call usage. Cached tokens are part of input.
+Helper calls still count toward the task budget but do not have separate agent
+watch streams.
+
+For an experiment, add `compact_reads = true` to a session execution profile
+that has the file tool. The example `examples/workspace/profiles/compact-reads.toml`
+matches the single-agent clarification profile with this option enabled. The
+setting defaults to false. With native tool calling,
+an agent can call `compact_reads(file="tui/turn_executor.py", summary="...")`
+after exploring a file. The tool folds the latest completed batch containing that
+exact path, provided every result was a successful text file read. Each result
+retains its native call ID. The summary and original archive indexes replace the
+read bodies in that agent's provider view. Instructions, answers, other tools and
+the original task history stay available. The agent can read back one original
+with `agents(operation="history_read", start=INDEX, limit=1)` or unfold all its
+reads with `agents(operation="restore_reads")`. A retained agent keeps its view
+across follow-ups. Each new attempt starts with its own view. Compaction consumes
+a normal tool exchange and can reduce cache reuse, so compare total calls, input,
+cache hits and answer quality across the whole task.
+
 ### Stop for input and continue after restarting chat
 
 For an input-enabled chat task, the root agent can call

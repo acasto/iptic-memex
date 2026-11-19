@@ -34,6 +34,16 @@ def event_line(event, verbose=False):
         body = 'Assistant: ' + text(event['text'], limit)
     elif kind == 'provider_started':
         body = 'Calling model'
+        if 'estimated_input_tokens' in event:
+            body += f" · estimated input {event['estimated_input_tokens']} tokens"
+        if event.get('context_size'):
+            body += f" · configured window {text(event['context_size'], 20)}"
+        for item in event.get('largest_results', ()):
+            body += f" · {text(item['tool'], 160)} {item['chars']} chars"
+    elif kind == 'provider_finished' and 'turn_in' in event:
+        body = f"Provider input {event['turn_in']} tokens"
+        if 'turn_cached' in event:
+            body += f" · {event['turn_cached']} cached"
     elif kind == 'run_started':
         body = 'Started execution'
     elif kind == 'run_finished':

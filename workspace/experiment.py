@@ -61,6 +61,7 @@ class ExecutionProfile:
     timeout: float = 300
     max_tokens: int = 4096
     writes: str = 'deny'
+    compact_reads: bool = False
 
     def validate(self):
         for key in ('calls', 'concurrency', 'max_sessions', 'max_tokens'):
@@ -72,6 +73,8 @@ class ExecutionProfile:
         if (isinstance(self.timeout, bool) or not isinstance(self.timeout, (int, float))
                 or not math.isfinite(self.timeout) or self.timeout <= 0):
             raise ValueError('Profile timeout must be positive and finite')
+        if type(self.compact_reads) is not bool:
+            raise ValueError('Profile compact_reads must be a boolean')
         if self.writes not in ('deny', 'dry-run', 'allow'):
             raise ValueError('Invalid profile write policy')
         if not isinstance(self.tools, (tuple, list)) or any(
@@ -127,6 +130,8 @@ def validate_experiment(strategy, profile):
     """Check compatibility before creating records or making model calls."""
     strategy.validate()
     profile.validate()
+    if profile.compact_reads and strategy.workflow != 'session':
+        raise ValueError('Read compaction requires a session workflow')
     if strategy.workflow in ('fixed', 'adaptive', 'single') and profile.calls < 3:
         raise ValueError('Legacy research experiments require at least 3 calls including synthesis')
     if strategy.workflow == 'fixed':

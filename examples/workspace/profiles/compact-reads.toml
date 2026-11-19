@@ -1,0 +1,10 @@
+# Compare against clarification.toml with the same brief and per-attempt limits.
+model = "glm-5.3"
+tools = ["file"]
+calls = 8
+concurrency = 1
+max_sessions = 1
+timeout = 300
+max_tokens = 4096
+writes = "deny"
+compact_reads = true
