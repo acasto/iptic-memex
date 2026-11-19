@@ -9,7 +9,8 @@ from tui.screens.interaction_modal import InteractionModal
 
 
 class TurnExecutor:
-    def __init__(self, host, emit_status, stream_enabled):
+    def __init__(self, host, emit_status, stream_enabled, observe):
+        self.observe = observe
         self.host = host
         self._emit_status = emit_status
         self._stream_enabled = stream_enabled
@@ -37,7 +38,7 @@ class TurnExecutor:
         try:
             self.handle = submit_chat_turn(
                 self.host, message, stream=self._stream_enabled,
-                on_event=lambda event: loop.call_soon_threadsafe(self._render, event, context=ui_context),
+                on_event=lambda event: loop.call_soon_threadsafe(self._render, event, message, context=ui_context),
                 interactions=InteractionService(wait=True),
             )
             outcome = await asyncio.to_thread(self.handle.result)
@@ -55,10 +56,12 @@ class TurnExecutor:
                 self.modal.dismiss(None)
             self.modal = None
 
-    def _render(self, event):
+    def _render(self, event, message):
         view = self._chat_view
         if not view or not self.handle:
             return
+        if event.type != 'assistant_delta':
+            self.observe(event, message)
         data = event.data
         if event.type == 'interaction_requested':
             self._ask(data)
@@ -79,6 +82,7 @@ class TurnExecutor:
             if self.tool_message:
                 detail = (data.get('result') or {}).get('error') or data['status']
                 view.append_text(self.tool_message, f'\n{detail}')
+                view.stop_streaming(self.tool_message)
             self.tool_message = None
         elif event.type in ('warning', 'error', 'status') and data.get('message'):
             if self.tool_message:

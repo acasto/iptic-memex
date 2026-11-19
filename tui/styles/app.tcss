@@ -1,56 +1,67 @@
 Screen {
     layout: vertical;
+    background: $background;
+    color: $foreground;
 }
 
 #status_bar {
-    padding: 1 2;
-    background: $primary;
-    color: $text;
+    height: 1;
+    margin: 1 1 0 1;
+    background: #254440;
+    color: #e3f4e9;
+    text-wrap: nowrap;
+    overflow: hidden;
 }
 
-#main_content {
+#main_content { height: 1fr; margin: 0 1; }
+#chat_transcript {
+    width: 1fr;
     height: 1fr;
     padding: 0 1;
+    border: round #53736c;
+    border-title-color: $primary;
+    border-title-align: left;
+    scrollbar-size-vertical: 1;
 }
 
-#chat_transcript {
-    height: 1fr;
-    border: solid $surface;
+#run_rail {
+    width: 33;
+    margin-left: 1;
+    padding: 0 1;
+    background: $surface;
+    border: solid #496762;
+    border-title-color: $primary;
 }
+#rail_summary, #inspect_summary { height: auto; margin-top: 1; }
+.section-title { height: auto; margin: 1 0; color: $secondary; text-style: bold; }
+#rail_log { height: 1fr; overflow: hidden; }
 
 #input_row {
-    dock: bottom;
-    height: 12;
-    padding: 1 2;
-    border-top: solid $surface;
+    height: 5;
+    margin: 0 1;
+    padding: 0 1;
+    border: solid $primary;
+    border-title-color: $primary;
+    border-subtitle-color: #a8c3bb;
+    border-subtitle-align: right;
+    background: $surface;
 }
-
-/* Remove fixed-height experiment; let the flexible rules below control sizes */
-
-Footer {
-    dock: bottom;
-    height: auto;
+#input_controls, #chat_input { width: 1fr; height: 1fr; }
+#chat_input, #chat_input:focus {
+    border: none;
+    padding: 0;
+    background: $surface;
+    scrollbar-size-vertical: 1;
 }
-
-#command_palette {
-    padding: 1 2;
-    border: solid $surface;
-    width: 60;
-}
-
-#interaction_modal {
-    padding: 1 2;
-    border: solid $surface;
-    width: 60;
-}
+Footer { height: 1; background: #254440; }
 
 #command_hint {
     layer: modal;
     dock: bottom;
-    margin: 0 2;
+    margin: 0 1;
     height: auto;
     max-height: 10;
-    offset-y: -13;
+    offset-y: -6;
     background: $surface;
     color: $text;
     layout: grid;
@@ -59,46 +70,52 @@ Footer {
     padding: 0 1;
     border: solid $primary;
 }
+#command_hint > .hint-item { height: auto; overflow: hidden; text-wrap: wrap; padding: 0 1; }
+#command_hint > .highlight { background: $primary; color: $background; }
 
-#command_hint>.hint-item {
-    height: auto;
-    overflow: hidden;
-    text-wrap: wrap;
-    padding: 0 1;
+ModalScreen { align: center middle; background: $background 75%; }
+#command_palette, #interaction_modal, #status_modal, #reader_overlay, .monitor-window {
+    width: 94%;
+    max-width: 128;
+    height: 90%;
+    padding: 0 2 1 2;
+    background: $surface;
+    border: double $primary;
 }
+#command_palette { max-width: 86; padding-top: 1; }
+#interaction_modal { max-width: 84; height: auto; max-height: 94%; padding-top: 1; }
+#interaction_prompt { height: auto; max-height: 12; overflow-y: auto; }
+#interaction_bool_buttons, #interaction_multiline_actions { height: 3; margin-top: 1; }
+#interaction_modal ListView, #interaction_modal SelectionList { height: auto; max-height: 12; }
+#interaction_modal TextArea { height: 6; }
+#interaction_multiline_actions { align-horizontal: right; }
+#interaction_multiline_actions Button { margin-left: 1; }
+#reader_overlay_title, #status_title, .window-title {
+    height: 1;
+    margin: 1 0;
+    text-style: bold;
+    color: $primary;
+}
+#status_full, #reader_overlay_text, #inspect_scroll { height: 1fr; }
+#watch_path { color: $text-muted; height: 1; text-wrap: nowrap; }
+#watch_panes { height: 1fr; }
+#task_selector { width: 30%; height: 1fr; border: solid #53736c; }
+#task_detail { width: 1fr; padding-left: 1; }
+#task_brief { height: auto; max-height: 35%; overflow-y: auto; padding: 1 0; }
+#task_events { height: 1fr; border: solid #53736c; scrollbar-size-vertical: 1; }
+.narrow-watch #watch_panes { layout: vertical; }
+.narrow-watch #task_selector { width: 1fr; height: 1fr; }
+.narrow-watch #task_detail { display: none; width: 1fr; height: 1fr; padding: 0; }
+.narrow-watch.task-open #task_detail { display: block; }
+.narrow-watch.task-open #task_selector { display: none; }
+.narrow-watch .monitor-window { width: 100%; height: 100%; padding: 0 1; }
+.narrow-watch #task_brief { max-height: 45%; }
 
-#input_controls {
-    width: 1fr;
-}
+#function_keys { height: 1; margin: 0 1; text-wrap: nowrap; }
+#search_results { height: 1fr; }
+#record_text { height: 1fr; }
 
-#chat_input {
-    width: 1fr;
-    max-height: 6;
-    min-height: 3;
-}
-
-#interaction_multiline_actions {
-    align-horizontal: right;
-    margin-top: 1;
-}
-
-#send_button {
-    margin-left: 1;
-    min-width: 8;
-}
-
-#interaction_multiline_actions Button {
-    margin-left: 1;
-}
-
-#status_modal {
-    padding: 1 2;
-    width: 90%;
-    max-width: 120;
-    height: 80%;
-}
-
-#status_full {
-    height: 1fr;
-    border: solid $surface;
-}
+#handoff_notes { height: 1fr; min-height: 3; }
+#handoff_policy { height: auto; color: $accent; }
+#handoff_answer { height: 4; }
+#continue_task { height: 3; }

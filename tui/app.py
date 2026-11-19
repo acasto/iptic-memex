@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections import deque
+from pathlib import Path
 from datetime import datetime
 from typing import Any, Awaitable, Dict, List, Optional, Tuple
 
@@ -12,7 +14,7 @@ try:
     from textual.app import App, ComposeResult
     from textual.binding import Binding
     from textual.containers import Horizontal, Vertical
-    from textual.widgets import Footer, Static
+    from textual.widgets import Static
     TEXTUAL_AVAILABLE = True
 except ImportError:  # pragma: no cover - surfaced when textual missing
     TEXTUAL_AVAILABLE = False
@@ -42,6 +44,12 @@ if TEXTUAL_AVAILABLE:
     from tui.widgets.chat_input import ChatInput
     from tui.screens.status_modal import StatusModal
     from textual.widgets import TextArea
+    from textual.theme import Theme
+    from rich.text import Text
+    from tui.run_inspector import RunInspector, RunTrace, single_line, summary, ledger
+    from tui.widgets.function_keys import key_strip, KeyReference
+    from tui.screens.task_watch import WorkspaceMonitor
+    from tui.screens.transcript_search import TranscriptSearch
 
     class MemexTUIApp(App):
         """Main Textual app providing a richer chat experience."""
@@ -51,11 +59,16 @@ if TEXTUAL_AVAILABLE:
         LAYERS = ("main", "modal")
 
         BINDINGS = [
+            Binding("f1", "key_help", "Keys", priority=True),
+            Binding("f2", "open_commands", "Commands", priority=True),
+            Binding("ctrl+f", "find_message", "Find", priority=True),
+            Binding("f5", "inspect_run", "Inspect", priority=True),
+            Binding("f6", "watch_tasks", "Tasks", priority=True),
             Binding("ctrl+q", "quit", "Quit"),
-            Binding("ctrl+s", "toggle_stream", "Toggle stream"),
+            Binding("ctrl+s", "toggle_stream", "Stream"),
             Binding("ctrl+k", "open_commands", "Commands"),
             Binding("f8", "show_status", "Status", priority=True),
-            Binding("ctrl+x", "cancel_turn", "Cancel turn", priority=True),
+            Binding("ctrl+x", "cancel_turn", "Stop", priority=True),
             Binding("meta+c", "cancel_turn", "Cancel turn", show=False, priority=True),
             Binding("f7", "open_reader", "Reader", priority=True),
             Binding("ctrl+shift+c", "copy_current_message", "Copy message", show=False, priority=True),
@@ -63,6 +76,14 @@ if TEXTUAL_AVAILABLE:
 
         def __init__(self, session, builder=None) -> None:
             super().__init__()
+            self.register_theme(Theme(
+                name='memex-terminal', primary='#80d6b7', secondary='#8ebcc9', accent='#f1bd79',
+                background='#101c20', foreground='#e0ede5', surface='#17292c', panel='#203638',
+                warning='#ffc875', error='#ff9b87', success='#8ae0b3',
+            ))
+            self.theme = 'memex-terminal'
+            self.traces = deque(maxlen=24)
+            self._continued_tasks = {}
             self.session = session
             self.builder = builder
 
@@ -110,7 +131,7 @@ if TEXTUAL_AVAILABLE:
             self.session.utils.replace_output(self._tui_output)
             configure_chat(self.session)
             self.host = SessionHost(self.session, owns_session=False)
-            self.turn_executor = TurnExecutor(self.host, self._emit_status, self._stream_enabled)
+            self.turn_executor = TurnExecutor(self.host, self._emit_status, self._stream_enabled, self._observe_turn)
 
             self._reader_overlay: Optional[ReaderOverlay] = None
             self._clipboard_helper = ClipboardHelper()
@@ -120,20 +141,13 @@ if TEXTUAL_AVAILABLE:
             self._status_modal: Optional[StatusModal] = None
             self._status_open = False
             self._base_screen = None
-            # Header spinner removed: simplify status bar (no animated glyph)
 
         # ----- layout --------------------------------------------------
         def compose(self) -> ComposeResult:
-            params = self.session.get_params() or {}
-            model_name = params.get('model', 'unknown')
-            provider = params.get('provider', 'unknown')
-            status = Static(
-                self._status_bar_text(model_name, provider, self._stream_enabled),
-                id="status_bar",
-            )
-            yield status
+            self.status_bar = Static(id="status_bar", markup=False)
+            yield self.status_bar
 
-            with Vertical(id="main_content"):
+            with Horizontal(id="main_content"):
                 self.chat_view = ChatTranscript(
                     id="chat_transcript",
                     role_titles=self._chat_role_titles,
@@ -142,32 +156,39 @@ if TEXTUAL_AVAILABLE:
                 self.chat_view.styles.height = "1fr"
                 self._output_bridge.set_chat_view(self.chat_view)
                 self.turn_executor.set_chat_view(self.chat_view)
+                self.chat_view.border_title = 'Conversation'
                 yield self.chat_view
+                with Vertical(id="run_rail") as rail:
+                    rail.border_title = 'Run inspector'
+                    self.rail_summary = Static(summary(None), id="rail_summary")
+                    yield self.rail_summary
+                    yield Static('RECENT ACTIVITY', classes='section-title')
+                    self.rail_log = Static(ledger(None), id="rail_log")
+                    yield self.rail_log
 
             self.command_hint = CommandHint(id="command_hint")
             self._input_completion.set_command_hint(self.command_hint)
             yield self.command_hint
 
-            with Vertical(id="input_row"):
+            with Vertical(id="input_row") as composer:
+                composer.border_title = 'Compose'
+                composer.border_subtitle = 'Enter send  ·  Ctrl+J newline'
                 with Horizontal(id="input_controls"):
                     self.input = ChatInput(placeholder="Type a message or '/' for commands")
                     self._input_completion.set_input(self.input)
                     yield self.input
 
-            yield Footer()
+            self.function_keys = Static(id="function_keys")
+            self.function_keys.auto_links = False
+            yield self.function_keys
 
         async def on_mount(self) -> None:
             if self.input:
                 self.set_focus(self.input)
             if self.chat_view:
-                try:
-                    self.chat_view.can_focus = False
-                except Exception:
-                    pass
+                self.chat_view.can_focus = False
 
-            if self.session.private:
-                self._emit_status("Private session. Chat history stays in memory.", "info")
-            self._emit_status("Welcome to iptic-memex TUI. Press Ctrl+S to toggle streaming.", 'info')
+            self._update_status_bar()
             try:
                 params = self.session.get_params() or {}
                 self.session.utils.logger.tui_event('start', {'model': params.get('model'), 'provider': params.get('provider')})
@@ -177,10 +198,9 @@ if TEXTUAL_AVAILABLE:
             self._refresh_context_panel()
             self._render_existing_history()
             self._base_screen = self.screen
+            self._base_layout(self.size.width)
             if getattr(self.session, 'pick_session_on_start', False):
                 self.call_after_refresh(self._handle_user_input, '/load session')
-            # No header spinner timer needed
-            # Inline suggester disabled; CommandHint drives suggestions
 
         # ----- scheduling helpers -------------------------------------
         def _schedule_task(self, coro: Awaitable[Any]) -> None:
@@ -857,6 +877,11 @@ if TEXTUAL_AVAILABLE:
                 self._emit_status(message, 'error', role='command')
                 return
 
+            if (path == ['load', 'session'] and payload.get('path')
+                    or path == ['load', 'chat'] and payload.get('loaded')
+                    or path == ['clear', 'chat']):
+                self.traces.clear()
+                self._refresh_inspector()
             if path == ['load', 'session'] and 'path' in payload and self.chat_view:
                 self.chat_view.clear_messages()
                 self._render_existing_history()
@@ -915,22 +940,137 @@ if TEXTUAL_AVAILABLE:
                 self._output_bridge.display_status_message(text, level, role=role)
             self._output_bridge.log_status(text, level)
 
-        def _status_bar_text(self, model: str, provider: str, stream_enabled: bool) -> str:
-            stream_label = 'on' if stream_enabled else 'off'
-            return (
-                f"iptic-memex TUI · Model: {model or 'unknown'} · Provider: {provider or 'unknown'} · "
-                f"Stream: {stream_label}"
-            )
-
-        def _update_status_bar(self) -> None:
-            try:
-                bar = self.query_one('#status_bar', Static)
-            except Exception:
-                return
+        def _update_status_bar(self, width=None) -> None:
+            width = self.size.width if width is None else width
             params = self.session.get_params() or {}
-            model_name = params.get('model', 'unknown')
-            provider = params.get('provider', 'unknown')
-            bar.update(self._status_bar_text(model_name, provider, self._stream_enabled))
+            model = single_line(params.get('model') or self.session.current_model or 'Unselected model')
+            line = Text(no_wrap=True)
+            line.append(' ▞ MEMEX ', style='bold #101c20 on #81e1c1')
+            if self.session.private:
+                line.append(' PRIVATE ', style='bold #ffc875')
+            if self.traces and width < 100:
+                line.append('  ' + self.traces[-1].phase, style='bold #ffc875')
+            line.append('  ' + model, style='bold #e0ede5')
+            provider = params.get('provider')
+            if width >= 90 and provider:
+                line.append(' · ' + single_line(provider), style='#b1cac1')
+            if width >= 72:
+                project = getattr(self.session, 'project', None)
+                if project:
+                    line.append('  /  ' + single_line(project.name), style='#b1cac1')
+            stream = '   ' + ('STREAM ON' if self._stream_enabled else 'STREAM OFF')
+            if line.cell_len + len(stream) <= width - 2:
+                line.append(stream, style='#a4c4b8')
+            self.status_bar.update(line)
+
+        def on_resize(self, event: events.Resize):
+            if getattr(self, 'rail_summary', None) and self.rail_summary.is_mounted:
+                self._base_layout(event.size.width)
+
+        def _base_layout(self, width):
+            rail = self.rail_summary.parent
+            rail.display = width >= 100
+            self.function_keys.update(key_strip(width - 2, self.session.private))
+            self._update_status_bar(width)
+
+        def _observe_turn(self, event, message):
+            if event.type == 'run_started':
+                try:
+                    window = int(self.session.get_params().get('context_size') or 0)
+                except (TypeError, ValueError):
+                    window = 0
+                self.traces.append(RunTrace(single_line(message) or 'Command follow-up', window))
+            elif not self.traces or not self.traces[-1].observe(event):
+                return
+            self._refresh_inspector()
+
+        def _refresh_inspector(self):
+            trace = self.traces[-1] if self.traces else None
+            self.rail_summary.update(summary(trace))
+            self.rail_log.update(ledger(trace, compact=True))
+            self._update_status_bar()
+            for screen in self.screen_stack:
+                if isinstance(screen, RunInspector) and screen.is_mounted:
+                    screen.redraw()
+
+        def action_key_help(self):
+            if self.screen is self._base_screen:
+                self.push_screen(KeyReference())
+
+        def action_find_message(self):
+            if self.screen is self._base_screen:
+                self.push_screen(TranscriptSearch(self.chat_view.messages), self._locate_message)
+
+        def _locate_message(self, message_id):
+            if message_id:
+                self.chat_view.select_message(message_id)
+
+        def action_inspect_run(self):
+            if self.screen is self._base_screen:
+                self.push_screen(RunInspector(self.traces))
+
+        def action_watch_tasks(self):
+            if self.screen is not self._base_screen or self.session.private:
+                return
+            project = getattr(self.session, 'project', None)
+            root = project.root if project else Path.cwd()
+            location = self.session.get_option('WORKSPACE', 'directory', fallback='.memex-workspace')
+            self.push_screen(WorkspaceMonitor(root / Path(location).expanduser()))
+
+        def continuation_token(self, store, task_id):
+            owned = self._continued_tasks.get((store.root, task_id))
+            return owned[0] if owned else None
+
+        def continue_task(self, store, task_id, source_id, answer):
+            """Own only attempts explicitly continued from this terminal."""
+            from core.cancellation import CancellationToken
+            from workspace.task_runner import TaskRunner
+
+            key = (store.root, task_id)
+            if self._frontend_closing or self.session.private:
+                return
+            if key in self._continued_tasks:
+                self.notify('This task already has a continuation in progress.', severity='warning')
+                return
+            token = CancellationToken()
+            runner = TaskRunner(store)
+
+            def check_project():
+                # Called under the runner's task lease before it changes any records.
+                spec = runner.tasks.read(task_id)['spec']
+                if spec['project']['root'] != str(self.session.project.root):
+                    raise ValueError('This task belongs to another project')
+
+            async def supervise():
+                try:
+                    result = await asyncio.to_thread(
+                        runner.run, task_id, source_run_id=source_id, answer=answer,
+                        cancellation=token, before_start=check_project)
+                    warning = result['status'] in ('failed', 'interrupted', 'timed_out')
+                    notice = f"Workspace task {task_id}: {result['status']}"
+                except Exception as exc:
+                    warning = True
+                    notice = 'Could not continue task: ' + single_line(exc)
+                finally:
+                    self._continued_tasks.pop(key, None)
+                if not self._frontend_closing:
+                    self.refresh_bindings()
+                    self.notify(notice, severity='warning' if warning else 'information', markup=False)
+                    self._emit_status(notice, 'warning' if warning else 'info', display=False)
+
+            self._continued_tasks[key] = token, asyncio.create_task(supervise())
+            self.refresh_bindings()
+
+        def check_action(self, action, parameters):
+            if action == 'watch_tasks' and self.session.private:
+                return False
+            navigation = ('key_help', 'find_message', 'inspect_run', 'watch_tasks',
+                          'open_commands', 'open_reader', 'show_status')
+            if action in navigation:
+                if self._base_screen is not None and self.screen is not self._base_screen:
+                    return ((action == 'open_reader' and self.screen is self._reader_overlay)
+                            or (action == 'show_status' and self.screen is self._status_modal))
+            return super().check_action(action, parameters)
 
         def _apply_role_labels(self, params: Optional[Dict[str, Any]] = None) -> None:
             params = params or (self.session.get_params() or {})
@@ -1178,20 +1318,8 @@ if TEXTUAL_AVAILABLE:
             self.context_panel.update_contexts(contexts)
 
         def _render_existing_history(self) -> None:
-            self._render_messages(visible_history(self.session))
-
-        def _render_messages(self, messages: List[Dict[str, Any]]) -> None:
-            if not self.chat_view:
-                return
-            for msg in messages:
-                self._add_chat_entry(msg)
-
-        def _add_chat_entry(self, item: Dict[str, Any]) -> None:
-            if not self.chat_view:
-                return
-            role = item.get('role', 'assistant')
-            text = item.get('message') or item.get('text') or item.get('content') or ''
-            self.chat_view.add_message(role, text)
+            if self.chat_view:
+                self.chat_view.append_history(visible_history(self.session))
 
         # ----- bindings/actions ---------------------------------------
         def action_toggle_stream(self) -> None:
@@ -1281,7 +1409,7 @@ if TEXTUAL_AVAILABLE:
                 self._emit_status('No running turn to cancel.', 'info')
 
         def on_key(self, event: events.Key) -> None:
-            if not self.input:
+            if not self.input or self.screen is not self._base_screen:
                 return
 
             if event.key == 'escape':
@@ -1342,11 +1470,15 @@ if TEXTUAL_AVAILABLE:
 
         async def on_unmount(self) -> None:
             self._frontend_closing = True
+            owned = list(self._continued_tasks.values())
+            for token, _ in owned:
+                token.cancel('Owning TUI closed')
             self.turn_executor.cancel()
             if self._command_prompt and not self._command_prompt.done():
                 self._command_prompt.set_result(None)
             await asyncio.to_thread(self.host.close)
-            await asyncio.gather(*self._pending_tasks, return_exceptions=True)
+            await asyncio.gather(*self._pending_tasks, *(task for _, task in owned),
+                                 return_exceptions=True)
             self._cleanup()
 
         def _cleanup(self) -> None:

@@ -5,9 +5,12 @@ from __future__ import annotations
 import uuid
 from typing import Iterable, List, Optional
 
-from rich import box
+from rich.console import Group
+from rich.padding import Padding
+from rich.errors import StyleSyntaxError
+from rich.style import Style
+from rich.align import Align
 from rich.markdown import Markdown
-from rich.panel import Panel
 from rich.text import Text
 from textual.widgets import RichLog
 
@@ -19,11 +22,11 @@ class ChatTranscript(RichLog):
     """Scrollable transcript with cursor-driven navigation."""
 
     ROLE_STYLES = {
-        "user": ("You", "bold blue"),
-        "assistant": ("Assistant", "bold green"),
-        "system": ("System", "bold magenta"),
-        "tool": ("Tool", "bold cyan"),
-        "command": ("Command", "bold yellow"),
+        "user": ("You", "bold #90c6dd"),
+        "assistant": ("Assistant", "bold #81e1c1"),
+        "system": ("System", "bold #c0a4c9"),
+        "tool": ("Tool", "bold #9bc6bb"),
+        "command": ("Command", "bold #ffc875"),
     }
 
     DEFAULT_PAGE_JUMP = 5
@@ -40,6 +43,7 @@ class ChatTranscript(RichLog):
         kwargs.setdefault("markup", False)
         kwargs.setdefault("highlight", False)
         kwargs.setdefault("auto_scroll", True)
+        kwargs.setdefault("min_width", 1)
         super().__init__(*args, **kwargs)
         self.messages: List[Msg] = []
         # Maintain legacy name for OutputBridge compatibility
@@ -50,33 +54,34 @@ class ChatTranscript(RichLog):
         self._cursor: Optional[int] = None
         self._follow_latest: bool = True
         self._page_jump = self.DEFAULT_PAGE_JUMP
+        self._dirty_messages = {}
+        self._flush_pending = False
 
     # ------------------------------------------------------------------
     # Message lifecycle
     def add_message(self, role: str, text: str, *, streaming: bool = False) -> str:
-        msg_id = uuid.uuid4().hex
-        message = Msg(
-            msg_id=msg_id,
-            role=(role or "assistant"),
-            text=text or "",
-            streaming=streaming,
-        )
-        self._prepare_message(message)
+        message = self._make_message(role or "assistant", text, streaming)
         self.messages.append(message)
         if self._follow_latest or self._cursor is None:
             self._cursor = len(self.messages) - 1
             self._follow_latest = True
         self._render_messages()
-        return msg_id
+        return message.msg_id
+
+    def _make_message(self, role, text, streaming=False):
+        message = Msg(msg_id=uuid.uuid4().hex, role=role, text=text or "", streaming=streaming)
+        self._prepare_message(message)
+        return message
+
+    def append_history(self, messages):
+        """Restore saved messages in a single layout pass."""
+        self.messages.extend(self._make_message(row['role'], row['text']) for row in messages)
+        self._cursor = len(self.messages) - 1 if self.messages else None
+        self._follow_latest = self.auto_scroll = True
+        self._render_messages()
 
     def insert_message_before(self, before_id: str, role: str, text: str) -> str:
-        msg_id = uuid.uuid4().hex
-        message = Msg(
-            msg_id=msg_id,
-            role=(role or "system"),
-            text=text or "",
-        )
-        self._prepare_message(message)
+        message = self._make_message(role or "system", text)
         insert_at = self._find_index(before_id)
         if insert_at is None:
             insert_at = len(self.messages)
@@ -84,13 +89,14 @@ class ChatTranscript(RichLog):
         if self._cursor is not None and insert_at <= self._cursor:
             self._cursor += 1
         self._render_messages()
-        return msg_id
+        return message.msg_id
 
     def update_message(self, msg_id: str, text: str, *, streaming: Optional[bool] = None) -> None:
         idx = self._find_index(msg_id)
         if idx is None:
             return
         message = self.messages[idx]
+        self._dirty_messages.pop(msg_id, None)
         message.text = text or ""
         if streaming is not None:
             message.streaming = bool(streaming)
@@ -106,25 +112,48 @@ class ChatTranscript(RichLog):
         message = self.messages[idx]
         message.text = (message.text or "") + (chunk or "")
         message.streaming = True
-        self._prepare_message(message)
         if self._follow_latest:
             self._cursor = len(self.messages) - 1
-        self._render_messages()
+        # Render a burst of deltas together. The authoritative final message can
+        # arrive before this callback; it already has the correct Markdown.
+        if self.is_mounted:
+            self._dirty_messages[msg_id] = message
+            if not self._flush_pending:
+                self._flush_pending = True
+                self.set_timer(1 / 30, self._flush_stream)
+        else:
+            self._prepare_message(message)
+            self._render_messages()
+
+    def _flush_stream(self):
+        self._flush_pending = False
+        if self._dirty_messages:
+            for message in self._dirty_messages.values():
+                self._prepare_message(message)
+            self._dirty_messages.clear()
+            self._render_messages()
 
     def stop_streaming(self, msg_id: str) -> None:
         idx = self._find_index(msg_id)
         if idx is None:
             return
         message = self.messages[idx]
+        self._dirty_messages.pop(msg_id, None)
         message.streaming = False
         self._prepare_message(message)
         self._render_messages()
 
+    def on_resize(self, event):
+        if event.size.width and event.size.width != getattr(self, '_render_width', None):
+            self._render_width = event.size.width
+            self.call_after_refresh(self._render_messages)
+
     def clear_messages(self) -> None:
+        self._dirty_messages.clear()
         self.messages.clear()
         self._cursor = None
         self._follow_latest = True
-        self.clear()
+        self._render_messages()
 
     def set_role_customization(
         self,
@@ -143,6 +172,14 @@ class ChatTranscript(RichLog):
         if 0 <= self._cursor < len(self.messages):
             return self.messages[self._cursor]
         return None
+
+    def select_message(self, msg_id):
+        index = self._find_index(msg_id)
+        if index is not None:
+            self._cursor = index
+            self._follow_latest = False
+            self.auto_scroll = False
+            self._render_messages()
 
     def move_cursor(self, delta: int) -> Optional[Msg]:
         if not self.messages:
@@ -221,13 +258,14 @@ class ChatTranscript(RichLog):
     def _render_messages(self) -> None:
         self.clear()
         if not self.messages:
-            empty = Panel(
-                Text("Type a message below to get started.", style="dim"),
-                border_style="dim",
-                box=box.ROUNDED,
-                padding=(1, 2),
-            )
-            self.write(empty)
+            welcome = Text()
+            welcome.append('▛▚▞▜ ▛▀▀ ▛▚▞▜ ▛▀▀ ▚ ▞\n'
+                           '▌  ▐ ▛▀  ▌  ▐ ▛▀   ▓ \n'
+                           '▘  ▝ ▀▀▀ ▘  ▝ ▀▀▀ ▞ ▚', style='bold #81e1c1')
+            welcome.append('\n\nStart a conversation', style='bold #e0ede5')
+            welcome.append('\nType below, or / for commands.', style='#a4bdb6')
+            self.write("")
+            self.write(Align.center(welcome), expand=True)
             return
 
         cursor = self._cursor
@@ -244,50 +282,28 @@ class ChatTranscript(RichLog):
 
         for idx in range(start, end):
             message = self.messages[idx]
-            panel = self._build_panel(idx, message, highlighted=(idx == cursor))
-            self.write(panel)
+            entry = self._entry(message, highlighted=(idx == cursor))
+            if idx == cursor:
+                cursor_line = len(self.lines)
+            self.write(entry, expand=True, scroll_end=False)
             if idx != end - 1:
                 self.write("")
 
         if self._follow_latest:
-            try:
-                self.scroll_end(animate=False)
-            except Exception:
-                pass
+            self.scroll_end(animate=False)
+        else:
+            self.scroll_to(y=cursor_line, animate=False)
 
-    def _build_panel(self, index: int, message: Msg, *, highlighted: bool) -> Panel:
-        title, style = self.ROLE_STYLES.get(message.role, ("Other", "cyan"))
-        title = self._role_titles.get(message.role, title)
-        border_style = self._role_styles.get(message.role, style)
-
-        padding = (1, 2)
-        if message.role in {"tool", "command"}:
-            padding = (0, 1)
-
-        header = Text(f" {title} ")
-
-        if highlighted:
-            border_style = f"bold {border_style}" if "bold" not in border_style else border_style
+    def _entry(self, message: Msg, *, highlighted: bool) -> Group:
+        default_title, default_style = self.ROLE_STYLES.get(message.role, ("Other", "cyan"))
+        title = self._role_titles.get(message.role, default_title)
         try:
-            return Panel(
-                message.rich,
-                title=header,
-                border_style=border_style,
-                padding=padding,
-                box=box.ROUNDED if not highlighted else box.HEAVY,
-            )
-        except Exception:
-            # Fallback to a safe default if a custom style is invalid for this Rich version
-            _, safe_style = self.ROLE_STYLES.get(message.role, ("Other", "cyan"))
-            if highlighted and "bold" not in safe_style:
-                safe_style = f"bold {safe_style}"
-            return Panel(
-                message.rich,
-                title=header,
-                border_style=safe_style,
-                padding=padding,
-                box=box.ROUNDED if not highlighted else box.HEAVY,
-            )
+            style = Style.parse(self._role_styles.get(message.role, default_style))
+        except StyleSyntaxError:
+            style = Style.parse(default_style)
+        heading = Text('▸ ' if highlighted else '╶ ', style=style)
+        heading.append(title, style='bold')
+        return Group(heading, Padding(message.rich, (0, 1, 0, 2)))
 
     def _find_index(self, msg_id: str) -> Optional[int]:
         for idx, entry in enumerate(self.messages):

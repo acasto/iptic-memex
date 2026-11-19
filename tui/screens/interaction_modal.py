@@ -101,7 +101,7 @@ class InteractionModal(ModalScreen[Optional[Any]]):
             try:
                 if self._choice_entries:
                     for label, data in self._choice_entries:
-                        item = ListItem(Static(label))
+                        item = ListItem(Static(Text(label)))
                         setattr(item, "choice_value", data)
                         setattr(item, "choice_label", label)
                         await self.list_view.append(item)

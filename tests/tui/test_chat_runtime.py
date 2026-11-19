@@ -37,10 +37,15 @@ def test_textual_turn_approval_and_busy_input():
             await pilot.press('ctrl+s', 'h', 'i', 'enter')
             await pilot.pause()
             assert app._stream_enabled
+            assert app.traces[-1].phase == 'Input needed'
             app._submit_input_text('overlap')
             await pilot.click('#yes')
             await pilot.pause()
             assert answers == [True] and len(calls) == 2
+            trace = app.traces[-1]
+            assert (trace.phase, trace.calls, trace.tools) == ('Completed', 2, 1)
+            assert [label for _, label, _ in trace.entries if label in ('INPUT', 'REPLY')] == [
+                'INPUT', 'REPLY']
             assert [e.text for e in app.chat_view.entries if e.role == 'assistant'] == ['Approved answer']
             assert len([t for t in session.get_context('chat').get('all') if t['role'] == 'user']) == 1
         session.close()

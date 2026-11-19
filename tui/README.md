@@ -1,9 +1,45 @@
-# TUI Architecture Overview
+# Memex terminal workbench
 
-The Textual user interface is organized around a thin `MemexTUIApp` wrapper in
-`tui/app.py` that delegates most behaviours to focused helpers under `tui/`.
-This file gives a quick roadmap for the moving parts so new features land in the
-right module.
+Start with `python main.py tui`. The composer keeps three lines for a draft.
+Enter sends it, and Ctrl+J inserts a newline. Click a function key along the
+bottom or press F1 for the keyboard reference.
+
+| Key | Action |
+| --- | --- |
+| F2 or Ctrl+K | Open the command palette |
+| F5 | Inspect the current chat run. Left and Right browse recent turns |
+| F6 | Watch the current project’s workspace tasks |
+| F7 | Open the highlighted transcript message for reading or copying |
+| F8 | Review status messages |
+| Ctrl+F | Search visible messages and tool output. Enter locates a match |
+| Ctrl+S | Toggle provider streaming between turns |
+| Ctrl+X | Cancel the active chat turn |
+| Ctrl+Q | Quit |
+
+At 100 columns or wider, a side panel follows the latest run. The inspector
+shows tool paths or commands, model calls, requests for input, the outcome,
+and the runtime’s text-token estimate for each call. The gauge uses the model’s
+configured context window when available. Provider-reported input and cached
+tokens appear separately when available for the last call. The inspector keeps
+the latest 24 turns and up to 160 events per turn in memory. Opening a saved
+conversation restores its visible messages; new runs begin a new inspector history.
+
+## Following an agent task
+
+Press F6 to open the workspace selected by the project root and
+`[WORKSPACE].directory` (default `.memex-workspace`). Work which needs your
+input appears first. Select a task with the arrow keys to follow its assignments,
+file reads, commands, budget and outcome. On a narrow terminal, Enter opens the
+activity and Esc returns to the task list. V reads the full latest handoff or
+answer. C copies the task ID. Watching an external task leaves its owner in control.
+
+When a session task has stopped with a saved question, A opens its handoff.
+Review the progress and execution profile, type an answer, and choose **Continue
+task** (Alt+Enter). This starts a fresh attempt under the existing task ID and
+saved allowance. Closing the watch returns to chat while the attempt continues.
+X stops the selected attempt if this TUI owns it. Quitting cancels all attempts this TUI owns. An open form belongs to the
+specific attempt you reviewed; a stale answer cannot resume a newer attempt.
+Workspace Watch is unavailable in private chat.
 
 ## Execution Flow (high level)
 
@@ -47,11 +83,8 @@ right module.
   to in-field suggestions. Extend it if you need richer completions (e.g., per
   command arguments) so the Textual-specific behaviour remains in one file.
 
-## Notes & Roadmap Ideas
+## Offline checks
 
-- Status history is stored in `OutputBridge.status_history` and surfaced via the
-  F8 modal. If a persistent sidebar returns, call `OutputBridge.set_status_log`
-  with a `StatusPanel` instance.
-- The helpers are intentionally framework-agnostic where possible. They accept
-  callables (`schedule_task`, `emit_status`, etc.) so they can be unit-tested
-  outside Textual with simple stubs.
+Run `python -m pytest -q tests/tui` for keyboard navigation, approvals, responsive
+layouts, live workspace records, and a stop/answer/continue round trip with a
+deterministic worker subprocess.
