@@ -20,12 +20,13 @@ class ProviderResult:
     truncated: bool = False
 
 
-def invoke(session, request, token, emit, call_id):
+def invoke(session, request, token, emit, call_id, input_estimate):
     """Consume streamed/nonstreamed text without rendering or executing tools."""
     provider = session.get_provider()
     result = ProviderResult(ResponseProcessor(session, emit))
     stream = None
-    emit('provider_started', {'call_id': call_id, 'stream': request.stream})
+    emit('provider_started', {'call_id': call_id, 'stream': request.stream,
+                              'estimated_input_tokens': input_estimate})
     try:
         if token.is_cancelled():
             raise InterruptedError('Run cancelled')

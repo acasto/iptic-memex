@@ -44,3 +44,10 @@ def select_turn_window(turns, context_sent='all'):
         if parts[0] == 'last':
             return turns[-count:]
     return turns
+
+
+def session_turn_window(session, turns):
+    """Use the same transcript projection for provider assembly and input estimates."""
+    window = select_turn_window(turns, session.get_params().get('context_sent', 'all'))
+    projection = getattr(session, 'project_provider_turns', None)
+    return projection(window) if projection else window

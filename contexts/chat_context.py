@@ -1,6 +1,6 @@
 from base_classes import InteractionContext
 from datetime import datetime
-from core.provider_turns import select_turn_window
+from core.provider_turns import session_turn_window
 import random
 
 
@@ -88,16 +88,13 @@ class ChatContext(InteractionContext):
         if args == "all":
             return self.conversation
 
-        # Get fresh params each time
-        params = self.session.get_params()
         # Domain context-update records carry actual external data. Providers
         # receive them as context-bearing input, never fabricated empty turns.
         conversation = self.conversation
         if any(turn.get('role') == 'context' for turn in conversation):
             conversation = [dict(turn, role='user') if turn.get('role') == 'context' else turn
                             for turn in conversation]
-        context_sent = params.get('context_sent', 'all')
-        return select_turn_window(conversation, context_sent)
+        return session_turn_window(self.session, conversation)
 
     def clear(self):
         self.conversation = []

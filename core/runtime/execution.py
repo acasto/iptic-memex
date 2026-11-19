@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from base_classes import InteractionNeeded
 from core.cancellation import CancellationToken
-from core.provider_turns import select_turn_window
+from core.provider_turns import session_turn_window
 from core.input_limits import compute_context_tokens, count_text_tokens
 from core.runtime.contracts import RunEvent, RunOutcome, RunRequest, RunStopped
 from core.runtime.provider import invoke, optional
@@ -65,7 +65,7 @@ def input_tokens(session, chat, contexts=None, message=''):
     turns = chat.get('all')
     if contexts is not None:
         turns = [*turns, {'role': 'user', 'message': message, 'context': contexts}]
-    turns = select_turn_window(turns, session.get_params().get('context_sent', 'all'))
+    turns = session_turn_window(session, turns)
     tokens = 0
     for turn in turns:
         tokens += count_text_tokens(session, turn.get('message', ''))
@@ -192,7 +192,7 @@ def execute(session, request: RunRequest, *, on_event=None, cancellation=None,
                     break
                 call_id = f'{result.run_id}:{index + 1}'
                 result.turns += 1
-                call_result = invoke(session, request, token, emit, call_id)
+                call_result = invoke(session, request, token, emit, call_id, tokens)
                 processor = call_result.processor
                 result.last_text, result.sanitized = processor.display, processor.sanitized
                 fail(call_result.status, call_result.reason, call_result.error)
