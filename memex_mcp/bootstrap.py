@@ -48,8 +48,9 @@ def _expand_env_in_headers(obj: Dict[str, Any]) -> Dict[str, Any]:
 
 def _load_headers_from_command(cmd: str) -> Dict[str, str]:
     try:
-        # Run via shell to allow simple && usage as in examples
-        proc = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
+        # Parse command safely without shell=True to prevent injection
+        cmd_args = shlex.split(cmd)
+        proc = subprocess.run(cmd_args, check=True, capture_output=True, text=True)
         text = proc.stdout.strip() or proc.stderr.strip()
         data = json.loads(text)
         if isinstance(data, dict):
