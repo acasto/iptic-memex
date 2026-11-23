@@ -98,7 +98,9 @@ After installation:
    - `~/.config/iptic-memex/config.ini`
    - (The repo includes a `user-config` symlink pointing to this folder for convenience.)
 2. Edit the user config to set API keys and preferred models (so updates to the repo don't overwrite your settings).
-3. Models live in `models.ini` (also supported in `~/.config/iptic-memex/models.ini`).
+3. Set `discover_models = true` on providers that support discovery and run
+   `uv run --locked python main.py list-models --refresh`. Use `models.ini` or `~/.config/iptic-memex/models.ini`
+   for aliases, model-specific settings, and other providers.
 4. Run `uv run --locked python main.py --help` to see available options.
 
 Global settings:

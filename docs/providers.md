@@ -2,7 +2,7 @@
 
 ## Overview
 
-Providers are configured in `config.ini`, while models live in `models.ini`. A model references a provider by name.
+Configure providers in `config.ini` and define model aliases and overrides in `models.ini`.
 
 Memex supports:
 - OpenAI, Anthropic, Google Gemini
@@ -22,6 +22,52 @@ Example model entry:
 provider = OpenAI
 model_name = gpt-4o-mini
 context_size = 128000
+```
+
+## Discover models
+
+Set `discover_models = true` in an active provider section in `config.ini`, then run
+`uv run --locked python main.py list-models --refresh`. Discovery is off by default.
+The `OpenAI`, `OpenAIResponses`, `Anthropic`, and `Google` adapters implement model
+listing. A compatible alias can opt in if its configured endpoint supports the
+adapter's model-list operation. For example, on a gateway that serves `/v1/models`:
+
+```ini
+[MyGateway]
+alias = OpenAI
+active = true
+base_url = https://gateway.example/v1
+discover_models = true
+```
+
+Use `--details` to inspect available metadata.
+Later listings and model selection read the local cache. A failed refresh keeps
+the provider's last catalog for that connection. The cache lives under
+`$XDG_CACHE_HOME/iptic-memex/model-catalog-v1` or `~/.cache/iptic-memex/model-catalog-v1`.
+
+Select a discovered model by its qualified name, for example
+`python main.py -m OpenAIResponses:gpt-6.2-sol chat`. Anthropic can also supply
+vision support and token limits. Google supplies token limits and advertises
+`generateContent` support. OpenAI's catalog supplies IDs without API capabilities.
+The CLI labels discoveries with unknown chat support and the default model
+pickers show models with known chat support. An explicit selection can use a
+qualified ID with unverified support.
+
+Existing `models.ini` settings take precedence over discovered metadata for the
+same model and connection. Provider `models` lists still filter the ordinary
+listings. Configure prices in `models.ini` for cost estimates on discovered models.
+
+A discovered model can be the default directly through its qualified name.
+Refresh once with the same provider configuration to populate the local catalog.
+Use `[DEFAULT].default_model` for interactive sessions and `[AGENT].default_model`
+for headless runs. For the gateway above, a default might look like this:
+
+```ini
+[DEFAULT]
+default_model = MyGateway:vendor/model-id
+
+[AGENT]
+default_model = MyGateway:vendor/model-id
 ```
 
 ## OpenAI-compatible providers
@@ -85,6 +131,14 @@ native settings, including reasoning context and structured output format.
 `temperature`, `top_p`, `include`, `metadata`, `parallel_tool_calls`, and cache
 settings are also forwarded when present. Set `base_url` to the API root
 (normally ending in `/v1`); the SDK adds `/responses` or `/chat/completions`.
+
+Set `system_prompt_placement` in `[OpenAIResponses]` or a model section.
+`auto` sends the rendered prompt as a leading `developer` message on
+`api.openai.com`, where a stable prefix can be cached. Custom endpoints use
+top-level `instructions` by default. Use `developer_message` or `instructions`
+to select a format explicitly. With a stored continuation, an unchanged leading
+developer prompt is carried forward by the server. Changing it or its placement
+starts a new response chain using the local history.
 
 Responses storage stays off by default. Memex saves native response output items
 with each assistant turn and replays them, including encrypted reasoning,

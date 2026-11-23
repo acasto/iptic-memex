@@ -48,6 +48,17 @@ class AnthropicProvider(AnthropicUsage, APIProvider):
                                  else params[name])
         return Anthropic(**options)
 
+    def list_models(self):
+        """List Claude IDs and capability metadata exposed by the Messages API."""
+        for model in self.client.models.list():
+            if field(model, 'lifecycle') == 'retired':
+                continue
+            image_input = field(field(model, 'capabilities'), 'image_input')
+            yield {'model_name': model.id, 'display_name': model.display_name,
+                   'context_size': field(model, 'max_input_tokens'),
+                   'output_token_limit': field(model, 'max_tokens'),
+                   'vision': field(image_input, 'supported'), 'chat_supported': True}
+
     def _clear_response(self):
         if getattr(self, '_active_stream', None) is not None:
             self._active_stream.close()

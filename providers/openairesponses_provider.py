@@ -4,6 +4,7 @@ from time import time
 import json
 from copy import deepcopy
 from typing import Any, Generator, List, Dict
+from urllib.parse import urlsplit
 
 from openai import OpenAI
 
@@ -79,6 +80,10 @@ class OpenAIResponsesProvider(OpenAIUsage, APIProvider):
                 options[key] = params[key]
 
         return OpenAI(**options)
+
+    def list_models(self):
+        """List available IDs. The OpenAI catalog does not declare Responses support."""
+        return ({'model_name': model.id} for model in self._client.models.list())
 
     # --- MCP helpers ----------------------------------------------------
     def _summarize_mcp_outputs(self, outputs: list) -> str:
@@ -228,7 +233,22 @@ class OpenAIResponsesProvider(OpenAIUsage, APIProvider):
             input_items.append({'role': role, 'content': content})
         return input_items
 
-    def _chain_input(self, full_input, params):
+    def _developer_prompt(self, params, instructions, body, excluded):
+        placement = str(params.get('system_prompt_placement', 'auto')).strip().lower()
+        if placement == 'auto':
+            host = urlsplit(str(getattr(self._client, 'base_url', ''))).hostname
+            placement = 'developer_message' if host == 'api.openai.com' else 'instructions'
+        if placement not in ('instructions', 'developer_message'):
+            raise ValueError('system_prompt_placement must be auto, instructions, or developer_message')
+        # A raw prompt or input override historically replaces the corresponding
+        # generated field. Keep that behavior when selecting a prompt format.
+        if (placement == 'developer_message' and instructions
+                and not {'instructions', 'input'}.intersection(excluded)
+                and not {'instructions', 'input', 'previous_response_id'}.intersection(body)):
+            return [{'type': 'message', 'role': 'developer', 'content': instructions}]
+        return []
+
+    def _chain_input(self, full_input, params, developer_prompt):
         """Continue only an unchanged, provider-visible prefix we actually sent."""
         if getattr(self.session, 'private', False) or not (
                 params.get('store') and params.get('use_previous_response')
@@ -239,7 +259,7 @@ class OpenAIResponsesProvider(OpenAIUsage, APIProvider):
         turns = chat.get() if chat else []
         for index in range(len(turns) - 1, -1, -1):
             if turns[index].get('responses_response_id') == self._last_response_id:
-                prefix = self._assemble_input(turns[:index + 1])
+                prefix = developer_prompt + self._assemble_input(turns[:index + 1])
                 if prefix == self._chain_prefix:
                     return self._assemble_input(turns[index + 1:]), True
                 break
@@ -276,12 +296,10 @@ class OpenAIResponsesProvider(OpenAIUsage, APIProvider):
                            'approval_request_id': request_id})
         return inputs
 
-    def _request_params(self, params, input_items, will_chain):
+    def _request_params(self, params, input_items, will_chain, instructions, body, excluded):
         """Map Memex settings to native Responses parameters without guessing models."""
-        excluded = excluded_parameters(params)
         api = {'model': params.get('model_name', params.get('model')),
                'input': input_items, 'store': bool(params.get('store', False))}
-        instructions = self._assemble_instructions()
         if instructions:
             api['instructions'] = instructions
         if will_chain:
@@ -307,9 +325,7 @@ class OpenAIResponsesProvider(OpenAIUsage, APIProvider):
         if params.get('verbosity') is not None and 'verbosity' not in excluded:
             api.setdefault('text', {})['verbosity'] = str(params['verbosity']).lower()
         if params.get('extra_body') is not None:
-            api['extra_body'] = extra_body(params['extra_body'])
-            for key in excluded:
-                api['extra_body'].pop(key, None)
+            api['extra_body'] = body
         mode = getattr(self.session, 'get_effective_tool_mode', lambda: 'none')()
         if mode == 'official':
             tools = self.get_tools_for_request()
@@ -330,7 +346,9 @@ class OpenAIResponsesProvider(OpenAIUsage, APIProvider):
         self._last_response = response
         self._last_status = field(response, 'status') or 'completed'
         self._last_response_id = field(response, 'id')
-        self._last_stored = bool(self.last_api_param.get('store')) and self._last_status != 'failed'
+        body = self.last_api_param.get('extra_body', {})
+        stored = body.get('store', self.last_api_param.get('store'))
+        self._last_stored = bool(stored) and self._last_status != 'failed'
         self._last_finish_reason = 'stop'
         if self._last_status == 'incomplete':
             reason = field(field(response, 'incomplete_details'), 'reason')
@@ -358,7 +376,9 @@ class OpenAIResponsesProvider(OpenAIUsage, APIProvider):
         self._pending_mcp_approvals = []
         self._capture_mcp_approvals(outputs)
         self._response_model = self.last_api_param.get('model')
-        self._chain_prefix = deepcopy(self._request_full_input) + self._last_output_items
+        self._chain_prefix = None
+        if 'input' in self.last_api_param and not {'input', 'previous_response_id'}.intersection(body):
+            self._chain_prefix = deepcopy(self._request_full_input) + self._last_output_items
         summary = self._summarize_mcp_outputs(outputs)
         if summary:
             self._log('mcp_event', 'summary', {'text': summary})
@@ -410,8 +430,17 @@ class OpenAIResponsesProvider(OpenAIUsage, APIProvider):
         try:
             params = self.session.get_params()
             self._usage_params = deepcopy(params)
-            full_input = self._assemble_input()
-            input_items, will_chain = self._chain_input(full_input, params)
+            excluded = excluded_parameters(params)
+            body = extra_body(params.get('extra_body'))
+            for key in excluded:
+                body.pop(key, None)
+            instructions = self._assemble_instructions()
+            developer_prompt = self._developer_prompt(params, instructions, body, excluded)
+            full_input = developer_prompt + self._assemble_input()
+            if {'input', 'previous_response_id'}.intersection(excluded | body.keys()):
+                input_items, will_chain = full_input, False
+            else:
+                input_items, will_chain = self._chain_input(full_input, params, developer_prompt)
             approval_ids = {field(item, 'id') for item in full_input
                             if field(item, 'type') == 'mcp_approval_request'}
             self._pending_mcp_approvals = [
@@ -424,7 +453,8 @@ class OpenAIResponsesProvider(OpenAIUsage, APIProvider):
             if not input_items and not will_chain:
                 input_items = [{'role': 'user', 'content': ' '}]
             self._request_full_input = full_input + approvals
-            api = self._request_params(params, input_items, will_chain)
+            api = self._request_params(params, input_items, will_chain,
+                                       None if developer_prompt else instructions, body, excluded)
             self.last_api_param = api
             self._log('provider_start', {
                 'provider': 'OpenAIResponses', 'model': api.get('model'),

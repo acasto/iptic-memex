@@ -429,7 +429,8 @@ def agent(ctx, file, from_stdin, message, stdin_message, no_hooks, json_output):
 @click.pass_context
 @click.option('-a', '--all', 'showall', is_flag=True, help="Show all models")
 @click.option('-d', '--details', is_flag=True, help="Show model details")
-def list_models(ctx, showall, details):
+@click.option('--refresh', is_flag=True, help='Refresh catalogs for providers with discover_models enabled')
+def list_models(ctx, showall, details, refresh):
     """
     list the available models
     """
@@ -437,7 +438,21 @@ def list_models(ctx, showall, details):
     if not config_manager:
         # Create a temporary config manager if none exists
         config_manager = ConfigManager()
-    
+
+    refresh_failed = False
+    if refresh:
+        from app.model_discovery import refresh_model_catalogs
+        results = refresh_model_catalogs(config_manager)
+        if not results:
+            raise click.ClickException('Set discover_models = true on an active provider in config.ini.')
+        refresh_failed = True
+        for provider, result in results.items():
+            if isinstance(result, int):
+                click.echo(f'{provider}: refreshed {result} models', err=True)
+                refresh_failed = False
+            else:
+                click.echo(f'{provider}: refresh failed ({result}). Kept any cached models.', err=True)
+
     # Note: active_only=True means show only active models (default behavior)
     # active_only=False means show all models (when --all flag is used)
     if showall:
@@ -453,10 +468,14 @@ def list_models(ctx, showall, details):
             for option, value in options.items():
                 print(f'{option} = {value}')
         else:
-            if 'default' in options and options['default'] == 'True':
-                print(f'{section} (default)')
-            else:
-                print(section)
+            labels = []
+            if options.get('default'):
+                labels.append('default')
+            if options.get('chat_compatibility') == 'unverified':
+                labels.append('chat compatibility unverified')
+            print(f"{section} ({', '.join(labels)})" if labels else section)
+    if refresh_failed:
+        ctx.exit(1)
 
 
 @cli.command()
@@ -477,7 +496,7 @@ def list_providers(ctx, showall):
     default_model = ''
     default_provider = ''
     for model, options in models.items():
-        if 'default' in options and options['default'] == 'True':
+        if options.get('default'):
             default_model = model
             default_provider = options['provider']
     

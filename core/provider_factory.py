@@ -24,10 +24,14 @@ class ProviderFactory:
         session=None,
         params_override: Optional[dict] = None,
         isolated: bool = True,
+        required_method: Optional[str] = None,
     ):
+        """Resolve a provider alias and check any required method before initialization."""
         cls = registry.load_provider_class(provider_name)
         if not cls:
             raise RuntimeError(f"Provider '{provider_name}' not found")
+        if required_method and not callable(getattr(cls, required_method, None)):
+            raise NotImplementedError(f"Provider '{provider_name}' does not implement {required_method}")
 
         # Build a lightweight session view for the provider instance
         real_session = session

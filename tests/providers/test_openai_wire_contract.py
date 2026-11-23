@@ -43,7 +43,9 @@ class Session:
         return self.params
 
     def get_context(self, name):
-        return self.chat if name == 'chat' else None
+        if name == 'chat':
+            return self.chat
+        return getattr(self, 'prompt', None) if name == 'prompt' else None
 
     def get_contexts(self, kind=None):
         return []
@@ -105,7 +107,7 @@ def sse(events):
     return ''.join(f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n' for event in events)
 
 
-def make_provider(monkeypatch, provider_class, session, replies):
+def make_provider(monkeypatch, provider_class, session, replies, base_url='http://offline.test/v1'):
     """Capture the exact JSON serialized by the installed OpenAI SDK."""
     requests = []
     iterator = iter(replies)
@@ -121,12 +123,79 @@ def make_provider(monkeypatch, provider_class, session, replies):
             return httpx.Response(200, headers={'content-type': 'text/event-stream'}, text=reply)
         return httpx.Response(200, json=reply)
 
-    client = OpenAI(api_key='offline-test', base_url='http://offline.test/v1', max_retries=0,
+    client = OpenAI(api_key='offline-test', base_url=base_url, max_retries=0,
                     http_client=httpx.Client(transport=httpx.MockTransport(handle)))
     monkeypatch.setattr(provider_class, '_initialize_client', lambda self: client)
     provider = provider_class(session)
     session.provider = provider
     return provider, requests
+
+
+@pytest.mark.parametrize('host, options, expected', [
+    ('api.openai.com', {}, 'developer_message'),
+    ('api.openai.com.example.test', {}, 'instructions'),
+    ('gateway.test', {'system_prompt_placement': 'developer_message'}, 'developer_message'),
+    ('api.openai.com', {'system_prompt_placement': 'instructions'}, 'instructions'),
+    ('api.openai.com', {'excluded_parameters': 'instructions'}, None),
+    ('api.openai.com', {'extra_body': {'instructions': 'Override'}}, 'override'),
+])
+def test_responses_places_system_prompt_on_the_effective_endpoint(monkeypatch, host, options,
+                                                                 expected):
+    session = Session(options)
+    session.prompt = SimpleNamespace(get=lambda: {'content': 'Reusable prompt'})
+    provider, requests = make_provider(monkeypatch, OpenAIResponsesProvider, session,
+                                       [response([message()])], base_url=f'https://{host}/v1')
+
+    assert provider.chat() == 'Done'
+    request = requests[0]
+    if expected == 'developer_message':
+        assert request['input'][0] == {'type': 'message', 'role': 'developer',
+                                       'content': 'Reusable prompt'}
+    else:
+        assert [item['role'] for item in request['input']] == ['user']
+    assert request.get('instructions') == {
+        'instructions': 'Reusable prompt', 'override': 'Override',
+    }.get(expected)
+
+
+@pytest.mark.parametrize('use_chain', [False, True])
+def test_responses_reuses_one_developer_prompt_through_tool_followups(monkeypatch, use_chain):
+    session = Session({'store': use_chain, 'use_previous_response': use_chain}, tools=True)
+    session.prompt = SimpleNamespace(get=lambda: {'content': 'Reusable prompt'})
+    replies = [response([function_call()]), response([message()]), response([message()]),
+               response([message()])]
+    for index, reply in enumerate(replies, 1):
+        reply['id'] = f'resp_{index}'
+    provider, requests = make_provider(monkeypatch, OpenAIResponsesProvider, session, replies,
+                                       base_url='https://api.openai.com/v1')
+    runner = TurnRunner(session)
+    text = provider.chat()
+    runner._record_assistant(text)
+    assert runner._execute_tools(text)
+    runner._record_assistant(provider.chat())
+
+    assert requests[0]['input'][0]['content'] == 'Reusable prompt'
+    if use_chain:
+        assert requests[1]['previous_response_id'] == 'resp_1'
+        assert requests[1]['input'] == [
+            {'type': 'function_call_output', 'call_id': 'call_pair_1', 'output': 'OK'}]
+    else:
+        assert requests[1]['input'][0]['content'] == 'Reusable prompt'
+        assert requests[1]['input'][-1]['call_id'] == 'call_pair_1'
+
+    session.prompt.get = lambda: {'content': 'Updated prompt'}
+    session.chat.add('Next question')
+    runner._record_assistant(provider.chat())
+    assert 'previous_response_id' not in requests[2]
+    assert requests[2]['input'][0]['content'] == 'Updated prompt'
+    assert all(item.get('content') != 'Reusable prompt' for item in requests[2]['input'])
+
+    session.params['system_prompt_placement'] = 'instructions'
+    session.chat.add('One more question')
+    provider.chat()
+    assert 'previous_response_id' not in requests[3]
+    assert requests[3]['instructions'] == 'Updated prompt'
+    assert all(item.get('role') != 'developer' for item in requests[3]['input'])
 
 
 @pytest.mark.parametrize('store', [False, True])

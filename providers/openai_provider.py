@@ -102,6 +102,10 @@ class OpenAIProvider(OpenAIUsage, APIProvider):
 
         return OpenAI(**options)
 
+    def list_models(self):
+        """List IDs from an endpoint that implements OpenAI's model catalog."""
+        return ({'model_name': model.id} for model in self.client.models.list())
+
     # --- Embeddings ---------------------------------------------------
     def embed(self, texts: List[str], model: Optional[str] = None) -> List[List[float]]:
         """Create embeddings for a list of texts using OpenAI embeddings API."""

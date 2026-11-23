@@ -193,6 +193,8 @@ class OpenAIUsage:
         if getattr(self, '_cost_totals', None) is not None:
             stats['total_input_cost'] = self._cost_totals['input_cost']
             stats['total_output_cost'] = self._cost_totals['output_cost']
+        else:
+            stats['cost_known'] = False
         return stats
 
     def reset_usage(self):
@@ -217,6 +219,8 @@ class OpenAIUsage:
             'input_cost': stats.get('total_input_cost', 0),
             'output_cost': stats.get('total_output_cost', 0),
         }
+        if stats.get('cost_known') is False:
+            self._cost_totals = None
 
     def get_cost(self):
         """Return accumulated costs without repricing older model calls."""

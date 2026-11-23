@@ -99,6 +99,20 @@ class GoogleProvider(GoogleUsage, APIProvider):
         options['http_options'] = gx_types.HttpOptions(**http)
         self.client = genai.Client(**options)
 
+    def list_models(self):
+        """List Gemini IDs with generation support and advertised token limits."""
+        self._ensure_client()
+        for model in self.client.models.list():
+            name = model.name or ''
+            methods = field(model, 'supported_actions')
+            if methods is not None and 'generateContent' not in methods:
+                continue
+            yield {'model_name': name.removeprefix('models/'),
+                   'display_name': model.display_name,
+                   'context_size': field(model, 'input_token_limit'),
+                   'output_token_limit': field(model, 'output_token_limit'),
+                   'chat_supported': True if methods is not None else None}
+
     def _track_response(self, response):
         # SDK stream generators do not always close their httpx.Response on early exit.
         self._http_responses.append(response)

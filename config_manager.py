@@ -3,6 +3,8 @@ import re
 from configparser import ConfigParser, NoOptionError, NoSectionError
 from typing import Dict, Any, Optional, List
 
+from core.model_catalog import CONNECTION_OPTIONS, ModelCatalog
+
 
 class ConfigManager:
     """
@@ -14,6 +16,8 @@ class ConfigManager:
         self.config_file = None
         self.base_config = self._load_configs(config_file)
         self.models = self._load_models()
+        self.model_catalog = ModelCatalog(self.base_config)
+        self.discovered_models = self.model_catalog.read()
         
     def _load_configs(self, config_file: Optional[str] = None) -> ConfigParser:
         """
@@ -72,52 +76,20 @@ class ConfigManager:
         if overrides is None:
             overrides = {}
         
-        # Normalize model name in overrides if present
+        config = SessionConfig(self.base_config, self.models, overrides,
+                               getattr(self, 'discovered_models', None))
         if 'model' in overrides:
             model = overrides['model']
-            # Create a temporary SessionConfig to use normalize_model_name
-            temp_config = SessionConfig(self.base_config, self.models, {})
-            normalized_model = temp_config.normalize_model_name(model)
+            normalized_model = config.normalize_model_name(model)
             if normalized_model:
                 overrides['model'] = normalized_model
         
-        return SessionConfig(self.base_config, self.models, overrides)
+        return config
     
     def list_models(self, active_only: bool = True) -> Dict[str, Dict[str, Any]]:
         """List available models"""
-        filtered_models = {}
-
-        # First lets add "default = True" to the default model
-        default_model = self.base_config['DEFAULT'].get('default_model', None)
-        for model in self.models.sections():
-            if model == default_model:
-                self.models.set(model, 'default', 'True')
-
-        if not active_only:
-            for model in self.models.sections():
-                filtered_models[model] = {
-                    option: self.fix_values(self.models.get(model, option))
-                    for option in self.models.options(model)
-                }
-        else:
-            for provider in self.base_config.sections():
-                # Check if the provider is active
-                if self.base_config.getboolean(provider, 'active', fallback=False):
-                    # See if user has a preferred list of models to use for this provider, else use all
-                    desired_models = self.base_config.get(provider, 'models', fallback=None)
-                    if desired_models is not None:
-                        desired_models = [model.strip() for model in desired_models.split(',')]
-                    
-                    # Filter the models based on the provider configuration
-                    for model in self.models.sections():
-                        if self.models.get(model, 'provider') == provider:
-                            if desired_models is None or model in desired_models:
-                                filtered_models[model] = {
-                                    option: self.fix_values(self.models.get(model, option))
-                                    for option in self.models.options(model)
-                                }
-
-        return filtered_models
+        return self.create_session_config().list_models(showall=not active_only,
+                                                        include_unverified=True)
     
     def list_providers(self, active_only: bool = True) -> Dict[str, Dict[str, Any]]:
         """List available providers"""
@@ -287,9 +259,11 @@ class SessionConfig:
     Provides backward compatibility with ConfigHandler interface.
     """
     
-    def __init__(self, base_config: ConfigParser, models: ConfigParser, overrides: Optional[Dict[str, Any]] = None):
+    def __init__(self, base_config: ConfigParser, models: ConfigParser,
+                 overrides: Optional[Dict[str, Any]] = None, discovered_models=None):
         self.base_config = base_config
         self.models = models
+        self.discovered_models = discovered_models or {}
         self.overrides = overrides or {}
         self._cached_params = None
         self._current_model = None
@@ -319,19 +293,29 @@ class SessionConfig:
         if model:
             # Normalize to get the section name (display name)
             normalized_model = self.normalize_model_name(model)
+            if normalized_model is None and isinstance(model, str):
+                provider, separator, _ = model.partition(':')
+                if separator and self.base_config.has_section(provider):
+                    raise RuntimeError(
+                        f"Unknown model '{model}'. Enable discovery and run 'list-models --refresh', "
+                        "or add it to models.ini."
+                    )
             section_name = normalized_model if normalized_model else model
             params['model'] = section_name  # Keep section name for internal use
             
             # Add provider-specific config if model is specified
-            provider = self._get_provider_for_model(section_name)
+            model_config = self._model_options(section_name)
+            provider = model_config.get('provider')
             if provider:
                 params['provider'] = provider
                 provider_config = self._get_provider_config(provider)
                 params.update(provider_config)
                 
                 # Add model-specific config - this will include the actual model_name for the provider
-                model_config = self._get_model_config(section_name)
                 params.update(model_config)
+                if section_name in self.discovered_models and not self.models.has_section(section_name):
+                    params.setdefault('price_in', None)
+                    params.setdefault('price_out', None)
         
         # Apply overrides (this will override the model if explicitly set)
         params.update(self.overrides)
@@ -401,20 +385,6 @@ class SessionConfig:
                 return params.get(option, fallback)
             return fallback
     
-    def _get_provider_for_model(self, model: str) -> Optional[str]:
-        """Get the provider name for a given model"""
-        # Check if model exists in models config
-        if self.models.has_section(model):
-            return self.models.get(model, 'provider', fallback=None)
-        
-        # Check by model_name in case user specified the full name
-        for section in self.models.sections():
-            model_name = self.models.get(section, 'model_name', fallback=section)
-            if model == model_name:
-                return self.models.get(section, 'provider', fallback=None)
-        
-        return None
-    
     def _get_provider_config(self, provider: str) -> Dict[str, Any]:
         """Get configuration for a specific provider"""
         if self.base_config.has_section(provider):
@@ -424,57 +394,52 @@ class SessionConfig:
             }
         return {}
     
-    def _get_model_config(self, model: str) -> Dict[str, Any]:
-        """Get configuration for a specific model"""
-        # Check direct section name first
-        if self.models.has_section(model):
-            return {
-                option: ConfigManager.fix_values(self.models.get(model, option))
-                for option in self.models.options(model)
-            }
-        
-        # Check by model_name
-        for section in self.models.sections():
-            model_name = self.models.get(section, 'model_name', fallback=section)
-            if model == model_name:
-                return {
-                    option: ConfigManager.fix_values(self.models.get(section, option))
-                    for option in self.models.options(section)
-                }
-        
+    def _catalog_alias(self, section):
+        provider = self.models.get(section, 'provider', fallback=None)
+        model = self.models.get(section, 'model_name', fallback=section)
+        qualified = f'{provider}:{model}'
+        if qualified not in self.discovered_models:
+            return None
+        # A model may target a different endpoint or account from its provider section.
+        for option in CONNECTION_OPTIONS:
+            value = self.models.get(section, option, raw=True, fallback=None)
+            if value is not None and value != self.base_config.get(provider, option, raw=True,
+                                                                   fallback=None):
+                return None
+        return qualified
+
+    def _model_options(self, section) -> Dict[str, Any]:
+        if self.models.has_section(section):
+            discovered = self.discovered_models.get(self._catalog_alias(section), {})
+            configured = {key: ConfigManager.fix_values(self.models.get(section, key))
+                          for key in self.models.options(section)}
+            return {**discovered, **configured}
+        if section in self.discovered_models:
+            defaults = {key: ConfigManager.fix_values(value)
+                        for key, value in self.models.defaults().items()}
+            return {**defaults, **self.discovered_models[section]}
         return {}
-    
+
+    def _get_model_config(self, model: str) -> Dict[str, Any]:
+        return self._model_options(self.normalize_model_name(model))
+
     def valid_model(self, model: str) -> bool:
-        """Check if a model name is valid"""
-        # Check section names
-        if self.models.has_section(model):
-            return True
-        
-        # Check model_name values
-        for section in self.models.sections():
-            model_name = self.models.get(section, 'model_name', fallback=section)
-            if model == model_name:
-                return True
-        
-        return False
-    
+        """Check if a configured or discovered model name is valid."""
+        return self.normalize_model_name(model) is not None
+
     def normalize_model_name(self, model: str) -> Optional[str]:
-        """
-        Normalize model name - returns the section name (display name) if valid
-        The model_name field is only used when talking to providers
-        """
-        # Check direct section name first - return the section name, not model_name
+        """Resolve an INI alias, a configured model ID, or a qualified catalog ID."""
         if self.models.has_section(model):
-            return model  # Return the section name itself
-        
-        # Check by model_name - if someone passes the actual model_name, find the first section that uses it
+            return model
+        if model in self.discovered_models:
+            return next((section for section in self.models.sections()
+                         if self._catalog_alias(section) == model), model)
         for section in self.models.sections():
             model_name = self.models.get(section, 'model_name', fallback=section)
             if model == model_name:
-                return section  # Return the section name, not the model_name
-        
+                return section
         return None
-    
+
     def get_default_prompt_source(self) -> str:
         """
         Determines the source of the default prompt from config files.
@@ -495,47 +460,36 @@ class SessionConfig:
         return "default.txt"
     
     # Backward compatibility methods that delegate to ConfigHandler-style interface
-    def list_models(self, showall: bool = False) -> Dict[str, Dict[str, Any]]:
-        """List models - backward compatibility"""
+    def list_models(self, showall: bool = False, *,
+                    include_unverified: bool = False) -> Dict[str, Dict[str, Any]]:
+        """List configured models and eligible discoveries with the same filters."""
         filtered_models = {}
-
-        # Get the default model for marking
-        default_model = self.base_config['DEFAULT'].get('default_model', None)
-
-        if showall:
-            for model in self.models.sections():
-                model_data = {
-                    option: ConfigManager.fix_values(self.models.get(model, option))
-                    for option in self.models.options(model)
-                }
-                # Mark default model without mutating the original config
-                if model == default_model:
-                    model_data['default'] = True
-                filtered_models[model] = model_data
-        else:
-            for provider in self.base_config.sections():
-                # Check if the provider is active
-                if self.base_config.getboolean(provider, 'active', fallback=False):
-                    # See if user has a preferred list of models to use for this provider, else use all
-                    desired_models = self.base_config.get(provider, 'models', fallback=None)
-                    if desired_models is not None:
-                        desired_models = [model.strip() for model in desired_models.split(',')]
-
-                    # Filter the models based on the provider configuration
-                    for model in self.models.sections():
-                        if self.models.get(model, 'provider') == provider:
-                            if desired_models is None or model in desired_models:
-                                model_data = {
-                                    option: ConfigManager.fix_values(self.models.get(model, option))
-                                    for option in self.models.options(model)
-                                }
-                                # Mark default model without mutating the original config
-                                if model == default_model:
-                                    model_data['default'] = True
-                                filtered_models[model] = model_data
-
+        default_model = self.normalize_model_name(self.base_config['DEFAULT'].get('default_model'))
+        configured = self.models.sections()
+        aliases = {self._catalog_alias(section) for section in configured}
+        for model in dict.fromkeys([*configured, *self.discovered_models]):
+            discovered = not self.models.has_section(model)
+            if discovered and model in aliases:
+                continue
+            data = self._model_options(model)
+            if discovered and data.get('chat_supported') is not True:
+                if not (showall or include_unverified or model == default_model):
+                    continue
+                data['chat_compatibility'] = 'unverified'
+            if not showall:
+                provider = data.get('provider')
+                if not provider or not self.base_config.getboolean(provider, 'active', fallback=False):
+                    continue
+                preferred = self.base_config.get(provider, 'models', fallback=None)
+                if preferred is not None:
+                    names = {name.strip() for name in preferred.split(',')}
+                    if model not in names and not (discovered and data['model_name'] in names):
+                        continue
+            if model == default_model:
+                data['default'] = True
+            filtered_models[model] = data
         return filtered_models
-    
+
     def list_providers(self, showall: bool = False) -> Dict[str, Dict[str, Any]]:
         """List providers - backward compatibility"""
         filtered_providers = {}
