@@ -6,14 +6,19 @@ from app.session_services import HeadlessServices
 
 
 def build_headless_session(config_manager, options=None, *, builder=None,
-                           tools_enabled=False, default_prompt=False, memory=False, services=None):
+                           tools_enabled=False, default_prompt=False, memory=False, services=None,
+                           saved_session=None):
     """Resolve noninteractive defaults; optional services stay disabled."""
     from session import Session
 
     from app.project import project_options, bind_project
-    project, options, sources = project_options(options, interactive=False)
+    scripted_chat = saved_session is not None
+    if scripted_chat:
+        from core.session_persistence import saved_params
+        options = {**saved_params(saved_session), **(options or {})}
+    project, options, sources = project_options(options, interactive=scripted_chat)
     private = options.pop('private', False)
-    if not options.get('model'):
+    if not scripted_chat and not options.get('model'):
         model = config_manager.base_config.get('AGENT', 'default_model', fallback=None)
         if model:
             options['model'] = model
@@ -31,11 +36,18 @@ def build_headless_session(config_manager, options=None, *, builder=None,
         session.file_memory_enabled = services.file_memory
         session.required_tools = services.required_tools
         session.before_provider_call = services.before_call
-        if tools_enabled:
+        configure_runtime(session)
+        if scripted_chat:
+            from app.chat import configure_chat_policy
+            from core.session_persistence import apply_session_data
+            configure_chat_policy(session)
+            apply_session_data(session, saved_session, restore_params=False)
+            if saved_session.get('chat'):
+                session.set_user_data('__hooks_session_started__', True)
+        elif tools_enabled:
             install_tool_selection(session, 'AGENT')
             session.write_policy = session._normalize_write_policy(
                 options.get('agent_writes') or config.base_config.get('AGENT', 'writes_policy', fallback='deny'))
-        configure_runtime(session)
         session.utils.logger.update_base_context({'session_uid': session.session_uid})
         if services.configure:
             services.configure(session)
@@ -61,6 +73,9 @@ def build_headless_session(config_manager, options=None, *, builder=None,
         session.headless_prompt_source = source
         if session.add_context('prompt', source) is None:
             raise ValueError('Could not load prompt context')
+        if scripted_chat:
+            from memex_mcp.bootstrap import autoload_mcp
+            autoload_mcp(session)
         return session
 
     except BaseException:

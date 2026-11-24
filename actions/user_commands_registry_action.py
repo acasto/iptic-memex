@@ -151,6 +151,7 @@ class UserCommandsRegistryAction(InteractionAction):
                         'args': ['save', 'full'],
                         'complete': {'type': 'builtin', 'name': 'chat_paths'},
                     },
+                    'session': {'type': 'action', 'name': 'manage_sessions', 'args': ['save']},
                     'checkpoint': {'type': 'action', 'name': 'manage_sessions', 'args': ['checkpoint']},
                     'code': {'type': 'action', 'name': 'save_code'},
                 },

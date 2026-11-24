@@ -75,7 +75,7 @@ Start here for the rest of the platform details:
 - [Templates](docs/templates.md)
 - [Hooks](docs/hooks.md)
 - [Runners](docs/runners.md)
-- [Sessions](docs/sessions.md)
+- [Sessions and scripted conversations](docs/sessions.md)
 - [Memory](docs/memory.md)
 - [RAG](docs/rag.md)
 - [MCP](docs/mcp.md)

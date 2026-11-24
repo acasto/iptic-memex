@@ -537,8 +537,9 @@ def list_prompts(ctx):
 
 
 @cli.command()
+@click.option('--all', 'all_origins', is_flag=True, help='Include programmatic sessions')
 @click.pass_context
-def list_sessions(ctx):
+def list_sessions(ctx, all_origins):
     """List saved sessions."""
     config_manager = ctx.obj.get('CONFIG_MANAGER')
     if not config_manager:
@@ -560,7 +561,7 @@ def list_sessions(ctx):
     action = session.get_action('manage_sessions')
     if not action:
         raise click.ClickException("manage_sessions action not available.")
-    result = action.run(['list'])
+    result = action.run(['list', '--all'] if all_origins else ['list'])
     if hasattr(result, 'payload'):
         result = result.payload
     if isinstance(result, dict) and result.get('ok') is False:
@@ -675,22 +676,24 @@ def _maybe_resume_session(session, *, resume: str | None) -> None:
     action = session.get_action('manage_sessions')
     if not action:
         raise click.ClickException('manage_sessions action not available.')
-    if resume == '__pick__':
-        action.run(['resume'])
-        return
     if not resume or resume == '__last__':
         from core.session_persistence import latest_session_path
         resume = latest_session_path(session)
         if not resume:
             session.ui.emit('warning', {'message': 'No saved session found to resume.'})
             return
-    action.run(['resume', resume])
+    result = action.run(['resume'] if resume == '__pick__' else ['resume', resume])
+    payload = getattr(result, 'payload', result)
+    if isinstance(payload, dict) and payload.get('error') == 'session_busy':
+        raise click.ClickException('Session is in use by another writer.')
 
 
 # take care of business
+from modes.session_commands import register_session_commands
 from modes.workspace_mode import register_workspace_commands
 
 register_workspace_commands(cli, _task_message, is_image_file)
+register_session_commands(cli, _render_result, _render_exception)
 
 
 if __name__ == "__main__":

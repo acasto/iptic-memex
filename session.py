@@ -615,6 +615,11 @@ class Session:
                     self.utils.output.warning(f"Cleanup callback failed: {e}")
                 except Exception:
                     pass
+        lock = getattr(self, '_session_file_lock', None)
+        if lock is not None:
+            lock.release()
+            self._session_file_lock = None
+
     def handle_exit(self, confirm: bool = True) -> bool:
         """Handle exit functionality - backward compatibility.
 

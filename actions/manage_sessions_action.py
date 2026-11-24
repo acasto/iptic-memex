@@ -3,14 +3,12 @@ from __future__ import annotations
 import os
 from typing import Any, Dict
 
+from filelock import Timeout
+
 from base_classes import Completed, StepwiseAction
 from core.session_persistence import (
-    apply_session_data,
-    format_session_description,
-    list_sessions,
-    load_session_data,
-    resolve_session_path,
-    save_session,
+    format_session_description, list_sessions, prune_sessions, resolve_session_path,
+    resume_session_file, retain_session_lock, save_session, session_lock, session_path,
 )
 
 
@@ -29,35 +27,42 @@ class ManageSessionsAction(StepwiseAction):
             return Completed({'ok': False, 'error': 'missing_mode'})
         mode = str(args[0]).strip().lower()
         if mode == 'list':
-            return Completed(self._list_sessions())
-        if mode in ('resume', 'checkpoint') and getattr(self.session, 'private', False):
-            message = 'Resuming sessions and saving checkpoints are unavailable in a private session.'
+            return Completed(self._list_sessions(all_origins='--all' in args[1:]))
+        if mode in ('resume', 'checkpoint', 'save') and getattr(self.session, 'private', False):
+            message = 'Saving and resuming are unavailable in a private session.'
             self.session.ui.emit('warning', {'message': message})
             return Completed({'ok': False, 'error': message})
         if mode == 'resume':
             target = args[1] if len(args) > 1 else ''
-            if not target:
-                return self._pick_session()
+            if not target or target == '--all':
+                return self._pick_session(all_origins=bool(target))
             return Completed(self._resume_session(target))
-        if mode == 'checkpoint':
-            title = args[1] if len(args) > 1 else ''
-            return Completed(self._checkpoint_session(title))
+        if mode in ('checkpoint', 'save'):
+            title = ' '.join(args[1:])
+            return Completed(self._save(title, checkpoint=mode == 'checkpoint'))
         return Completed({'ok': False, 'error': 'invalid_mode'})
 
-    def _pick_session(self) -> Completed:
-        items = list_sessions(self.session)
+    def _pick_session(self, *, all_origins=False) -> Completed:
+        items = list_sessions(self.session, origin=None)
         if not items:
             self.session.ui.emit('warning', {'message': 'No saved sessions found.'})
             return Completed({'ok': False, 'error': 'not_found'})
         choices: Dict[str, str] = {}
+        hidden = False
         for item in items:
+            if not all_origins and item['origin'] != 'interactive':
+                hidden = True
+                continue
             label = format_session_description(item, short_id=True)
             if label in choices:
                 label += f"\n  ID: {item['id']}"
             choices[label] = item['path']
         # Store the displayed snapshot: non-blocking UIs can recreate the action on resume.
         self.session.set_user_data('__session_picker_choices__', choices)
-        options = list(choices) + ['Cancel']
+        options = list(choices)
+        if hidden:
+            options.append('Show all sessions')
+        options.append('Cancel')
         selected = self.session.ui.ask_choice(
             'Choose a saved session (newest first):', options, default='Cancel',
         )
@@ -71,14 +76,16 @@ class ManageSessionsAction(StepwiseAction):
         self.session.set_user_data('__session_picker_choices__', {})
         if response is None or response == 'Cancel':
             return Completed({'ok': True, 'cancelled': True})
+        if response == 'Show all sessions':
+            return self._pick_session(all_origins=True)
         path = choices.get(response) if isinstance(response, str) else None
         if not path:
             self.session.ui.emit('warning', {'message': 'Invalid session selection.'})
             return Completed({'ok': False, 'error': 'invalid_selection'})
         return Completed(self._resume_session(path))
 
-    def _list_sessions(self) -> Dict[str, Any]:
-        items = list_sessions(self.session)
+    def _list_sessions(self, *, all_origins=False) -> Dict[str, Any]:
+        items = list_sessions(self.session, origin=None if all_origins else 'interactive')
         try:
             self.session.ui.emit('status', {'message': 'Sessions:'})
             if not items:
@@ -98,15 +105,13 @@ class ManageSessionsAction(StepwiseAction):
             self.session.ui.emit('warning', {'message': 'Saved session not found.'})
             return {'ok': False, 'error': 'not_found'}
         try:
-            data = load_session_data(path)
-            if not isinstance(data, dict):
-                raise ValueError('Invalid session data')
+            fork = resume_session_file(self.session, path)
+        except Timeout:
+            self.session.ui.emit('warning', {'message': 'Session is in use by another writer.'})
+            return {'ok': False, 'error': 'session_busy'}
         except (OSError, ValueError):
-            self.session.ui.emit('error', {'message': 'Failed to load session data.'})
+            self.session.ui.emit('error', {'message': f'Failed to load session: {path}'})
             return {'ok': False, 'error': 'invalid_data'}
-        kind = (data.get('kind') or 'session').lower()
-        fork = (kind == 'checkpoint')
-        apply_session_data(self.session, data, fork=fork)
         try:
             msg = f"Resumed session from {path}"
             if fork:
@@ -116,7 +121,7 @@ class ManageSessionsAction(StepwiseAction):
             pass
         return {'ok': True, 'path': path, 'forked': fork}
 
-    def _checkpoint_session(self, title: str) -> Dict[str, Any]:
+    def _save(self, title: str, *, checkpoint: bool) -> Dict[str, Any]:
         has_user_turn = False
         try:
             chat = self.session.get_context('chat')
@@ -143,14 +148,11 @@ class ManageSessionsAction(StepwiseAction):
                 pass
             return {'ok': False, 'error': 'empty_session'}
 
-        path = save_session(self.session, kind='checkpoint', title=title or None)
-        try:
-            from core.session_persistence import prune_sessions
-            prune_sessions(self.session, kind='checkpoint')
-        except Exception:
-            pass
-        try:
-            self.session.ui.emit('status', {'message': f"Checkpoint saved to {path}"})
-        except Exception:
-            pass
+        kind = 'checkpoint' if checkpoint else 'session'
+        if not checkpoint and getattr(self.session, '_session_file_lock', None) is None:
+            lock = session_lock(session_path(self.session, self.session.session_uid))
+            retain_session_lock(self.session, lock)
+        path = save_session(self.session, kind=kind, title=title or None)
+        prune_sessions(self.session, kind=kind)
+        self.session.ui.emit('status', {'message': f'{kind.capitalize()} saved to {path}'})
         return {'ok': True, 'path': path}

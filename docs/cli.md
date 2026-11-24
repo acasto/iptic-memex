@@ -50,6 +50,14 @@ python main.py <subcommand> --help
 - `/rag update` - build or refresh indexes
 - `/rag status` - show index status
 
+## Saved conversations for scripts
+
+`python main.py session --help` lists `new`, `list`, `read`, `search` and `send`.
+Use `session send ID "message"` to run one chat turn against a saved
+conversation and print its reply. Use `session list --all` to include sessions
+created programmatically. See [sessions](sessions.md#using-a-saved-conversation-from-a-script)
+for shell examples, JSON output, history filters and handoff from interactive chat.
+
 ## Completion and agent input
 
 Root completion is tool-free by default. Supplying `--tools file,cmd` enables

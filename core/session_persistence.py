@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import math
 import os
+import tempfile
 import time
 import uuid
 from typing import Any, Dict, Iterable, List, Optional
+
+from filelock import FileLock, Timeout
 
 
 _SAFE_SIMPLE = (str, int, float, bool)
@@ -68,6 +71,8 @@ def format_session_description(item: Dict[str, Any], *, short_id: bool = False) 
         sid = sid[:12] + '...'
     count = item.get('turn_count', 0)
     parts = [when, f"{count} {'turn' if count == 1 else 'turns'}"]
+    if item.get('origin') == 'programmatic':
+        parts.append('programmatic')
     if item.get('model'):
         parts.append(session_snippet(item['model'], 40))
     parts.append(f"{sid} [{session_snippet(item.get('kind') or 'session', 20)}]")
@@ -161,6 +166,15 @@ def _serialize_contexts(session) -> Dict[str, List[dict]]:
     return out
 
 
+def saved_params(data):
+    """Read only scalar settings supported by the saved-session format."""
+    params = data.get('params') or {}
+    if not isinstance(params, dict):
+        raise ValueError('Invalid saved session settings')
+    return {key: value for key, value in params.items()
+            if key in _PARAM_ALLOWLIST and isinstance(value, _SAFE_SIMPLE)}
+
+
 def _select_params(session) -> Dict[str, Any]:
     params: Dict[str, Any] = {}
     try:
@@ -204,6 +218,7 @@ def serialize_session(session, *, kind: str = "session", title: Optional[str] = 
         "version": 1,
         "id": sid,
         "kind": kind,
+        "origin": getattr(session, "session_origin", "interactive"),
         "created": created,
         "updated": updated,
         "title": title or "",
@@ -226,6 +241,60 @@ def _resolve_sessions_dir(session, override: Optional[str] = None) -> str:
     return os.path.expanduser("~/.config/iptic-memex/sessions")
 
 
+def session_path(session, sid, directory=None):
+    """Return the canonical save path for an ID in the configured store."""
+    if not isinstance(sid, str) or not sid or sid != os.path.basename(sid) or sid in ('.', '..'):
+        raise ValueError('Invalid session ID')
+    return os.path.abspath(os.path.join(_resolve_sessions_dir(session, directory),
+                                        f'{sid}.ims.json'))
+
+
+def session_lock(path):
+    """Return a crash-released, nonblocking writer lock shared across frontends."""
+    directory, filename = os.path.split(os.path.abspath(path))
+    return FileLock(os.path.join(directory, '.locks', filename + '.lock'),
+                    timeout=0, thread_local=False)
+
+
+def _writer(session, path):
+    lock = getattr(session, '_session_file_lock', None)
+    candidate = session_lock(path)
+    if lock is not None and lock.lock_file == candidate.lock_file:
+        return lock
+    return candidate
+
+
+def retain_session_lock(session, lock):
+    """Hold this lock through autosave on close, or until a different file is loaded."""
+    if lock is not None:
+        lock.acquire()
+    old = getattr(session, '_session_file_lock', None)
+    session._session_file_lock = lock
+    if old is not None:
+        old.release()
+
+
+def resume_session_file(session, path):
+    """Load a saved conversation under its writer lock, or fork a checkpoint."""
+    data = load_session_data(path)
+    if str(data.get('kind') or 'session').lower() == 'checkpoint':
+        apply_session_data(session, data, fork=True)
+        retain_session_lock(session, None)
+        return True
+    sid = data.get('id') or generate_session_id()
+    destination = session_path(session, sid)
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
+    lock = _writer(session, destination)
+    with lock:
+        # A sender may have committed a turn since the initial ID lookup.
+        data = load_session_data(path)
+        if (data.get('id') or sid) != sid:
+            raise ValueError('Session identity changed while loading')
+        apply_session_data(session, {**data, 'id': sid})
+        retain_session_lock(session, lock)
+    return False
+
+
 def save_session(session, *, kind: str = "session", title: Optional[str] = None, session_id: Optional[str] = None, directory: Optional[str] = None) -> str:
     if getattr(session, 'private', False):
         raise PermissionError('Saving sessions is unavailable in a private session')
@@ -238,17 +307,27 @@ def save_session(session, *, kind: str = "session", title: Optional[str] = None,
     data = serialize_session(session, kind=kind, title=title, session_id=sid)
     out_dir = _resolve_sessions_dir(session, directory)
     os.makedirs(out_dir, exist_ok=True)
-    filename = f"{sid}.ims.json"
-    path = os.path.join(out_dir, filename)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    path = session_path(session, sid, directory)
+    with _writer(session, path):
+        stream = tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=out_dir,
+                                             delete=False)
+        try:
+            with stream:
+                json.dump(data, stream, ensure_ascii=False, indent=2)
+            os.replace(stream.name, path)
+        finally:
+            if os.path.exists(stream.name):
+                os.unlink(stream.name)
     return path
 
 
 def prune_sessions(session, *, kind: str = "session", limit: Optional[int] = None, directory: Optional[str] = None) -> int:
+    origin = getattr(session, 'session_origin', 'interactive')
     if limit is None:
         try:
             key = "session_autosave_limit" if kind == "session" else "session_checkpoint_limit"
+            if origin == 'programmatic':
+                key = 'programmatic_' + key
             raw = session.get_option("SESSIONS", key, fallback=None)
             if isinstance(raw, int):
                 limit = raw
@@ -258,7 +337,7 @@ def prune_sessions(session, *, kind: str = "session", limit: Optional[int] = Non
             limit = None
     if not limit or limit <= 0:
         return 0
-    items = list_sessions(session, directory=directory)
+    items = list_sessions(session, directory=directory, origin=origin)
     filtered = [it for it in items if (it.get("kind") or "session") == kind]
     if len(filtered) <= limit:
         return 0
@@ -268,19 +347,27 @@ def prune_sessions(session, *, kind: str = "session", limit: Optional[int] = Non
         if not path:
             continue
         try:
-            os.remove(path)
-            removed += 1
-        except Exception:
+            with session_lock(path):
+                # A concurrent send may have refreshed this entry since listing.
+                if os.path.getmtime(path) == it['mtime']:
+                    os.remove(path)
+                    removed += 1
+        except (OSError, Timeout):
             continue
     return removed
 
 
 def load_session_data(path: str) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+    if not isinstance(data, dict) or not isinstance(data.get('chat', []), list):
+        raise ValueError('Invalid saved session')
+    if any(not isinstance(turn, dict) for turn in data.get('chat', [])):
+        raise ValueError('Invalid saved transcript')
+    return data
 
 
-def list_sessions(session, directory: Optional[str] = None) -> List[Dict[str, Any]]:
+def list_sessions(session, directory: Optional[str] = None, *, origin='interactive') -> List[Dict[str, Any]]:
     def _safe_str(value: Any) -> str:
         if isinstance(value, str):
             return value
@@ -323,15 +410,15 @@ def list_sessions(session, directory: Optional[str] = None) -> List[Dict[str, An
         path = os.path.join(out_dir, fname)
         try:
             with open(path, "r", encoding="utf-8") as f:
+                mtime = os.fstat(f.fileno()).st_mtime
                 data = json.load(f)
         except Exception:
             continue
         if not isinstance(data, dict):
             continue
-        try:
-            mtime = os.path.getmtime(path)
-        except Exception:
-            mtime = 0.0
+        saved_origin = data.get('origin', 'interactive')
+        if origin is not None and saved_origin != origin:
+            continue
         params = data.get("params") if isinstance(data.get("params"), dict) else {}
         model = _safe_str(params.get("model"))
         created = _safe_ts(data.get("created"))
@@ -344,6 +431,7 @@ def list_sessions(session, directory: Optional[str] = None) -> List[Dict[str, An
                 "title": data.get("title") or "",
                 "path": path,
                 "mtime": mtime,
+                "origin": saved_origin,
                 "created": created,
                 "updated": updated,
                 "model": model,
@@ -367,7 +455,7 @@ def resolve_session_path(session, target: str, directory: Optional[str] = None) 
         return ""
     if os.path.isfile(target):
         return target
-    items = list_sessions(session, directory=directory)
+    items = list_sessions(session, directory=directory, origin=None)
     for it in items:
         if it.get("id") == target:
             return it.get("path") or ""
@@ -404,12 +492,13 @@ def _build_turn_context(session, ctx_items: Iterable[dict]) -> List[dict]:
     return out
 
 
-def apply_session_data(session, data: Dict[str, Any], *, fork: bool = False) -> None:
+def apply_session_data(session, data: Dict[str, Any], *, fork: bool = False, restore_params=True) -> None:
     if getattr(session, '_active_run_id', None):
         raise RuntimeError('Cannot load a session during an active run')
     if not isinstance(data, dict):
         return
 
+    session.session_origin = data.get("origin", "interactive")
     session_id = data.get("id")
     if fork or not session_id:
         session_id = generate_session_id("sess")
@@ -423,7 +512,7 @@ def apply_session_data(session, data: Dict[str, Any], *, fork: bool = False) -> 
 
     # Apply params (best-effort, safe subset only)
     params = data.get("params")
-    if isinstance(params, dict):
+    if restore_params and isinstance(params, dict):
         for key, value in params.items():
             if key in _PARAM_ALLOWLIST:
                 try:

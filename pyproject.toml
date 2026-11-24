@@ -9,6 +9,7 @@ dependencies = [
     "anthropic",
     "google-genai>=1.55.0",
     "click",
+    "filelock>=3.18",
     "Pygments",
     "gnureadline; sys_platform == 'linux' or sys_platform == 'darwin'",
     "requests",
