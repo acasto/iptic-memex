@@ -58,7 +58,7 @@
   control roots before Docker mounts.
 
 ## Build, Run, and Dev
-- Python 3.11+. Use `uv sync --locked` to prepare the project `.venv`.
+- Python 3.11.5+. Use `uv sync --locked` to prepare the project `.venv`.
   - Run through `uv run --locked python ...` or activate `.venv` first.
   - `pyproject.toml` declares dependencies; commit `uv.lock` and `.python-version`.
   - `requirements.txt` is generated: run `make export-requirements` after lock changes.

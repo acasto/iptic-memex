@@ -3,7 +3,7 @@ name = "iptic-memex"
 version = "0.1.0"
 description = "A command-line LLM workbench with chat, agents, tools, and local model providers"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11.5"
 dependencies = [
     "openai",
     "anthropic",

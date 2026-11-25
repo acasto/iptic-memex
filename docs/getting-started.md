@@ -11,8 +11,8 @@ uv sync --locked
 uv run --locked python main.py --help
 ```
 
-The checkout selects Python 3.11 in `.python-version`; the application supports
-Python 3.11+. uv can provision the selected interpreter if it is missing. Packages
+The checkout selects the Python 3.11 series in `.python-version`. The application
+requires Python 3.11.5 or newer. uv can provision the interpreter if it is missing. Packages
 are installed in `.venv`, without changing global Python packages. The initial
 installation includes the Python provider dependencies, Web, and TUI support.
 
@@ -22,7 +22,7 @@ the lock. Ordinary sync/run commands do not request dependency upgrades.
 
 ## Install with pip instead
 
-uv is optional. With Python 3.11 installed:
+With Python 3.11.5 or a later 3.11 patch installed, you can also use pip:
 
 ```bash
 python3.11 -m venv .venv

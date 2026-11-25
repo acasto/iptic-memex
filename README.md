@@ -30,7 +30,7 @@ The name is a reference to the Memex, a device described by Vannevar Bush in his
 
 ## Quickstart
 
-Requirements: Python 3.11+ and [uv](https://docs.astral.sh/uv/getting-started/installation/).
+Requirements: Python 3.11.5+ and [uv](https://docs.astral.sh/uv/getting-started/installation/).
 uv manages the project’s isolated `.venv` and locked dependencies.
 
 ```bash
