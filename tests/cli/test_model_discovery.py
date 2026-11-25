@@ -14,7 +14,7 @@ from openai import OpenAI
 
 from app.session_builder import SessionBuilder
 from component_registry import ComponentRegistry
-from config_manager import ConfigManager
+from config_manager import ConfigManager, SessionConfig
 from core.provider_factory import ProviderFactory
 from main import cli
 from providers.anthropic_provider import AnthropicProvider
@@ -23,12 +23,63 @@ from providers.openai_provider import OpenAIProvider
 from providers.openairesponses_provider import OpenAIResponsesProvider
 
 
+@pytest.mark.parametrize('preferred', ['vendor/allowed', 'Gateway:vendor/allowed'])
+def test_allowlisted_discoveries_are_visible_in_the_active_model_picker(preferred):
+    base = ConfigParser()
+    base.read_dict({'Gateway': {'active': 'true', 'models': preferred},
+                    'OpenAIResponses': {'active': 'true'}})
+    discovered = {
+        'Gateway:vendor/allowed': {'provider': 'Gateway', 'model_name': 'vendor/allowed'},
+        'Gateway:vendor/other': {'provider': 'Gateway', 'model_name': 'vendor/other'},
+        'OpenAIResponses:other': {'provider': 'OpenAIResponses', 'model_name': 'other'},
+    }
+    config = SessionConfig(base, ConfigParser(), discovered_models=discovered)
+
+    active_models = config.list_models()
+    assert list(active_models) == ['Gateway:vendor/allowed']
+    assert active_models['Gateway:vendor/allowed']['chat_compatibility'] == 'unverified'
+    assert config.list_models(showall=True).keys() == discovered.keys()
+
+
+def test_model_prefix_uses_canonical_catalog_and_model_overrides():
+    base = ConfigParser()
+    base.read_dict({'OpenAIResponses': {'active': 'true', 'model_prefix': 'oai'},
+                    'OAI': {'active': 'true', 'alias': 'OpenAIResponses'}})
+    models = ConfigParser()
+    models.read_dict({'pinned': {'provider': 'OpenAIResponses', 'model_name': 'vendor/model:fast',
+                                 'response_label': 'Pinned'}})
+    discovered = {
+        'OpenAIResponses:vendor/model:fast': {'provider': 'OpenAIResponses',
+                                            'model_name': 'vendor/model:fast'},
+        'OpenAIResponses:other': {'provider': 'OpenAIResponses', 'model_name': 'other'},
+        'OAI:vendor/model:fast': {'provider': 'OAI', 'model_name': 'vendor/model:fast'},
+    }
+    config = SessionConfig(base, models, discovered_models=discovered)
+    assert config.normalize_model_name('oai:vendor/model:fast') == 'pinned'
+    assert config.get_params('oai:vendor/model:fast')['response_label'] == 'Pinned'
+    assert config.normalize_model_name('OAI:vendor/model:fast') == 'OAI:vendor/model:fast'
+    assert config.display_model_name('pinned') == 'pinned'
+    assert config.display_model_name('OpenAIResponses:other') == 'oai:other'
+
+    models.read_dict({'oai:other': {'provider': 'OAI', 'model_name': 'local'}})
+    assert config.display_model_name('OpenAIResponses:other') == 'OpenAIResponses:other'
+
+    base.read_dict({'Other': {'model_prefix': 'oai'}})
+    with pytest.raises(RuntimeError, match='configured for multiple providers'):
+        config.normalize_model_name('oai:vendor/model:fast')
+    assert config.display_model_name('OpenAIResponses:vendor/model:fast') == (
+        'OpenAIResponses:vendor/model:fast')
+
+    base.read_dict({'oai': {'active': 'true', 'alias': 'OpenAIResponses'}})
+    assert config.normalize_model_name('oai:vendor/model:fast') is None
+
+
 def test_catalog_refresh_and_offline_selection(monkeypatch, tmp_path):
     monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path))
     base = ConfigParser()
     base.read_dict({
         'DEFAULT': {'default_model': 'claude-local', 'template_handler': 'none'},
-        'OpenAIResponses': {'active': 'true', 'discover_models': 'true'},
+        'OpenAIResponses': {'active': 'true', 'discover_models': 'true', 'model_prefix': 'oai'},
         'Anthropic': {'active': 'true', 'discover_models': 'true'},
         'Google': {'active': 'true', 'discover_models': 'true', 'models': 'gemini-existing, gemini-new'},
     })
@@ -53,7 +104,9 @@ def test_catalog_refresh_and_offline_selection(monkeypatch, tmp_path):
             return httpx.Response(503, json={'error': {'message': 'private details'}})
         if host == 'openai.test':
             return httpx.Response(200, json={'object': 'list', 'data': [
-                {'id': 'gpt-new', 'created': 1, 'object': 'model', 'owned_by': 'openai'}]})
+                {'id': name, 'created': 1, 'object': 'model', 'owned_by': 'openai'}
+                for name in ('gpt-new', 'gpt-other')
+            ]})
         if host == 'anthropic.test':
             after = request.url.params.get('after_id')
             name = 'claude-second' if after else 'claude-first'
@@ -96,7 +149,8 @@ def test_catalog_refresh_and_offline_selection(monkeypatch, tmp_path):
     runner = CliRunner()
     refreshed = runner.invoke(cli, ['list-models', '--refresh'])
     assert refreshed.exit_code == 0, refreshed.output
-    assert 'OpenAIResponses:gpt-new (chat compatibility unverified)' in refreshed.stdout
+    assert 'oai:gpt-new (chat compatibility unverified)' in refreshed.stdout
+    assert 'OpenAIResponses:gpt-new' not in refreshed.stdout
     assert 'Anthropic: refreshed 2 models' in refreshed.stderr
     assert 'gemini-embedding' not in refreshed.stdout
     assert 'gemini-filtered' not in refreshed.stdout
@@ -107,11 +161,16 @@ def test_catalog_refresh_and_offline_selection(monkeypatch, tmp_path):
     partial = runner.invoke(cli, ['list-models', '--refresh'])
     assert partial.exit_code == 0, partial.output
     assert 'HTTP 503' in partial.stderr and 'private details' not in partial.output
-    assert 'OpenAIResponses:gpt-new' in partial.stdout
+    assert 'oai:gpt-new' in partial.stdout
     requests.clear()
 
-    selected = runner.invoke(cli, ['-m', 'OpenAIResponses:gpt-new', 'list-models'])
+    selected = runner.invoke(cli, ['-m', 'oai:gpt-new', 'list-models'])
     assert selected.exit_code == 0, selected.output
+    details = runner.invoke(cli, ['list-models', '--all', '--details'])
+    assert details.exit_code == 0, details.output
+    assert '[ oai:gpt-new ]' in details.stdout
+    assert '[ claude-local ]' in details.stdout
+    assert '[ Google:gemini-new ]' in details.stdout
     assert requests == []
     config = ConfigManager().create_session_config()
     assert config.normalize_model_name('Anthropic:claude-first') == 'claude-local'
@@ -121,6 +180,7 @@ def test_catalog_refresh_and_offline_selection(monkeypatch, tmp_path):
     assert config.get_params('Google:gemini-existing')['context_size'] == 10000
     assert config.get_params('Google:gemini-new')['provider'] == 'Google'
     assert config.get_params('OpenAIResponses:gpt-new')['price_in'] is None
+    assert config.get_params('oai:gpt-new') == config.get_params('OpenAIResponses:gpt-new')
     assert 'Anthropic:claude-second' in config.list_models()
     assert 'Google:gemini-new' in config.list_models()
     assert 'OpenAIResponses:gpt-new' not in config.list_models()
@@ -142,14 +202,30 @@ def test_catalog_refresh_and_offline_selection(monkeypatch, tmp_path):
     monkeypatch.setattr(OpenAIResponsesProvider, '_initialize_client', lambda self: OpenAI(
         api_key='test', base_url='https://api.openai.com/v1', max_retries=0,
         http_client=httpx.Client(transport=httpx.MockTransport(complete))))
-    completed = runner.invoke(cli, ['-m', 'OpenAIResponses:gpt-new', '--message', 'Hello',
-                                    '-p', 'Give a short answer.'])
+    completed = runner.invoke(cli, ['-m', 'oai:gpt-new', '--message', 'Hello', '-p',
+                                    'Give a short answer.'])
     assert completed.exit_code == 0, completed.output
     assert completed.stdout.strip() == 'Done'
+
+    base['DEFAULT']['default_model'] = 'oai:gpt-new'
+    base.read_dict({'AGENT': {'default_model': 'oai:gpt-new'}})
+    chat = SessionBuilder(ConfigManager()).build(mode='chat', private=True)
+    try:
+        assert chat.get_params()['model'] == 'OpenAIResponses:gpt-new'
+        assert chat.list_models()['OpenAIResponses:gpt-new']['default']
+        chat.get_action('set_model').run(args={'model': 'oai:gpt-other'})
+        assert chat.get_params()['model'] == 'OpenAIResponses:gpt-other'
+    finally:
+        chat.close()
+    completed_from_default = runner.invoke(cli, ['--message', 'Hello', '-p', 'Give a short answer.'])
+    assert completed_from_default.exit_code == 0, completed_from_default.output
+    assert completed_from_default.stdout.strip() == 'Done'
 
     monkeypatch.setenv('OPENAI_BASE_URL', 'https://a-different-endpoint.test/v1')
     different_endpoint = ConfigManager().create_session_config()
     assert not different_endpoint.valid_model('OpenAIResponses:gpt-new')
+    with pytest.raises(RuntimeError, match='list-models --refresh'):
+        different_endpoint.get_params('oai:gpt-new')
     assert different_endpoint.valid_model('Google:gemini-new')
 
 

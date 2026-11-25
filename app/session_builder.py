@@ -20,15 +20,15 @@ class SessionBuilder:
         self.config_manager = config_manager
 
     def build(self, mode: Optional[str] = None, *, services=None, saved_session=None, **options):
-        if services is not None and mode not in ('completion', 'agent', 'internal'):
-            raise ValueError('Headless services require completion, agent, or internal mode')
+        if services is not None and mode not in ('completion', 'agent', 'internal', 'session'):
+            raise ValueError('Headless services require completion, agent, internal, or session mode')
         if mode == 'session':
             from app.headless import build_headless_session
             if saved_session is None:
                 raise ValueError('A scripted chat turn requires saved session data')
             return build_headless_session(self.config_manager, options, builder=self,
                                           tools_enabled=True, default_prompt=True, memory=True,
-                                          saved_session=saved_session)
+                                          saved_session=saved_session, services=services)
         if mode == 'completion':
             from app.completion import build_completion_session
             return build_completion_session(self.config_manager, options, builder=self,

@@ -20,7 +20,7 @@ def configure_chat_policy(session):
         session.write_policy = session._normalize_write_policy(session.config.overrides['agent_writes'])
 
 
-def _chat_task(session, message, stream=None):
+def _chat_task(session, message, stream=None, *, boundary=None):
     """Build the request and lifecycle callbacks for all interactive clients."""
     limit = session.get_option('TOOLS', 'large_input_limit', fallback=None)
     limit = int(limit) if limit is not None and str(limit).strip() else None
@@ -29,6 +29,8 @@ def _chat_task(session, message, stream=None):
         calls = 1
 
     def before_call(active, index):
+        if boundary:
+            boundary(active, index)
         if index == 1:
             prepare_hooks(active)
         tokens = input_tokens(active, active.get_context('chat'))
@@ -67,7 +69,8 @@ def _chat_task(session, message, stream=None):
 
 def run_chat_turn(session, message, *, on_event=None, interactions=None, cancellation=None):
     """Run a synchronous interactive chat task."""
-    request, callbacks = _chat_task(session, message)
+    boundary = getattr(session, 'before_provider_call', None)
+    request, callbacks = _chat_task(session, message, boundary=boundary)
     return execute(session, request, on_event=on_event, interactions=interactions,
                    cancellation=cancellation, **callbacks)
 

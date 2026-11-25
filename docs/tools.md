@@ -9,6 +9,27 @@
 - Memory (MEMORY)
 - RAG (ragsearch)
 - Persona review (PERSONA_REVIEW)
+- Saved model consultations (MEMEX)
+
+## Consulting another model
+
+Call `memex` with a `message` and an optional configured `model`. The first
+call creates a programmatic conversation. Include the facts the consultant
+needs in the message. For the next turn, use its `session_id` and a new
+`message`. The saved model and transcript carry forward. Each result from a
+run includes `status`, `last_text`, and the conversation ID, including when
+the run needs input or the provider reports a failure.
+
+The tool runs inside Memex and shares the CLI session store and writer locks.
+You can use `memex session read ID` to inspect a consultation or
+`memex session send ID "follow-up"` to continue it from a shell. The tool
+can also continue an existing saved chat by its exact ID once its writer exits.
+Consultations inherit the caller's execution limits. Private chats disable
+the tool. See [session origins and retention](sessions.md#origins-and-history).
+
+The default tool list includes `memex`. If your configuration overrides
+`active_tools`, add `memex` there to expose it. Custom pseudo-tool prompt
+chains can include `tool_memex` for the block syntax and follow-up example.
 
 ## CMD tool: local vs Docker
 

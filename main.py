@@ -3,7 +3,7 @@ import json
 import os
 import sys
 from config_manager import ConfigManager
-from session import SessionBuilder
+from app.session_builder import SessionBuilder
 
 
 def _command_files(ctx, files):
@@ -234,7 +234,10 @@ def cli(ctx, conf, model, prompt, message, stdin_message, temperature, max_token
     if options.get('model'):
         # Create a temporary session config to validate/normalize
         session_config = config_manager.create_session_config()
-        normalized = session_config.normalize_model_name(options['model'])
+        try:
+            normalized = session_config.normalize_model_name(options['model'])
+        except RuntimeError as exc:
+            raise click.ClickException(str(exc)) from exc
         if not normalized:
             raise click.ClickException(
                 f"Unknown model '{options['model']}'. Run 'python main.py list-models' to see available models."
@@ -453,18 +456,13 @@ def list_models(ctx, showall, details, refresh):
             else:
                 click.echo(f'{provider}: refresh failed ({result}). Kept any cached models.', err=True)
 
-    # Note: active_only=True means show only active models (default behavior)
-    # active_only=False means show all models (when --all flag is used)
-    if showall:
-        models = config_manager.list_models(active_only=False)
-    else:
-        models = config_manager.list_models(active_only=True)
-    
-    for section in sorted(models.keys()):
-        options = models[section]
+    config = config_manager.create_session_config()
+    models = config.list_models(showall=showall, include_unverified=True)
+    display_models = [(config.display_model_name(name), options) for name, options in models.items()]
+    for name, options in sorted(display_models, key=lambda item: item[0]):
         if details:
             print()
-            print(f'[ {section} ]')
+            print(f'[ {name} ]')
             for option, value in options.items():
                 print(f'{option} = {value}')
         else:
@@ -473,7 +471,7 @@ def list_models(ctx, showall, details, refresh):
                 labels.append('default')
             if options.get('chat_compatibility') == 'unverified':
                 labels.append('chat compatibility unverified')
-            print(f"{section} ({', '.join(labels)})" if labels else section)
+            print(f"{name} ({', '.join(labels)})" if labels else name)
     if refresh_failed:
         ctx.exit(1)
 

@@ -1,0 +1,19 @@
+Consult another model in a saved conversation     %%MEMEX%%
+
+Give the consultant the question and the facts it needs in the message body.
+Use a configured model name for a new conversation, or omit it to use your current model.
+
+%%MEMEX%%
+model="MODEL_NAME"
+
+We have a two-minute maintenance window. Which part of this plan should we time first?
+%%END%%
+
+The result includes session_id, status, and last_text. For a follow-up, copy
+the actual session_id from the result and send just the next message.
+
+%%MEMEX%%
+session_id="ID_FROM_RESULT"
+
+How would you measure that step?
+%%END%%

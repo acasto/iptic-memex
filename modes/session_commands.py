@@ -1,21 +1,12 @@
 """One-shot clients for the same durable conversations used by chat, TUI and Web."""
 
-from contextlib import closing
 import json
-import os
 import sys
 
 import click
-from filelock import Timeout
 
-from app.chat import run_chat_turn
-from app.project import bind_project, project_options
-from component_registry import ComponentRegistry
-from core.session_persistence import (
-    format_session_description, list_sessions, load_session_data, prune_sessions,
-    retain_session_lock, save_session, session_lock, session_path,
-)
-from session import Session
+from app.conversations import create_conversation, load_conversation, send_message
+from core.session_persistence import format_session_description, list_sessions, session_path
 
 
 def _json(value):
@@ -30,21 +21,13 @@ def _stored_path(config, sid):
     return path
 
 
-def _load(path, sid):
-    try:
-        data = load_session_data(path)
-        if data.get('id') != sid:
-            raise ValueError('Saved session ID does not match its filename')
-        return data
-    except FileNotFoundError as exc:
-        raise click.ClickException(f'Saved session {sid} was not found.') from exc
-    except (OSError, ValueError) as exc:
-        raise click.ClickException(f'Could not read session {sid}: {exc}') from exc
-
-
 def _transcript(ctx, sid, query, last, json_output):
     config = ctx.obj['CONFIG_MANAGER'].create_session_config()
-    data = _load(_stored_path(config, sid), sid)
+    path = _stored_path(config, sid)
+    try:
+        data = load_conversation(path, sid)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
     rows = []
     needle = query.casefold() if query else ''
     for index, turn in enumerate(data.get('chat', ()), 1):
@@ -74,20 +57,13 @@ def register_session_commands(cli, render_result, render_exception):
     @click.pass_context
     def new(ctx, model, title):
         """Create a programmatic session and print its ID."""
-        manager = ctx.obj['CONFIG_MANAGER']
         options = dict(ctx.obj['OPTIONS'])
         if model:
             options['model'] = model
-        project, options, sources = project_options(options, interactive=True)
-        config = manager.create_session_config(options)
-        if options.get('model') and not config.valid_model(options['model']):
-            raise click.ClickException(f"Unknown model '{options['model']}'.")
-        with closing(Session(config, ComponentRegistry(config))) as session:
-            bind_project(session, project, sources)
-            session.session_origin = 'programmatic'
-            save_session(session, title=title)
-            prune_sessions(session)
-            click.echo(session.session_uid)
+        try:
+            click.echo(create_conversation(ctx.obj['BUILDER'], options, title=title))
+        except (OSError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
 
     @group.command('list')
     @click.option('--all', 'all_origins', is_flag=True, help='Include both origins')
@@ -138,26 +114,9 @@ def register_session_commands(cli, render_result, render_exception):
         message = sys.stdin.read() if stdin_message else message
         if not message.strip():
             raise click.UsageError('Message must not be empty.')
-        manager = ctx.obj['CONFIG_MANAGER']
-        path = _stored_path(manager.create_session_config(), id)
+        _stored_path(ctx.obj['CONFIG_MANAGER'].create_session_config(), id)
         try:
-            # Validate existence before creating a lock file for a caller-supplied ID.
-            if not os.path.isfile(path):
-                raise ValueError(f'Saved session {id} was not found.')
-            with session_lock(path) as lock:
-                data = _load(path, id)
-                if data.get('kind', 'session') != 'session':
-                    raise ValueError('Resume the checkpoint and save its fork before sending.')
-                options = ctx.obj['OPTIONS']
-                builder = ctx.obj['BUILDER']
-                with closing(builder.build(mode='session', saved_session=data, **options)) as live:
-                    retain_session_lock(live, lock)
-                    result = run_chat_turn(live, message)
-                    save_session(live)
-                    prune_sessions(live)
-        except Timeout:
-            render_exception(ctx, ValueError('Session is in use by another writer.'),
-                             json_output=json_output)
+            _, result = send_message(ctx.obj['BUILDER'], id, message, ctx.obj['OPTIONS'])
         except Exception as exc:
             render_exception(ctx, exc, json_output=json_output)
         render_result(ctx, result, json_output=json_output)

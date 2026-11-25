@@ -187,3 +187,129 @@ def test_unattended_confirmation_returns_and_records_tool_result(client, tmp_pat
     assert target.read_text() == 'Original'
     row, = json.loads(run('session', 'read', sid, '--last', '1', '--json'))
     assert row['role'] == 'tool' and json.loads(row['text'])['needs_input']
+
+
+@pytest.mark.parametrize('mode', ['official', 'pseudo'])
+def test_memex_tool_consults_and_continues_across_cli(client, tmp_path, mode):
+    from app.completion import run_completion
+    from app.session_builder import SessionBuilder
+
+    run, manager, builds = client
+    manager.base_config['TOOLS'] = {'active_tools': 'memex,file,cmd'}
+    caller = SessionBuilder(manager).build(mode='completion', model='chat',
+                                           active_tools_agent='memex', tool_mode=mode,
+                                           base_directory=str(tmp_path))
+    charges = []
+    caller.child_call_boundary = lambda child, index: charges.append((child, index))
+
+    class CallerProvider:
+        def __init__(self):
+            self.arguments = {}
+            self.results = []
+            self.pending = False
+
+        def chat(self):
+            turn = caller.get_context('chat').get('all')[-1]
+            self.pending = turn['role'] == 'user'
+            if self.pending:
+                if mode == 'official':
+                    return ''
+                key = 'model' if 'model' in self.arguments else 'session_id'
+                return f'%%MEMEX%%\n{key}="{self.arguments[key]}"\n\n{self.arguments["message"]}\n%%END%%'
+            self.results.append(json.loads(turn['message']))
+            return 'Heard back'
+
+        def get_tool_calls(self):
+            if self.pending:
+                return [{'id': 'consult', 'name': 'memex', 'arguments': self.arguments}]
+            return []
+
+    try:
+        specs = caller.get_action('assistant_commands').get_tool_specs()
+        assert 'memex' in {spec['name'] for spec in specs}
+        provider = caller.provider = CallerProvider()
+        provider.arguments = {'model': 'other', 'message': 'Remember Orion'}
+        assert run_completion(session=caller, message='Get another opinion').last_text == 'Heard back'
+        first, = provider.results
+        assert first['ok'] and first['last_text'] == 'other saw Remember Orion'
+        sid = first['session_id']
+        child, index = charges[0]
+        assert child is builds[-1] and child._closed and index == 1
+        assert child.get_option('TOOLS', 'base_directory') == str(tmp_path)
+        assert child.get_action('assistant_commands').commands == {}
+        assert child.file_memory_enabled is False
+        assert child.mcp_autoload_policy == {'enabled': False}
+        assert run('session', 'send', sid, 'From CLI') == 'other saw Remember Orion / From CLI'
+        provider.arguments = {'session_id': sid, 'message': 'From tool'}
+        assert run_completion(session=caller, message='Follow up').status == 'completed'
+        second = provider.results[-1]
+        assert second['session_id'] == sid and second['ok']
+        assert second['last_text'] == 'other saw Remember Orion / From CLI / From tool'
+        assert len(charges) == 2
+        item, = json.loads(run('session', 'list', '--origin', 'programmatic', '--json'))
+        assert item['id'] == sid and item['turn_count'] == 3
+    finally:
+        caller.close()
+
+
+def test_memex_tool_rejects_disallowed_model_and_propagates_budget(client, tmp_path):
+    from app.execution_scope import ExecutionScope
+    from app.session_builder import SessionBuilder
+    from core.runtime.contracts import RunStopped
+
+    run, manager, builds = client
+    sid = run('session', 'new', '--model', 'other')
+    path = tmp_path / f'{sid}.ims.json'
+    original = path.read_bytes()
+    caller = SessionBuilder(manager).build(mode='agent', model='chat', active_tools_agent='memex')
+    try:
+        caller.execution_scope = ExecutionScope(str(tmp_path), (), frozenset({'memex'}), 'deny',
+                                                frozenset({'chat'}))
+        tool = caller.get_action('assistant_memex_tool')
+        before = len(builds)
+        denied = tool.run({'session_id': sid, 'message': 'Hi'}).payload
+        assert not denied['ok'] and 'inherited execution profile' in denied['error']
+        assert len(builds) == before and path.read_bytes() == original
+        with session_lock(path):
+            busy = tool.run({'session_id': sid, 'message': 'Hello'}).payload
+        assert not busy['ok'] and 'in use' in busy['error']
+        assert not tool.run({'message': 'hi', 'model': 'missing'}).payload['ok']
+
+        def exhausted(child, index):
+            raise RunStopped('call_budget', 'Out of calls')
+
+        caller.child_call_boundary = exhausted
+        failed = tool.run({'message': 'Check the budget'}).payload
+        assert failed['status'] == 'incomplete' and failed['stop_reason'] == 'call_budget'
+        assert 'Check the budget' in run('session', 'read', failed['session_id'])
+        caller.private = True
+        assert 'memex' not in caller.get_action('assistant_commands').commands
+        assert not tool.run({'message': 'private'}).payload['ok']
+    finally:
+        caller.close()
+
+
+def test_tool_turn_preserves_saved_settings_and_observes_cancellation(client, tmp_path):
+    from app.session_builder import SessionBuilder
+    from core.cancellation import CancellationToken
+
+    run, manager, builds = client
+    run('chat', stdin='Initial chat\n/save session\n/quit\n')
+    original, = json.loads(run('session', 'list', '--json'))
+    path = tmp_path / f"{original['id']}.ims.json"
+    settings = json.loads(path.read_text())['params']
+    parent = SessionBuilder(manager).build(mode='agent', model='other', active_tools_agent='memex',
+                                           base_directory=str(tmp_path))
+    token = CancellationToken()
+    parent.set_user_data('__turn_cancel__', token)
+    parent.child_call_boundary = lambda child, index: token.cancel('Parent stopped')
+    try:
+        reply = parent.get_action('assistant_memex_tool').run(
+            {'session_id': original['id'], 'message': 'Second opinion'}).payload
+        assert reply['status'] == 'cancelled' and reply['session_id'] == original['id']
+        child = builds[-1]
+        assert child._closed and child.get_option('TOOLS', 'base_directory') == str(tmp_path)
+        saved = json.loads(path.read_text())
+        assert saved['params'] == settings and saved['origin'] == 'interactive'
+    finally:
+        parent.close()

@@ -294,7 +294,7 @@ class SessionConfig:
             # Normalize to get the section name (display name)
             normalized_model = self.normalize_model_name(model)
             if normalized_model is None and isinstance(model, str):
-                provider, separator, _ = model.partition(':')
+                provider, separator, _ = self._expand_model_prefix(model).partition(':')
                 if separator and self.base_config.has_section(provider):
                     raise RuntimeError(
                         f"Unknown model '{model}'. Enable discovery and run 'list-models --refresh', "
@@ -427,18 +427,47 @@ class SessionConfig:
         """Check if a configured or discovered model name is valid."""
         return self.normalize_model_name(model) is not None
 
+    def _expand_model_prefix(self, model: str) -> str:
+        prefix, separator, model_id = model.partition(':')
+        if not separator or not prefix or self.base_config.has_section(prefix):
+            return model
+        providers = [section for section in self.base_config.sections()
+                     if self.base_config.get(section, 'model_prefix', fallback=None) == prefix]
+        if len(providers) > 1:
+            raise RuntimeError(f"Model prefix '{prefix}' is configured for multiple providers: "
+                               f"{', '.join(providers)}.")
+        return f'{providers[0]}:{model_id}' if providers else model
+
     def normalize_model_name(self, model: str) -> Optional[str]:
         """Resolve an INI alias, a configured model ID, or a qualified catalog ID."""
         if self.models.has_section(model):
             return model
-        if model in self.discovered_models:
+        qualified = self._expand_model_prefix(model) if isinstance(model, str) else model
+        if qualified != model and self.models.has_section(qualified):
+            return qualified
+        if qualified in self.discovered_models:
             return next((section for section in self.models.sections()
-                         if self._catalog_alias(section) == model), model)
+                         if self._catalog_alias(section) == qualified), qualified)
         for section in self.models.sections():
             model_name = self.models.get(section, 'model_name', fallback=section)
             if model == model_name:
                 return section
         return None
+
+    def display_model_name(self, model: str) -> str:
+        """Prefer a discovered model's shortcut when it selects the same model."""
+        record = self.discovered_models.get(model)
+        if not record or self.models.has_section(model):
+            return model
+        prefix = self.base_config.get(record['provider'], 'model_prefix', fallback=None)
+        if not prefix:
+            return model
+        shortcut = f'{prefix}:{record["model_name"]}'
+        try:
+            return shortcut if self.normalize_model_name(shortcut) == model else model
+        except RuntimeError:
+            # An ambiguous prefix should not make the model list unusable.
+            return model
 
     def get_default_prompt_source(self) -> str:
         """
@@ -472,10 +501,7 @@ class SessionConfig:
             if discovered and model in aliases:
                 continue
             data = self._model_options(model)
-            if discovered and data.get('chat_supported') is not True:
-                if not (showall or include_unverified or model == default_model):
-                    continue
-                data['chat_compatibility'] = 'unverified'
+            explicitly_listed = False
             if not showall:
                 provider = data.get('provider')
                 if not provider or not self.base_config.getboolean(provider, 'active', fallback=False):
@@ -483,8 +509,13 @@ class SessionConfig:
                 preferred = self.base_config.get(provider, 'models', fallback=None)
                 if preferred is not None:
                     names = {name.strip() for name in preferred.split(',')}
-                    if model not in names and not (discovered and data['model_name'] in names):
+                    explicitly_listed = model in names or (discovered and data['model_name'] in names)
+                    if not explicitly_listed:
                         continue
+            if discovered and data.get('chat_supported') is not True:
+                if not (showall or include_unverified or explicitly_listed or model == default_model):
+                    continue
+                data['chat_compatibility'] = 'unverified'
             if model == default_model:
                 data['default'] = True
             filtered_models[model] = data

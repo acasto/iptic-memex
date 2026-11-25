@@ -295,7 +295,9 @@ def resume_session_file(session, path):
     return False
 
 
-def save_session(session, *, kind: str = "session", title: Optional[str] = None, session_id: Optional[str] = None, directory: Optional[str] = None) -> str:
+def save_session(session, *, kind: str = "session", title: Optional[str] = None,
+                 session_id: Optional[str] = None, directory: Optional[str] = None,
+                 params: Optional[dict] = None) -> str:
     if getattr(session, 'private', False):
         raise PermissionError('Saving sessions is unavailable in a private session')
     sid = session_id or getattr(session, "session_uid", None)
@@ -305,6 +307,8 @@ def save_session(session, *, kind: str = "session", title: Optional[str] = None,
         sid = generate_session_id("ckpt")
 
     data = serialize_session(session, kind=kind, title=title, session_id=sid)
+    if params is not None:
+        data["params"] = params
     out_dir = _resolve_sessions_dir(session, directory)
     os.makedirs(out_dir, exist_ok=True)
     path = session_path(session, sid, directory)

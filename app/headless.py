@@ -40,6 +40,9 @@ def build_headless_session(config_manager, options=None, *, builder=None,
         if scripted_chat:
             from app.chat import configure_chat_policy
             from core.session_persistence import apply_session_data
+            if services.execution_scope is not None:
+                session.set_flag('hooks_disabled', True)
+                session.mcp_autoload_policy = {'enabled': False}
             configure_chat_policy(session)
             apply_session_data(session, saved_session, restore_params=False)
             if saved_session.get('chat'):

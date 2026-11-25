@@ -41,17 +41,27 @@ discover_models = true
 ```
 
 Use `--details` to inspect available metadata.
-Later listings and model selection read the local cache. A failed refresh keeps
-the provider's last catalog for that connection. The cache lives under
+New Memex processes read the local cache at startup. Restart an open TUI or Web
+server to pick up a refresh. A failed refresh keeps the provider's last catalog
+for that connection. The cache lives under
 `$XDG_CACHE_HOME/iptic-memex/model-catalog-v1` or `~/.cache/iptic-memex/model-catalog-v1`.
 
 Select a discovered model by its qualified name, for example
-`python main.py -m OpenAIResponses:gpt-6.2-sol chat`. Anthropic can also supply
-vision support and token limits. Google supplies token limits and advertises
-`generateContent` support. OpenAI's catalog supplies IDs without API capabilities.
-The CLI labels discoveries with unknown chat support and the default model
-pickers show models with known chat support. An explicit selection can use a
-qualified ID with unverified support.
+`python main.py -m OpenAIResponses:gpt-6.2-sol chat`. The built-in
+`[OpenAIResponses]` section sets `model_prefix = oai`, so `-m oai:gpt-6.2-sol`,
+`/set model oai:gpt-6.2-sol`, and `default_model = oai:gpt-6.2-sol` resolve to
+the same model and catalog. Set `model_prefix` in another provider section to
+give it a shortcut. Prefixes are case-sensitive, with exact provider section
+names taking precedence. Use a unique prefix for each provider. `list-models`
+shows usable shortcuts for discovered entries and uses the names from
+`models.ini` for configured entries.
+
+Anthropic can also supply vision support and token limits. Google supplies token
+limits and advertises `generateContent` support. OpenAI's catalog supplies IDs
+without API capabilities.
+The CLI labels discoveries with unknown chat support. To include one in an
+interactive model picker, set it as the default or list its ID or qualified name
+in the provider's `models` setting. You can also select its qualified ID directly.
 
 Existing `models.ini` settings take precedence over discovered metadata for the
 same model and connection. Provider `models` lists still filter the ordinary

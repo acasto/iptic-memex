@@ -45,7 +45,7 @@ def child_scope(parent, options):
             roots[str(path)] = item['mode']
     tools = set(parent.get_action('assistant_commands').commands)
     # These services have global stores and no project-scoped retrieval contract yet.
-    tools.difference_update({'memory', 'ragsearch'})
+    tools.difference_update({'memory', 'ragsearch', 'memex'})
     if parent.get_tools().get('cmd_tool') != 'assistant_docker_tool':
         tools.discard('cmd')
     inherited = getattr(parent, 'execution_scope', None)
