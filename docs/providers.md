@@ -415,6 +415,10 @@ Two options:
 1) **LlamaCpp** (in-process):
    - Provider: `LlamaCpp`
    - Requires `llama-cpp-python` and a local GGUF model path.
+   - The bindings depend on DiskCache. Memex uses the bindings with the disk cache
+     disabled. If a custom integration enables it, restrict cache-directory writes
+     to the account running the model. DiskCache 5.6.3 deserializes cached objects
+     with pickle. See the [DiskCache advisory](https://github.com/advisories/GHSA-w8v5-vhqr-4h9v).
 
 2) **LlamaCppServer** (managed server):
    - Provider: `LlamaCppServer`
